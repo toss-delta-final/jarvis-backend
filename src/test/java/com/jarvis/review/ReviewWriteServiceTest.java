@@ -28,6 +28,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** M-1 후기 작성 + M-3 후기 신고 (04 §5, 01 §3) */
@@ -49,12 +50,12 @@ class ReviewWriteServiceTest {
 
     @BeforeEach
     void setUp() {
-        orderItem = mock(OrderItem.class, withSettings().lenient());
+        orderItem = mock(OrderItem.class, withSettings().strictness(Strictness.LENIENT));
         when(orderItem.getId()).thenReturn(ORDER_ITEM_ID);
         when(orderItem.getOrderId()).thenReturn(50L);
         when(orderItem.getProductId()).thenReturn(10L);
         when(orderItem.getStatus()).thenReturn(OrderItemStatus.DELIVERED);
-        order = mock(Order.class, withSettings().lenient());
+        order = mock(Order.class, withSettings().strictness(Strictness.LENIENT));
         when(order.getMemberId()).thenReturn(MEMBER_ID);
         lenient().when(orderItemRepository.findById(ORDER_ITEM_ID)).thenReturn(Optional.of(orderItem));
         lenient().when(orderRepository.findById(50L)).thenReturn(Optional.of(order));

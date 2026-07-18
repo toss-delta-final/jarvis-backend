@@ -25,6 +25,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** M-8 배송지 CRUD — 기본 배송지 규칙 (04 §5, 02 D29) */
@@ -54,7 +55,7 @@ class AddressServiceTest {
     }
 
     private Address savedAddress(Long id, boolean isDefault) {
-        Address address = mock(Address.class, withSettings().lenient());
+        Address address = mock(Address.class, withSettings().strictness(Strictness.LENIENT));
         when(address.getId()).thenReturn(id);
         when(address.isDefault()).thenReturn(isDefault);
         return address;
