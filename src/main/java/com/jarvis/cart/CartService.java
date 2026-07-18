@@ -95,6 +95,11 @@ public class CartService {
         CartItem item;
         if (existing.isPresent()) {
             item = existing.get();
+            // 담기 합산 상한 초과는 400 (노션 C-2, 2026-07-18 확정 — 클램프는 로그인 병합 전용)
+            if (item.getQuantity() + request.quantity() > CartItem.MAX_QUANTITY) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "수량은 최대 " + CartItem.MAX_QUANTITY + "개까지 담을 수 있습니다.");
+            }
             item.addQuantity(request.quantity());
         } else {
             item = cartItemRepository.save(memberId != null

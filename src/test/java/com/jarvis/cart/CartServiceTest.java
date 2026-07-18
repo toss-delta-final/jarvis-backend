@@ -76,17 +76,20 @@ class CartServiceTest {
     }
 
     @Test
-    @DisplayName("C-2 — 동일 상품+옵션 재담기는 수량 합산, 99 클램프")
-    void addQuantityClamped() {
+    @DisplayName("C-2 — 동일 상품+옵션 재담기는 수량 합산, 합산 99 초과는 400")
+    void addQuantityOverflowRejected() {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         CartItem existing = CartItem.forMember(1L, 10L, null, 98);
         ReflectionTestUtils.setField(existing, "id", 5L);
         when(cartItemRepository.findMemberLines(1L, 10L, null)).thenReturn(List.of(existing));
 
-        CartService.CartAddResult result = cartService.addItem(1L, null, new CartAddRequest(10L, null, 10));
+        CartService.CartAddResult ok = cartService.addItem(1L, null, new CartAddRequest(10L, null, 1));
+        assertThat(ok.item().quantity()).isEqualTo(99);
 
-        assertThat(result.item().quantity()).isEqualTo(99);
-        assertThat(result.issuedGuestId()).isNull();
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
     }
 
     @Test

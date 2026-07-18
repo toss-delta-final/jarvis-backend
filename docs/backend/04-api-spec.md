@@ -5,8 +5,8 @@
 > LLM 콜백(⚙ `/internal/*`)과 채팅 직결(SSE·티켓)의 상세 스키마는 [05 LLM 연동 계약](05-llm-contract.md)이 원본이고 여기서는 목록만 둔다.
 
 > **2026-07-18 응답 스키마 정합화(팀 결정: 노션 「📡 API 명세서」가 응답 예시의 기준)** — FE 파싱을 깨는 차이를 노션에 맞춰 일괄 수정:
-> 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
-> **유지(노션 쪽 수정 필요)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR), `+09:00` 오프셋(03 D2), C-2 수량 클램프(02 D30), I-1/I-3 최소필드(05 7-17 재설계), 카드 `purchasable` 등 추가 필드.
+> 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
+> **유지(노션 쪽 수정)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR), `+09:00` 오프셋(03 D2), I-1/I-3 최소필드(05 7-17 재설계), 카드 `purchasable` 등 추가 필드. CH-6 티켓 클레임(`role` vs `channel`)은 FastAPI 검증 확인 대기.
 
 ## 1. auth
 
