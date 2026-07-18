@@ -1,0 +1,35 @@
+name: Jarvis Backend CI/CD
+
+on:
+  push:
+    branches:
+      - main 
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: EC2 원격 접속 및 자동 배포 진행
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # 1. 백엔드 프로젝트 폴더로 이동
+            cd ~/jarvis-backend
+
+            # 2. 깃허브로부터 최신 소스코드 다운로드
+            git pull
+
+            # 3. 깃허브 시크릿에 저장해 둔 환경변수 파일(deploy.env)을 EC2에 자동으로 새로 쓰기
+            echo "${{ secrets.DEPLOY_ENV }}" > ~/jarvis-backend/deploy.env
+
+            # 4. 도커 이미지 빌드 (우리가 스왑 메모리를 설정해 둬서 이제 튕기지 않고 잘 돌 겁니다!)
+            docker build -t jarvis-backend:dev .
+
+            # 5. 기존에 실행 중이던 백엔드 캡슐 파괴하기 (없으면 패스)
+            docker rm -f jarvis-backend || true
+
+            # 6. 호스트 네트워크 모드로 새 백엔드 서버 완벽하게 가동하기
+            docker run -d --name jarvis-backend --network host --env-file ~/jarvis-backend/deploy.env jarvis-backend:dev
