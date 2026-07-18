@@ -8,6 +8,7 @@
 > 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
 > **유지(노션 쪽 수정 완료)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR — 공개 API), `+09:00` 오프셋(03 D2), I-1/I-3 최소필드(05 7-17 재설계 — 노션 페이지를 05 기준으로 갱신), 카드 `purchasable` 등 추가 필드.
 > **Phase 2(판매자 분석·상품 쓰기, 같은 날)**: I-6~I-16·S-1~S-3·S-5도 노션 기준으로 정합화 — from/to 필수+`INVALID_PERIOD`, 422 어휘(`MISSING_FIELD`/`INVALID_PRICE`/`INVALID_STOCK`), I-12 재삭제 409 `ALREADY_HIDDEN`(05 §1-3 멱등 규정 폐기), I-13 구현(501 스텁 해소), I-8/I-14 어뷰징 지표·I-16 코호트 재설계, I-10/I-11/S-5 `attributes` JSON 객체 수용, internal 상품 쓰기 소유권 위반은 404(공개 S-5는 403 유지), CH-6 티켓 클레임 `role`/`brandId`(노션 기준). 노션 쪽은 판매자 페이지 401 코드를 `INTERNAL_TOKEN_INVALID`로 통일하고 I-14 상태 어휘를 01 기준으로 정정.
+> **Round 3(전체 검토 후속, 같은 날)**: E-1 응답을 노션대로 202 **본문 없음**으로(envelope 제거), I-6 summary `statusCounts`를 노션 확정 어휘로(주문 단위 `PAID`/`PAYMENT_FAILED` + 아이템 단위 `CANCELLED`/`RETURNED`, 4키 고정·0 채움), S-2/S-3 `page`/`size`·I-9 `limit`/`offset` 검증 추가(범위 밖 400 — 기존 500 제거), 로그아웃의 채팅 세션 정리를 Redis 장애로부터 격리(실패해도 로그아웃 성공, TTL 소멸 위임). 노션 쪽 정정: I-7 v1 `computable:false` 규정 폐기, I-10 `categoryId` 필수(소분류만), I-18 응답 superset 기재, I-21 listId 엔트로피 요구(UUID급 ≥128bit), M-8b/8c 응답 전체 주소 객체 기재.
 
 ## 1. auth
 
@@ -122,7 +123,7 @@
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
-| E-1 | POST | /api/events | 🔓(인증 선택) | FE 행동 이벤트 배치 수집. body: `{"events":[{ "id":"<uuid>", "sessionKey":"...", "eventType":"...", "productId":null, "properties":{...}, "occurredAt":"..." }]}` — FE가 버퍼(10건 or 5초)로 묶어 전송. 응답 **202 즉시** |
+| E-1 | POST | /api/events | 🔓(인증 선택) | FE 행동 이벤트 배치 수집. body: `{"events":[{ "id":"<uuid>", "sessionKey":"...", "eventType":"...", "productId":null, "properties":{...}, "occurredAt":"..." }]}` — FE가 버퍼(10건 or 5초)로 묶어 전송. 응답 **202 즉시, 본문 없음**(노션 기준 — 2026-07-18 Round 3) |
 
 - 서버 처리 4단계: ① `member_id`는 JWT에서, `guest_id`는 쿠키에서 주입(**body의 신원 주장은 무시**) ② 아래 8종 화이트리스트 외 eventType은 폐기+경고 로그 ③ `session_start`에 ipHash 주입 ④ 배치 INSERT(`created_at`=서버 수신 시각), `client_event_id`(body의 `id`) UNIQUE로 중복 차단.
 - 실패 건은 세지 않는다 — 담기 실패·결제 실패 시 FE가 이벤트를 보내지 않음. `properties`에 개인정보 금지.
@@ -161,7 +162,7 @@
 | I-3 | GET | /internal/products/popular | 인기 상품 (무관 질문 시 카드 유지용) |
 | I-4 | GET | /internal/members/{id}/orders/status | 주문 상태 요약 (문의 챗봇용) — I-19(목록)와 역할 분담 |
 | I-5 | POST | /internal/inquiries | 문의 접수 |
-| I-6 | GET | /internal/seller/{brandId}/sales | 매출 시계열 — granularity daily\|weekly\|monthly\|summary, 응답에 isAnomaly·deviationPct(7일 이동평균 대비 ±30%)·statusCounts *(구 로컬 I-6 `…/stats` 대체)* |
+| I-6 | GET | /internal/seller/{brandId}/sales | 매출 시계열 — granularity daily\|weekly\|monthly\|summary, 응답에 isAnomaly·deviationPct(7일 이동평균 대비 ±30%)·statusCounts(노션 확정 4키: 주문 단위 PAID/PAYMENT_FAILED + 아이템 단위 CANCELLED/RETURNED — 2026-07-18 Round 3) *(구 로컬 I-6 `…/stats` 대체)* |
 | I-7 | GET | /internal/seller/{brandId}/funnel | 구매전환 퍼널 4단 — 1·2단 behavior_events, 3단 checkout_start의 `properties.productIds` 포함 여부(주문서 1회=1), 4단 order_item×product×brand(정본) *(구 로컬 I-7 상품 상세는 I-9 목록으로 흡수)* |
 | I-8 | GET | /internal/account-events | 계정 이벤트 집계(**전역** — brandId 스코프 아님) — groupBy ip\|eventType\|hour, IP 마스킹, **집계 전용(raw 미반환)** |
 | I-9 | GET | /internal/seller/{brandId}/products | 자사 상품 목록 — status/q/limit/offset, displayedSalesCount = base_sales_count + order_item 집계, stockQuantity 포함 (구 I-7의 소유권 403 승계) |

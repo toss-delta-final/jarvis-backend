@@ -93,10 +93,15 @@ public class SellerSalesService {
         if ("summary".equals(effective)) {
             OrderItemRepository.SalesTotalsRow totals =
                     orderItemRepository.sumSellerSales(brandId, fromDt, toDt);
-            Map<String, Long> statusCounts = orderItemRepository
-                    .countSellerItemStatus(brandId, fromDt, toDt).stream()
+            // 노션 I-6 확정 어휘 4종 고정(0 채움) — PAID/PAYMENT_FAILED 주문 단위, CANCELLED/RETURNED 아이템 단위
+            Map<String, Long> buckets = orderItemRepository
+                    .countSellerStatusBuckets(brandId, fromDt, toDt).stream()
                     .collect(Collectors.toMap(OrderItemRepository.StatusCountRow::getBucket,
-                            OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a, LinkedHashMap::new));
+                            OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a));
+            Map<String, Long> statusCounts = new LinkedHashMap<>();
+            for (String key : List.of("PAID", "CANCELLED", "PAYMENT_FAILED", "RETURNED")) {
+                statusCounts.put(key, buckets.getOrDefault(key, 0L));
+            }
             long days = ChronoUnit.DAYS.between(from, to) + 1;
             return SellerSalesResponse.ofSummary(brandId, from, to,
                     totals.getSales(), totals.getOrders(), totals.getSales() / days, statusCounts);

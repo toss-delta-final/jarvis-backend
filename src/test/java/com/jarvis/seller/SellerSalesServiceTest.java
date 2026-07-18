@@ -45,6 +45,13 @@ class SellerSalesServiceTest {
         };
     }
 
+    private static OrderItemRepository.StatusCountRow status(String bucket, long cnt) {
+        return new OrderItemRepository.StatusCountRow() {
+            public String getBucket() { return bucket; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
     private static OrderItemRepository.PeriodSalesRow period(String period, long sales) {
         return new OrderItemRepository.PeriodSalesRow() {
             public String getPeriod() { return period; }
@@ -90,8 +97,8 @@ class SellerSalesServiceTest {
         when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
         when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any()))
                 .thenReturn(totals(300000, 3, 4));
-        when(orderItemRepository.countSellerItemStatus(eq(BRAND_ID), any(), any()))
-                .thenReturn(List.of());
+        when(orderItemRepository.countSellerStatusBuckets(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of(status("PAID", 3), status("CANCELLED", 1)));
         AnalysisPeriod period = AnalysisPeriod.of("2026-07-01", "2026-07-10");
 
         SellerSalesResponse response = service.sales(BRAND_ID, "summary", period);
@@ -101,7 +108,10 @@ class SellerSalesServiceTest {
         assertThat(response.sales()).isEqualTo(300000);
         assertThat(response.orderCount()).isEqualTo(3);
         assertThat(response.avgDailySales()).isEqualTo(30000); // 30만 / 10일
-        assertThat(response.statusCounts()).isEmpty();
+        // 노션 I-6 확정 어휘 4종 고정 — 누락 버킷은 0 채움
+        assertThat(response.statusCounts()).containsExactly(
+                java.util.Map.entry("PAID", 3L), java.util.Map.entry("CANCELLED", 1L),
+                java.util.Map.entry("PAYMENT_FAILED", 0L), java.util.Map.entry("RETURNED", 0L));
     }
 
     @Test

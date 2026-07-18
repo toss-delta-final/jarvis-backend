@@ -20,8 +20,11 @@ import com.jarvis.seller.dto.SellerProductUpdateRequest;
 import com.jarvis.seller.dto.SellerProductUpdateResponse;
 import com.jarvis.seller.dto.SellerSalesResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -43,6 +46,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/internal")
 @RequiredArgsConstructor
+@Validated
 public class InternalSellerController {
 
     private final SellerSalesService sellerSalesService;
@@ -87,8 +91,8 @@ public class InternalSellerController {
             @PathVariable Long brandId,
             @RequestParam(required = false) ProductStatus status,
             @RequestParam(required = false) String q,
-            @RequestParam(defaultValue = "20") int limit,
-            @RequestParam(defaultValue = "0") int offset) {
+            @RequestParam(defaultValue = "20") @Min(1) @Max(200) int limit,
+            @RequestParam(defaultValue = "0") @Min(0) int offset) {
         return ApiResponse.success(sellerProductService.listInternal(brandId, status, q, limit, offset));
     }
 

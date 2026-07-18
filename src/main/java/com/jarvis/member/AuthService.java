@@ -17,11 +17,13 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -103,9 +105,15 @@ public class AuthService {
                 .ifPresent(stored -> {
                     refreshTokenRepository.delete(stored);
                     accountEventLogger.log(stored.getMemberId(), AccountEventType.LOGOUT, clientIp);
-                    // 채팅 세션 정리 + I-20 통지 (05 §2-1 — 트리거: 로그아웃)
-                    chatSessionService.endSession(
-                            ChatIdentity.member(stored.getMemberId()), SessionEndReason.LOGOUT);
+                    // 채팅 세션 정리 + I-20 통지 (05 §2-1 — 트리거: 로그아웃).
+                    // Redis 장애가 RT 삭제를 롤백시키면 안 됨 — 실패해도 로그아웃은 성공(세션은 TTL로 소멸)
+                    try {
+                        chatSessionService.endSession(
+                                ChatIdentity.member(stored.getMemberId()), SessionEndReason.LOGOUT);
+                    } catch (RuntimeException e) {
+                        log.warn("로그아웃 중 채팅 세션 정리 실패 — TTL 소멸에 위임. memberId={}",
+                                stored.getMemberId(), e);
+                    }
                 });
     }
 
