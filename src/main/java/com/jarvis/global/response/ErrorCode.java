@@ -67,8 +67,15 @@ public enum ErrorCode {
 
     // seller (04 §7·§10 — Phase 6)
     SELLER_BRAND_NOT_FOUND(HttpStatus.NOT_FOUND, "판매자에 연결된 브랜드가 없습니다."),
-    PRODUCT_PRICE_INVALID(HttpStatus.BAD_REQUEST, "판매가는 정가를 넘을 수 없습니다."),
-    PRODUCT_CATEGORY_INVALID(HttpStatus.BAD_REQUEST, "상품은 소분류 카테고리에만 등록할 수 있습니다.");
+    PRODUCT_CATEGORY_INVALID(HttpStatus.BAD_REQUEST, "상품은 소분류 카테고리에만 등록할 수 있습니다."),
+
+    // seller 분석·상품 쓰기 (노션 명세 정합화 — 2026-07-18)
+    INVALID_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),
+    INVALID_GROUP_BY(HttpStatus.BAD_REQUEST, "groupBy 또는 eventType 값이 올바르지 않습니다."),
+    MISSING_FIELD(HttpStatus.UNPROCESSABLE_ENTITY, "필수 입력값이 누락되었습니다."),
+    INVALID_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "판매가는 정가를 넘을 수 없습니다."),
+    INVALID_STOCK(HttpStatus.UNPROCESSABLE_ENTITY, "재고 수량이 올바르지 않습니다."),
+    ALREADY_HIDDEN(HttpStatus.CONFLICT, "이미 숨김 처리된 상품입니다.");
 
     private final HttpStatus status;
     private final String message;

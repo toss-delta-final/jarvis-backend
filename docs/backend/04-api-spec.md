@@ -6,7 +6,8 @@
 
 > **2026-07-18 응답 스키마 정합화(팀 결정: 노션 「📡 API 명세서」가 응답 예시의 기준)** — FE 파싱을 깨는 차이를 노션에 맞춰 일괄 수정:
 > 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
-> **유지(노션 쪽 수정)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR), `+09:00` 오프셋(03 D2), I-1/I-3 최소필드(05 7-17 재설계), 카드 `purchasable` 등 추가 필드. CH-6 티켓 클레임(`role` vs `channel`)은 FastAPI 검증 확인 대기.
+> **유지(노션 쪽 수정 완료)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR — 공개 API), `+09:00` 오프셋(03 D2), I-1/I-3 최소필드(05 7-17 재설계 — 노션 페이지를 05 기준으로 갱신), 카드 `purchasable` 등 추가 필드.
+> **Phase 2(판매자 분석·상품 쓰기, 같은 날)**: I-6~I-16·S-1~S-3·S-5도 노션 기준으로 정합화 — from/to 필수+`INVALID_PERIOD`, 422 어휘(`MISSING_FIELD`/`INVALID_PRICE`/`INVALID_STOCK`), I-12 재삭제 409 `ALREADY_HIDDEN`(05 §1-3 멱등 규정 폐기), I-13 구현(501 스텁 해소), I-8/I-14 어뷰징 지표·I-16 코호트 재설계, I-10/I-11/S-5 `attributes` JSON 객체 수용, internal 상품 쓰기 소유권 위반은 404(공개 S-5는 403 유지), CH-6 티켓 클레임 `role`/`brandId`(노션 기준). 노션 쪽은 판매자 페이지 401 코드를 `INTERNAL_TOKEN_INVALID`로 통일하고 I-14 상태 어휘를 01 기준으로 정정.
 
 ## 1. auth
 
@@ -101,7 +102,7 @@
 | CH-1b | POST | /api/chat/tickets | 🔓(게스트 허용) | **스트림 티켓만 재발급**(세션은 유지). body: sessionId — 매 메시지 전 또는 티켓 만료 401 시 호출. **소유권 검증**: 세션 발급 시 신원(회원 id/guest_id)과 재발급 요청 신원이 다르면 403 `SESSION_FORBIDDEN`(sessionId만 알아도 남의 세션 티켓을 못 받게 — I-20과 동일 규칙, 2026-07-17). 세션 만료·없음이면 404 `SESSION_NOT_FOUND` → FE는 CH-1로 새 세션 발급 |
 | ~~CH-2~~ | ~~POST~~ | ~~/api/chat~~ | — | **폐기(직결)** — 추천 챗봇 메시지·SSE는 FE가 `POST {LLM_SSE_URL}/chat`(`Authorization: Bearer <티켓>`)로 FastAPI에 직접(05 §1-1). Spring 경유 아님. 게스트 무제한·개인화 미적용은 유지 |
 | ~~CH-3~~ | ~~POST~~ | ~~/api/chat/cs~~ | — | **폐기(직결)** — CS 챗봇도 동일 직결(`channel:CS` 티켓). 비로그인은 일반 안내만(주문 질문 시 로그인 유도는 LLM 측). 단, 직결 전환 후 문의 챗봇 자체의 폐지/유지 여부는 **OPEN(LLM 확인 중)** |
-| CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **(제안) 추천 목록 조회** — FE가 SSE `products.ready(listId)` 수신 후 호출. I-21 콜백으로 저장된 Top5(Redis TTL)에 BE가 카드 완결 필드(가격·정가·이미지·rating·reviewCount)를 부착해 반환(순서 = 콜백 저장 순서). **I-21과 쌍**, P-7 대체 예정. 스키마 **OPEN(LLM 협의 중)** |
+| CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **추천 목록 조회 (확정 2026-07-18)** — FE가 SSE `products.ready(listId)` 수신 후 호출. I-21 콜백으로 저장된 Top5(Redis TTL 10분)에 BE가 카드 완결 필드 + **추천 카드용 `reason`**(I-21 reasons echo, 없으면 null)을 부착해 반환(순서 = 콜백 저장 순서, HIDDEN·품절 드롭). **I-21과 쌍**, P-7 대체 예정 |
 
 - 티켓 만료(401) 시 재발급은 **CH-1b**(세션 유지) → 1회 재시도. 세션까지 만료/없음(404 `SESSION_NOT_FOUND`)이면 CH-1로 새 세션. 티켓 발급 앞단에 보조 rate limit 가능(05 §3).
 
@@ -167,7 +168,7 @@
 | I-10 | POST | /internal/seller/{brandId}/products | 상품 등록 — name·price·stockQuantity 필수, 검증 price ≤ originalPrice. **등록은 product_change_logs 미기록** |
 | I-11 | PATCH | /internal/seller/{brandId}/products/{productId} | 상품 수정 통합(가격·설명·상태·재고) — 바뀐 필드마다 product_change_logs 기록(동일값 미기록), 응답에 changes[]. HITL confirm 후 실행(05 §1-3), 판매자 화면 경로(S-5)와 병존 |
 | I-12 | DELETE | /internal/seller/{brandId}/products/{productId} | soft delete(status=HIDDEN) — **HITL 승인 후에만**(05 §1-3), STATUS 변경 로그 기록 |
-| I-13 | GET | /internal/seller/{brandId}/events | 행동 이벤트 조회/집계 — **본문 명세 미작성, OPEN(LLM팀 재작성 대기)** |
+| I-13 | GET | /internal/seller/{brandId}/events | 행동 이벤트 조회/집계 — 노션 명세 확정(2026-07-18)·구현 완료: groupBy=product\|eventType\|date, counts camelCase, uniqueVisitors·viewToCartRate |
 | I-14 | GET | /internal/seller/{brandId}/order-events | 주문 상태 전이 로그 조회 — toStatus 복수/actorType/stats/groupBy=memberId(어뷰징 탐지), 상태 어휘는 우리 상태명 기준 |
 | I-15 | GET | /internal/seller/{brandId}/product-changes | 상품 변경 이력 — changeType/productId/기간 필터, 품절 신호 = STOCK 변경의 newValue "0" |
 | I-16 | GET | /internal/seller/{brandId}/churn | 이탈 코호트 — inactiveDays(기본 30), preChurnSignals, 마지막 로그인 = account_event_logs.LOGIN_SUCCESS |
@@ -175,7 +176,7 @@
 | I-18 | GET | /internal/cart | 챗봇 장바구니 조회 — userId/guestId 메아리(게스트 허용), 응답 item에 productName·optionName 필수, 빈 장바구니도 200 |
 | I-19 | GET | /internal/members/{id}/orders | 구매 이력 목록(CS 챗봇 "내 주문 어때?") — status 단일 필터(어휘: ORDERED\|SHIPPING\|DELIVERED\|CONFIRMED\|CANCELLED\|RETURNED), 응답 camelCase·숫자 id, shippingFee 항상 0(배송비 없음 확정). I-4(요약)와 역할 분담 |
 | I-20 | POST | {LLM_BASE_URL}/events/session-end | **방향 예외: Spring→FastAPI(아웃바운드)** 세션 종료 통지 — 트리거 로그아웃/30분 유휴/새 대화, reason enum LOGOUT\|IDLE_TIMEOUT\|NEW_CONVERSATION\|TAB_CLOSE, **멱등**(없는 세션도 200 + cleared:false). sessionId는 **UUID 그대로 수신(2026-07-17 LLM 합의 — 구 S- 형식 폐기)**. 상세는 05 §2-1(아웃바운드 관례) |
-| I-21 | POST | /internal/recommendations | **(제안) 추천 목록 콜백** — FastAPI가 리랭킹 확정 Top5를 저장: `{sessionId, listId, productIds[]}`(순서 유지) → Redis TTL. **products.ready 발행 전 호출, 콜백 실패 시 products.ready 발행 금지**(05 §1-2-1). CH-5와 쌍. 스키마 **OPEN(LLM 협의 중)** |
+| I-21 | POST | /internal/recommendations | **추천 목록 콜백 (확정 2026-07-18)** — FastAPI가 리랭킹 확정 Top5를 저장: `{sessionId(UUID), listId(FastAPI 생성 문자열 — 영숫자·`-`·`_` ≤64), productIds[](≤20, 순서 유지), reasons[{productId, reason}]?}` → Redis TTL 10분. reasons는 **추천 카드용 이유**(SSE의 채팅용 이유와 이원화) — CH-5 카드에 echo. **products.ready 발행 전 호출, 콜백 실패 시 products.ready 발행 금지**(05 §1-2-1). CH-5와 쌍 |
 
 - 번호 체계는 노션 「API 현재」 DB 기준(2026-07-17)으로 확정 — 구 로컬 I-6(`…/stats`)·I-7(판매자 상품 상세)은 각각 I-6(sales)·I-9(목록)로 대체/흡수.
 - I-20만 호출 방향이 반대(Spring→FastAPI) — 스키마·표기는 05의 아웃바운드 관례(05 §2-1)를 따른다.
@@ -190,8 +191,8 @@
 - [ ] P-5 개인화 추천의 응답 형태 — **상품 ID 목록 + BE 카드 조립(P-7 동형)으로 제안 확정 방향**(05 §4), FastAPI 응답 스키마만 LLM 팀 확정 대기
 - [x] ~~상품 상세 "바로 구매" 지원 여부~~ — **있음 확인(2026-07-10)**. O-1 body에 items[] 경로 추가로 반영(§4), 스키마 변경 없음
 - [x] ~~최근 본 상품 "개별 삭제(X)" 여부~~ — 기능 없음 확인(2026-07-10, 02 D29 종결)
-- [ ] CH-5/I-21 추천 목록(콜백+조회) 스키마 — **OPEN(LLM 협의 중)**. 확정 시 P-7 폐지
+- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7 폐지는 FE 전환 후
 - [ ] CH-3(CS 챗봇) 직결 전환 후 폐지/유지 — **OPEN(LLM 확인 중)**
-- [ ] I-13(행동 이벤트 조회/집계) 본문 명세 — **OPEN(LLM팀 재작성 대기)**
+- [x] ~~I-13(행동 이벤트 조회/집계) 본문 명세~~ — **노션 재작성 확인·구현 완료(2026-07-18)**
 - [ ] I-17(벡터DB 동기화 배치 pull) 커서 방식·attributes 스키마·리뷰 포함 여부 — **OPEN(LLM 협의 중)**
 - [x] ~~I-20 sessionId 형식~~ — **UUID로 합의 완료(2026-07-17)**

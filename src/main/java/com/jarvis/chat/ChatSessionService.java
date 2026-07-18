@@ -93,7 +93,13 @@ public class ChatSessionService {
                 ? ticketProvider.createSellerTicket(identity, brandId)
                 : ticketProvider.createTicket(identity);
         return new ChatSessionResponse(sessionId, sessionTtl().toSeconds(), ticket,
-                ticketProvider.ttlSeconds(), llmProperties.sseUrl());
+                ticketProvider.ttlSeconds(), sseEndpoint(brandId != null));
+    }
+
+    /** 판매자 챗은 별도 주소 {AI_SERVER}/seller/chat 확정(04 S-4 · 2026-07-18 합의) — 전체 엔드포인트를 내려준다 */
+    private String sseEndpoint(boolean seller) {
+        String base = llmProperties.sseUrl().replaceAll("/+$", "");
+        return base + (seller ? "/seller/chat" : "/chat");
     }
 
     private Duration sessionTtl() {
