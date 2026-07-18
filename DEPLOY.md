@@ -88,7 +88,11 @@ mariadb -h <host> -u <user> -p<pw> <db> < scripts/seed-phase1.sql   # 이후 pha
   ```
   ```bash
   # jarvis-frontend / .env.local
-  API_PROXY_TARGET=https://<배포된 API URL>
+  # 배포 담당이 알려준 공개 API 주소. 노출 방식에 따라 형태가 다르다:
+  #   커스텀 도메인      : https://dev-api.jarvis.shop
+  #   ALB(로드밸런서)     : http://jarvis-dev-alb-1234567890.ap-northeast-2.elb.amazonaws.com
+  #   EC2 퍼블릭 DNS+포트 : http://ec2-3-35-120-45.ap-northeast-2.compute.amazonaws.com:8080
+  API_PROXY_TARGET=https://dev-api.jarvis.shop
   ```
 - ⚠️ dev 서버를 공개 노출한다면 `/internal/**`는 서비스 토큰으로 보호되지만, 가능하면 인그레스에서 `/internal/**` 경로 자체를 차단 권장(운영은 nginx가 404 처리).
 
