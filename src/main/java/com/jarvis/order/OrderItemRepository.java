@@ -36,12 +36,6 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
         Long getCnt();
     }
 
-    interface BuyerRow {
-        Long getMemberId();
-        Long getOrderCount();
-        Long getTotalSpent();
-    }
-
     List<OrderItem> findAllByOrderId(Long orderId);
 
     List<OrderItem> findAllByOrderIdIn(List<Long> orderIds);
@@ -160,17 +154,4 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     long countSellerPurchaseOrders(@Param("brandId") Long brandId,
                                    @Param("from") LocalDateTime from,
                                    @Param("to") LocalDateTime to);
-
-    /** I-16 자사 구매 고객 코호트 — PAID 주문 이력 보유 회원 (04 §10) */
-    @Query(value = """
-            SELECT o.member_id AS memberId,
-                   COUNT(DISTINCT o.id) AS orderCount,
-                   COALESCE(SUM(oi.price * oi.quantity), 0) AS totalSpent
-            FROM orders o
-            JOIN order_item oi ON oi.order_id = o.id
-            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
-            WHERE o.status = 'PAID'
-            GROUP BY o.member_id
-            """, nativeQuery = true)
-    List<BuyerRow> findSellerBuyers(@Param("brandId") Long brandId);
 }

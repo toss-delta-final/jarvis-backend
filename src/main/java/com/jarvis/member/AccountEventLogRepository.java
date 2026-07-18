@@ -19,20 +19,39 @@ public interface AccountEventLogRepository extends JpaRepository<AccountEventLog
         LocalDateTime getLastLogin();
     }
 
-    /** I-8 groupBy=ip — 집계 전용(raw 미반환), 마스킹은 서비스 소관 (04 §10) */
+    interface IpAggRow {
+        String getIp();
+        Long getFailCount();
+        Long getDistinctMembers();
+        Long getNullMemberCnt();
+        Long getTotalCnt();
+        LocalDateTime getFirstSeen();
+        LocalDateTime getLastSeen();
+    }
+
+    /**
+     * I-8 groupBy=ip — IP별 실패·회원 분포 집계(무차별 대입 신호 재료, 노션 I-8).
+     * 집계 전용(raw 미반환), 마스킹·비율·판정은 서비스 소관 (04 §10).
+     */
     @Query(value = """
-            SELECT l.ip_address AS bucket, COUNT(*) AS cnt
+            SELECT l.ip_address AS ip,
+                   SUM(CASE WHEN l.event_type = 'LOGIN_FAIL' THEN 1 ELSE 0 END) AS failCount,
+                   COUNT(DISTINCT l.member_id) AS distinctMembers,
+                   SUM(CASE WHEN l.member_id IS NULL THEN 1 ELSE 0 END) AS nullMemberCnt,
+                   COUNT(*) AS totalCnt,
+                   MIN(l.created_at) AS firstSeen,
+                   MAX(l.created_at) AS lastSeen
             FROM account_event_logs l
             WHERE (:eventType IS NULL OR l.event_type = :eventType)
               AND l.created_at >= :from AND l.created_at < :to
             GROUP BY l.ip_address
-            ORDER BY cnt DESC
+            ORDER BY failCount DESC, totalCnt DESC
             LIMIT :limit
             """, nativeQuery = true)
-    List<BucketCountRow> countByIp(@Param("eventType") String eventType,
-                                   @Param("from") LocalDateTime from,
-                                   @Param("to") LocalDateTime to,
-                                   @Param("limit") int limit);
+    List<IpAggRow> aggregateByIp(@Param("eventType") String eventType,
+                                 @Param("from") LocalDateTime from,
+                                 @Param("to") LocalDateTime to,
+                                 @Param("limit") int limit);
 
     /** I-8 groupBy=eventType (04 §10) */
     @Query(value = """

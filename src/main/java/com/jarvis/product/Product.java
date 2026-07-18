@@ -110,6 +110,10 @@ public class Product extends BaseTimeEntity {
         this.description = description;
     }
 
+    public void changeImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
+
     public void changePrice(int price) {
         this.price = price;
     }

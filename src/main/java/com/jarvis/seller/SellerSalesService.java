@@ -14,6 +14,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -36,7 +37,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class SellerSalesService {
 
-    private static final int TOP_PRODUCTS = 10;
     private static final int MOVING_WINDOW = 7;
     private static final int MIN_WINDOW = 3;
     private static final double ANOMALY_THRESHOLD_PCT = 30.0;
@@ -65,7 +65,7 @@ public class SellerSalesService {
                         .computeIfAbsent(row.getProductId(), k -> new HashMap<>())
                         .put(row.getEventType(), row.getCnt()));
 
-        List<SellerSummaryResponse.ProductMetric> topProducts =
+        List<SellerSummaryResponse.ProductMetric> products =
                 productRepository.findAllByBrandId(brand.getId()).stream()
                         .map(p -> toMetric(p, salesByProduct, eventsByProduct))
                         .sorted(Comparator
@@ -73,33 +73,38 @@ public class SellerSalesService {
                                 .thenComparing(Comparator
                                         .comparingLong(SellerSummaryResponse.ProductMetric::viewCount)
                                         .reversed()))
-                        .limit(TOP_PRODUCTS)
                         .toList();
 
         return new SellerSummaryResponse(brand.getId(), brand.getName(), effectiveFrom, effectiveTo,
-                totals.getSales(), totals.getOrders(), totals.getQuantity(), topProducts);
+                totals.getSales(), totals.getOrders(), totals.getQuantity(), products);
     }
 
-    /** I-6 — granularity daily|weekly|monthly|summary, 기본 기간은 granularity별 상이 */
-    public SellerSalesResponse sales(Long brandId, String granularity, LocalDate from, LocalDate to) {
+    /** I-6 — granularity daily|weekly|monthly|summary, 기간은 필수(AnalysisPeriod로 사전 검증) */
+    public SellerSalesResponse sales(Long brandId, String granularity, AnalysisPeriod period) {
         if (!brandRepository.existsById(brandId)) {
             throw new BusinessException(ErrorCode.BRAND_NOT_FOUND);
         }
         String effective = granularity == null ? "daily" : granularity;
-        LocalDate effectiveTo = to != null ? to : LocalDate.now();
-        LocalDate effectiveFrom = from != null ? from : defaultFrom(effective, effectiveTo);
-        LocalDateTime fromDt = effectiveFrom.atStartOfDay();
-        LocalDateTime toDt = effectiveTo.plusDays(1).atStartOfDay();
+        LocalDate from = period.from();
+        LocalDate to = period.to();
+        LocalDateTime fromDt = from.atStartOfDay();
+        LocalDateTime toDt = to.plusDays(1).atStartOfDay();
 
-        OrderItemRepository.SalesTotalsRow totals = orderItemRepository.sumSellerSales(brandId, fromDt, toDt);
-        Map<String, Long> statusCounts = orderItemRepository.countSellerItemStatus(brandId, fromDt, toDt)
-                .stream().collect(Collectors.toMap(OrderItemRepository.StatusCountRow::getBucket,
-                        OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a, LinkedHashMap::new));
+        if ("summary".equals(effective)) {
+            OrderItemRepository.SalesTotalsRow totals =
+                    orderItemRepository.sumSellerSales(brandId, fromDt, toDt);
+            Map<String, Long> statusCounts = orderItemRepository
+                    .countSellerItemStatus(brandId, fromDt, toDt).stream()
+                    .collect(Collectors.toMap(OrderItemRepository.StatusCountRow::getBucket,
+                            OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a, LinkedHashMap::new));
+            long days = ChronoUnit.DAYS.between(from, to) + 1;
+            return SellerSalesResponse.ofSummary(brandId, from, to,
+                    totals.getSales(), totals.getOrders(), totals.getSales() / days, statusCounts);
+        }
 
-        List<SellerSalesResponse.Point> series = "summary".equals(effective) ? null
-                : buildSeries(brandId, effective, effectiveFrom, effectiveTo, fromDt, toDt);
-        return new SellerSalesResponse(brandId, effective, effectiveFrom, effectiveTo,
-                totals.getSales(), totals.getOrders(), totals.getQuantity(), statusCounts, series);
+        List<SellerSalesResponse.Point> series = buildSeries(brandId, effective, from, to, fromDt, toDt);
+        return SellerSalesResponse.ofSeries(brandId, effective, from, to, series,
+                new SellerSalesResponse.Config(MOVING_WINDOW, ANOMALY_THRESHOLD_PCT));
     }
 
     private List<SellerSalesResponse.Point> buildSeries(Long brandId, String granularity,
@@ -173,14 +178,6 @@ public class SellerSalesService {
             history.add(sales);
         }
         return points;
-    }
-
-    private static LocalDate defaultFrom(String granularity, LocalDate to) {
-        return switch (granularity) {
-            case "weekly" -> to.minusWeeks(11);
-            case "monthly" -> to.minusMonths(11).withDayOfMonth(1);
-            default -> to.minusDays(29); // daily·summary
-        };
     }
 
     private static SellerSummaryResponse.ProductMetric toMetric(

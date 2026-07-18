@@ -51,7 +51,7 @@ public class SellerController {
     public ApiResponse<SellerOrderListResponse> orders(
             @AuthenticationPrincipal AuthUser authUser,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "20") int size) {
         Brand brand = brandResolver.resolve(authUser.memberId());
         return ApiResponse.success(sellerOrderService.list(brand.getId(), page, size));
     }
@@ -64,7 +64,7 @@ public class SellerController {
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "latest") String sort,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "20") int size) {
         Brand brand = brandResolver.resolve(authUser.memberId());
         return ApiResponse.success(sellerProductService.list(brand.getId(), status, q, sort, page, size));
     }
