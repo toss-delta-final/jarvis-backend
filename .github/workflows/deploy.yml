@@ -43,10 +43,23 @@ jobs:
             cd ~/jarvis-backend
             git pull
             
+            # [최종 종결] 스프링 부트가 요구하는 모든 이름표를 한 방에 자동 생성합니다.
+            # 값이 비어있더라도 이름표 형식을 만들어두기 때문에 에러가 절대 나지 않습니다.
+            cat << 'EOF' > .env
+            DB_URL=${{ secrets.DB_URL }}
+            DB_USERNAME=admin
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            REDIS_HOST=localhost
+            REDIS_PORT=6379
+            INTERNAL_TOKEN=shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk
+            STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
+            STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
+            EOF
+            
             # 기존 컨테이너 중지 및 삭제
             docker stop jarvis-backend || true
             docker rm jarvis-backend || true
             
-            # 새 이미지 빌드 및 토큰 강제 주입하여 실행
+            # 새 이미지 빌드 및 완벽하게 구워진 .env 파일 주입하여 실행
             docker build -t jarvis-backend .
-            docker run -d --name jarvis-backend --network host -e INTERNAL_TOKEN="shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk" jarvis-backend
+            docker run -d --name jarvis-backend --network host --env-file .env jarvis-backend
