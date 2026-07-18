@@ -14,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
@@ -30,7 +31,7 @@ class InquiryServiceTest {
     @Test
     @DisplayName("M-9 — 제목·내용·상태·답변을 담아 페이지로 반환")
     void myInquiriesMapped() {
-        Inquiry inquiry = mock(Inquiry.class, withSettings().lenient());
+        Inquiry inquiry = mock(Inquiry.class, withSettings().strictness(Strictness.LENIENT));
         when(inquiry.getId()).thenReturn(3L);
         when(inquiry.getTitle()).thenReturn("배송 문의");
         when(inquiry.getContent()).thenReturn("언제 오나요?");

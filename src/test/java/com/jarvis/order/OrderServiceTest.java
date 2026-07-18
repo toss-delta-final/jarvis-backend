@@ -77,7 +77,8 @@ class OrderServiceTest {
 
     private com.jarvis.product.Product product(Long id, int price, int originalPrice) {
         com.jarvis.product.Product p = org.mockito.Mockito.mock(com.jarvis.product.Product.class,
-                org.mockito.Mockito.withSettings().lenient());
+                org.mockito.Mockito.withSettings()
+                        .strictness(org.mockito.quality.Strictness.LENIENT));
         when(p.getId()).thenReturn(id);
         when(p.getPrice()).thenReturn(price);
         when(p.getOriginalPrice()).thenReturn(originalPrice);

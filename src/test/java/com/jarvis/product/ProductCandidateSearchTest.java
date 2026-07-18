@@ -28,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageRequest;
 
 /** I-1 후보 조회 + P-7 공개 카드 (05 §I-1, 04 §2) */
@@ -80,7 +81,7 @@ class ProductCandidateSearchTest {
     @DisplayName("I-1 — 대분류명이면 하위 소분류 전체 포함 검색 (02 D20)")
     void rootCategoryIncludesChildren() {
         when(categoryService.resolveIdsByName("패션")).thenReturn(Optional.of(List.of(11L, 12L)));
-        Product product = mock(Product.class, withSettings().lenient());
+        Product product = mock(Product.class, withSettings().strictness(Strictness.LENIENT));
         when(product.getId()).thenReturn(1L);
         when(product.getCategoryId()).thenReturn(11L);
         when(product.getBrandId()).thenReturn(2L);

@@ -29,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -46,7 +47,7 @@ class CartServiceTest {
 
     @BeforeEach
     void setUp() {
-        product = mock(Product.class, withSettings().lenient());
+        product = mock(Product.class, withSettings().strictness(Strictness.LENIENT));
         when(product.getId()).thenReturn(10L);
         when(product.getStatus()).thenReturn(ProductStatus.ON_SALE);
         lenient().when(productRepository.findById(10L)).thenReturn(Optional.of(product));

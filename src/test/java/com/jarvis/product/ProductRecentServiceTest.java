@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
 
 /** M-7 최근 본 상품 — behavior_events product_view 재활용 (04 §5, 02 D3) */
 @ExtendWith(MockitoExtension.class)
@@ -37,7 +38,7 @@ class ProductRecentServiceTest {
     @InjectMocks ProductService productService;
 
     private Product product(Long id) {
-        Product product = mock(Product.class, withSettings().lenient());
+        Product product = mock(Product.class, withSettings().strictness(Strictness.LENIENT));
         when(product.getId()).thenReturn(id);
         when(product.getBrandId()).thenReturn(1L);
         when(product.getName()).thenReturn("상품" + id);
