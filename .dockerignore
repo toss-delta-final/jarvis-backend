@@ -1,0 +1,22 @@
+# 빌드 컨텍스트에서 제외 — 이미지엔 Dockerfile이 명시적으로 COPY한 것만 들어간다
+.git/
+.gitattributes
+build/
+.gradle/
+bin/
+out/
+.idea/
+*.iml
+
+# 시크릿 — 이미지에 절대 포함 금지
+.env
+*.env
+!.env.example
+src/main/resources/application-local.yml
+
+# 백엔드 이미지에 불필요
+docs/
+mock-fastapi/
+docker-compose.yml
+README.md
+DEPLOY.md
