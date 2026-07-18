@@ -130,18 +130,41 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
                                                 @Param("from") LocalDateTime from,
                                                 @Param("to") LocalDateTime to);
 
-    /** I-6 statusCounts — 자사 아이템의 이행 상태 분포 (04 §10) */
+    /**
+     * I-6 statusCounts (04 §10, 노션 확정 어휘) — PAID/PAYMENT_FAILED는 자사 아이템이 포함된
+     * 주문 단위, CANCELLED/RETURNED는 order_item.status 단위. PAYMENT_FAILED는 paid_at이
+     * 없으므로 created_at 기준.
+     */
     @Query(value = """
-            SELECT oi.status AS bucket, COUNT(*) AS cnt
+            SELECT 'PAID' AS bucket, COUNT(*) AS cnt
+            FROM orders o
+            WHERE o.status = 'PAID' AND o.paid_at >= :from AND o.paid_at < :to
+              AND EXISTS (SELECT 1 FROM order_item oi
+                          JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+                          WHERE oi.order_id = o.id)
+            UNION ALL
+            SELECT 'CANCELLED', COUNT(*)
             FROM order_item oi
             JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
             JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
-            WHERE o.paid_at >= :from AND o.paid_at < :to
-            GROUP BY oi.status
+            WHERE oi.status = 'CANCELLED' AND o.paid_at >= :from AND o.paid_at < :to
+            UNION ALL
+            SELECT 'PAYMENT_FAILED', COUNT(*)
+            FROM orders o
+            WHERE o.status = 'PAYMENT_FAILED' AND o.created_at >= :from AND o.created_at < :to
+              AND EXISTS (SELECT 1 FROM order_item oi
+                          JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+                          WHERE oi.order_id = o.id)
+            UNION ALL
+            SELECT 'RETURNED', COUNT(*)
+            FROM order_item oi
+            JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+            WHERE oi.status = 'RETURNED' AND o.paid_at >= :from AND o.paid_at < :to
             """, nativeQuery = true)
-    List<StatusCountRow> countSellerItemStatus(@Param("brandId") Long brandId,
-                                               @Param("from") LocalDateTime from,
-                                               @Param("to") LocalDateTime to);
+    List<StatusCountRow> countSellerStatusBuckets(@Param("brandId") Long brandId,
+                                                  @Param("from") LocalDateTime from,
+                                                  @Param("to") LocalDateTime to);
 
     /** I-7 4단 purchase 정본 — order_item×product×brand, 주문서 1회=1 (02 §4) */
     @Query(value = """

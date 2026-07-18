@@ -10,9 +10,12 @@ import com.jarvis.seller.dto.SellerProductUpdateRequest;
 import com.jarvis.seller.dto.SellerProductUpdateResponse;
 import com.jarvis.seller.dto.SellerSummaryResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -29,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/seller")
 @RequiredArgsConstructor
+@Validated
 public class SellerController {
 
     private final SellerBrandResolver brandResolver;
@@ -50,8 +54,8 @@ public class SellerController {
     @GetMapping("/orders")
     public ApiResponse<SellerOrderListResponse> orders(
             @AuthenticationPrincipal AuthUser authUser,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(50) int size) {
         Brand brand = brandResolver.resolve(authUser.memberId());
         return ApiResponse.success(sellerOrderService.list(brand.getId(), page, size));
     }
@@ -63,8 +67,8 @@ public class SellerController {
             @RequestParam(required = false) ProductStatus status,
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "latest") String sort,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(50) int size) {
         Brand brand = brandResolver.resolve(authUser.memberId());
         return ApiResponse.success(sellerProductService.list(brand.getId(), status, q, sort, page, size));
     }
