@@ -39,6 +39,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}, ${{ secrets.EC2_HOST_2 }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 30m
           script: |
             cd ~/jarvis-backend
             git pull
