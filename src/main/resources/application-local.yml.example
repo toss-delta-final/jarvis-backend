@@ -1,0 +1,27 @@
+# 복사해서 application-local.yml로 사용 (gitignore — 03 §5)
+# docker-compose.yml 기본값과 짝이 맞는 로컬 개발용 값
+spring:
+  datasource:
+    url: jdbc:mariadb://localhost:3306/jarvis
+    username: jarvis
+    password: jarvis-local
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+jwt:
+  secret: # AT/RT 서명용 HS256 시크릿 — 256bit 이상 임의 문자열 (03 §5)
+
+app:
+  stream-ticket:
+    # 스트림 티켓 RS256 private key — base64(PKCS#8 DER). 생성:
+    #   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    #     | openssl pkcs8 -topk8 -nocrypt -outform DER | base64 -w0
+    private-key:
+    kid: # 현재 키 ID (JWKS의 kid와 일치) — 예: jarvis-local-2026-07
+  internal:
+    token: # /internal 서비스 토큰 (03 D4) — FastAPI 팀과 .env로 공유
+  llm:
+    base-url: http://localhost:8000 # Spring→FastAPI (P-5·I-20). 미기동이면 빈 값 = 통지 skip
+    sse-url: http://localhost:8000  # CH-1 응답 llmSseUrl — FE가 직결할 공개 URL

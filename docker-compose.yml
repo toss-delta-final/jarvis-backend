@@ -1,0 +1,39 @@
+# 로컬 개발용 (03 §4 — MariaDB 11.x + Redis). 배포는 배포 담당 소관(RDS 외부화, 03 §1-2).
+# 기본값은 로컬 전용 더미 — 실제 값 오버라이드는 .env (.env.example 참조)
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: jarvis-mariadb
+    ports:
+      # 로컬에 다른 MySQL/MariaDB가 3306을 점유 중이면 .env에서 DB_PORT만 바꾼다
+      - "${DB_PORT:-3306}:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root-local}
+      MARIADB_DATABASE: ${DB_NAME:-jarvis}
+      MARIADB_USER: ${DB_USERNAME:-jarvis}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-jarvis-local}
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    container_name: jarvis-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  mariadb-data:

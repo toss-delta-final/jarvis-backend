@@ -1,0 +1,14 @@
+# build
+.gradle/
+build/
+out/
+bin/
+
+# secrets (03 §5 — 어떤 시크릿도 커밋 금지)
+.env
+src/main/resources/application-local.yml
+
+# IDE
+.idea/
+*.iml
+.vscode/

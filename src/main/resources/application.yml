@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: jarvis-backend
+  profiles:
+    default: local
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.mariadb.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate  # 스키마 원본은 docs/backend/schema.sql — JPA는 만들지도 바꾸지도 않음 (03 §3-1)
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MariaDBDialect
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+  jackson:
+    time-zone: Asia/Seoul
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+# 인증 (03 D3 — AT 30분 / RT 14일, 시크릿은 환경변수)
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-minutes: 30
+  refresh-token-days: 14
+
+# mock 전이 간격 (01 §6 — 환경변수 아님, yml 기본값)
+app:
+  # 인증/게스트 쿠키 Secure 속성 (03 D3) — 운영은 HTTPS라 true. localhost는 secure context라 http에서도 전송됨.
+  # 비-localhost origin으로 로컬 테스트 시에만 APP_COOKIE_SECURE=false로 내릴 수 있음.
+  cookie:
+    secure: ${APP_COOKIE_SECURE:true}
+  mock:
+    shipping-minutes: 5
+    delivery-minutes: 5
+    confirm-minutes: 10
+    claim-approve-minutes: 5
+  # 채팅 세션·스트림 티켓 (03 D5, 05 §1-0)
+  chat:
+    session-ttl-minutes: 10
+  stream-ticket:
+    private-key: ${STREAM_TICKET_PRIVATE_KEY} # RS256 private key — base64(PKCS#8 DER), Spring만 보관 (03 §5)
+    kid: ${STREAM_TICKET_KID}
+    ttl-seconds: 60
+  # internal 서비스 토큰 (03 D4 — FastAPI와 .env로 공유)
+  internal:
+    token: ${INTERNAL_TOKEN}
+  # Spring→FastAPI 아웃바운드 (03 §5) — base-url 빈 값이면 통지 skip(FastAPI 미기동 로컬)
+  llm:
+    base-url: ${LLM_BASE_URL:}
+    sse-url: ${LLM_SSE_URL:http://localhost:8000} # CH-1 응답 llmSseUrl — FE가 직결할 공개 URL
