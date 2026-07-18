@@ -34,6 +34,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -52,6 +53,8 @@ class OrderServiceTest {
     @Mock ReviewRepository reviewRepository;
     @Mock PaymentService paymentService;
     @Mock OrderStatusChanger statusChanger;
+
+    @Captor ArgumentCaptor<List<OrderItem>> itemsCaptor;
 
     @InjectMocks OrderService orderService;
 
@@ -129,7 +132,6 @@ class OrderServiceTest {
         verify(statusChanger).paymentFailed(any(Order.class), eq("MOCK_DECLINED"));
         verify(statusChanger, never()).paymentSucceeded(any(), anyList(), any());
         verify(productRepository, never()).deductStock(anyLong(), anyInt());
-        ArgumentCaptor<List<OrderItem>> itemsCaptor = ArgumentCaptor.forClass(List.class);
         verify(orderItemRepository).saveAll(itemsCaptor.capture());
         assertThat(itemsCaptor.getValue()).allMatch(i -> i.getStatus() == OrderItemStatus.PENDING);
     }
