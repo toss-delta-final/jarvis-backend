@@ -19,7 +19,7 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-
+          
       - name: Gradle 실행 권한 부여
         run: chmod +x ./gradlew
 
@@ -35,7 +35,8 @@ jobs:
       - name: EC2 서버 원격 접속 및 배포 시작
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.EC2_HOST }}
+          # 💥 1번 서버와 2번 서버 주소를 모두 바라보도록 수정했습니다.
+          host: ${{ secrets.EC2_HOST }}, ${{ secrets.EC2_HOST_2 }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
