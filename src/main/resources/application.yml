@@ -33,7 +33,7 @@ management:
 
 # 인증 (03 D3 — AT 30분 / RT 14일, 시크릿은 환경변수)
 jwt:
-  secret: ${JWT_SECRET}
+  secret: "shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk"
   access-token-minutes: 30
   refresh-token-days: 14
 
