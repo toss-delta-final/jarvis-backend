@@ -61,4 +61,4 @@ app:
   # Spring→FastAPI 아웃바운드 (03 §5) — base-url 빈 값이면 통지 skip(FastAPI 미기동 로컬)
   llm:
     base-url: ${LLM_BASE_URL:}
-    sse-url: ${LLM_SSE_URL:http://localhost:8000} # CH-1 응답 llmSseUrl — FE가 직결할 공개 URL
+    sse-url: ${LLM_SSE_URL:http://localhost:8000} # FastAPI 공개 base URL — llmSseUrl은 여기에 /chat(구매자)·/seller/chat(판매자)을 붙여 내려감

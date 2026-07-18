@@ -1,11 +1,10 @@
 package com.jarvis.chat.dto;
 
-import com.jarvis.product.dto.ProductCardResponse;
 import java.util.List;
 
 /**
- * CH-5 응답 (04 §6 — 스키마 OPEN, 임시) — 순서는 I-21 콜백 저장 순서.
- * reason은 SSE 소유라 여기 없음 — FE가 productId로 조인 (05 §1-2).
+ * CH-5 응답 (04 §6 — 2026-07-18 확정) — 순서는 I-21 콜백 저장 순서.
+ * 카드에 추천 이유(reason)를 함께 실어 FE가 조인 없이 렌더한다.
  */
-public record RecommendationListResponse(String listId, List<ProductCardResponse> items) {
+public record RecommendationListResponse(String listId, List<RecommendedCardResponse> items) {
 }
