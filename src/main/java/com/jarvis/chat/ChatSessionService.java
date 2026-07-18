@@ -92,8 +92,8 @@ public class ChatSessionService {
         String ticket = brandId != null
                 ? ticketProvider.createSellerTicket(identity, brandId)
                 : ticketProvider.createTicket(identity);
-        return new ChatSessionResponse(sessionId, ticket, llmProperties.sseUrl(),
-                ticketProvider.ttlSeconds());
+        return new ChatSessionResponse(sessionId, sessionTtl().toSeconds(), ticket,
+                ticketProvider.ttlSeconds(), llmProperties.sseUrl());
     }
 
     private Duration sessionTtl() {

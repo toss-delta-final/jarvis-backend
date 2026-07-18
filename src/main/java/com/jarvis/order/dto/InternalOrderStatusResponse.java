@@ -10,8 +10,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * I-4 주문 상태 요약 (05 §I-4) — 문의 챗봇 전용. statusText는 한국어 표시 문자열로
- * LLM이 그대로 인용한다(FE용 API는 enum 코드만 — 07-17 FE와 다른 소비자라 여기만 한국어).
+ * I-4 주문 상태 요약 (05 §I-4) — 문의 챗봇 전용. statusText·representativeStatus는 한국어 표시
+ * 문자열로 LLM이 그대로 인용한다(FE용 API는 enum 코드만 — 07-17 FE와 다른 소비자라 여기만 한국어,
+ * 07-18 노션 재확인).
  */
 public record InternalOrderStatusResponse(List<Summary> orders) {
 
@@ -27,6 +28,16 @@ public record InternalOrderStatusResponse(List<Summary> orders) {
             OrderItemStatus.CANCELLED, "취소 완료",
             OrderItemStatus.RETURN_REQUESTED, "반품 접수",
             OrderItemStatus.RETURNED, "반품 완료");
+
+    private static final Map<RepresentativeStatus, String> REPRESENTATIVE_STATUS_TEXT = Map.of(
+            RepresentativeStatus.PENDING, "결제 대기",
+            RepresentativeStatus.PAYMENT_FAILED, "결제 실패",
+            RepresentativeStatus.ORDERED, "주문 완료",
+            RepresentativeStatus.SHIPPING, "배송중",
+            RepresentativeStatus.DELIVERED, "배송 완료",
+            RepresentativeStatus.CONFIRMED, "구매 확정",
+            RepresentativeStatus.CLAIM_IN_PROGRESS, "취소/반품 진행중",
+            RepresentativeStatus.COMPLETED, "처리 완료");
 
     public record Summary(Long orderId, OffsetDateTime orderedAt, String representativeStatus,
                           List<Item> items) {
@@ -46,8 +57,8 @@ public record InternalOrderStatusResponse(List<Summary> orders) {
             List<OrderItem> items = itemsByOrder.getOrDefault(order.getId(), List.of());
             return new Summary(order.getId(),
                     order.getCreatedAt().atZone(ZONE).toOffsetDateTime(),
-                    RepresentativeStatus.of(order.getStatus(),
-                            items.stream().map(OrderItem::getStatus).toList()).name(),
+                    REPRESENTATIVE_STATUS_TEXT.get(RepresentativeStatus.of(order.getStatus(),
+                            items.stream().map(OrderItem::getStatus).toList())),
                     items.stream().map(Item::from).toList());
         }).toList();
         return new InternalOrderStatusResponse(summaries);

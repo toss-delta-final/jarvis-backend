@@ -2,6 +2,7 @@ package com.jarvis.product;
 
 import com.jarvis.global.auth.AuthUser;
 import com.jarvis.global.response.ApiResponse;
+import com.jarvis.product.dto.ProductCardListResponse;
 import com.jarvis.product.dto.ProductCardResponse;
 import com.jarvis.product.dto.ProductDetailResponse;
 import jakarta.validation.constraints.Max;
@@ -30,9 +31,9 @@ public class ProductController {
 
     /** popular가 {id} 경로보다 먼저 매칭되도록 정적 경로 우선 — 스프링이 자동 처리 */
     @GetMapping("/popular")
-    public ApiResponse<List<ProductCardResponse>> popular(
+    public ApiResponse<ProductCardListResponse> popular(
             @RequestParam(defaultValue = "12") @Min(1) @Max(50) int size) {
-        return ApiResponse.success(productService.getPopular(size));
+        return ApiResponse.success(new ProductCardListResponse(productService.getPopular(size)));
     }
 
     /**
@@ -46,8 +47,9 @@ public class ProductController {
 
     /** M-7 — 🔑 USER 가드 (SecurityConfig의 /api/products/recent 선행 매칭) */
     @GetMapping("/recent")
-    public ApiResponse<List<ProductCardResponse>> recent(@AuthenticationPrincipal AuthUser authUser) {
-        return ApiResponse.success(productService.getRecent(authUser.memberId(), RECENT_SIZE));
+    public ApiResponse<ProductCardListResponse> recent(@AuthenticationPrincipal AuthUser authUser) {
+        return ApiResponse.success(
+                new ProductCardListResponse(productService.getRecent(authUser.memberId(), RECENT_SIZE)));
     }
 
     @GetMapping("/{id}")

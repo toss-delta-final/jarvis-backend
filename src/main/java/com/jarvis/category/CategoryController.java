@@ -1,8 +1,7 @@
 package com.jarvis.category;
 
-import com.jarvis.category.dto.CategoryTreeResponse;
+import com.jarvis.category.dto.CategoryListResponse;
 import com.jarvis.global.response.ApiResponse;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,7 +16,7 @@ public class CategoryController {
     private final CategoryService categoryService;
 
     @GetMapping
-    public ApiResponse<List<CategoryTreeResponse>> tree() {
-        return ApiResponse.success(categoryService.getTree());
+    public ApiResponse<CategoryListResponse> tree() {
+        return ApiResponse.success(new CategoryListResponse(categoryService.getTree()));
     }
 }

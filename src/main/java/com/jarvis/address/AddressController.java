@@ -1,12 +1,12 @@
 package com.jarvis.address;
 
 import com.jarvis.address.dto.AddressCreateRequest;
+import com.jarvis.address.dto.AddressListResponse;
 import com.jarvis.address.dto.AddressResponse;
 import com.jarvis.address.dto.AddressUpdateRequest;
 import com.jarvis.global.auth.AuthUser;
 import com.jarvis.global.response.ApiResponse;
 import jakarta.validation.Valid;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -27,7 +27,7 @@ public class AddressController {
     private final AddressService addressService;
 
     @GetMapping
-    public ApiResponse<List<AddressResponse>> list(@AuthenticationPrincipal AuthUser authUser) {
+    public ApiResponse<AddressListResponse> list(@AuthenticationPrincipal AuthUser authUser) {
         return ApiResponse.success(addressService.list(authUser.memberId()));
     }
 

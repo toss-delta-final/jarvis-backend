@@ -55,7 +55,7 @@ class StreamTicketProviderTest {
     }
 
     @Test
-    @DisplayName("S-4 SELLER 티켓 — channel/brand_id claim 추가, 일반 티켓엔 없음 (04 §7)")
+    @DisplayName("S-4 SELLER 티켓 — role/brandId claim 추가(노션 CH-6), 일반 티켓엔 없음")
     void sellerTicket() throws Exception {
         String sellerTicket = provider.createSellerTicket(ChatIdentity.member(7L), 77L);
         String normalTicket = provider.createTicket(ChatIdentity.member(7L));
@@ -65,13 +65,13 @@ class StreamTicketProviderTest {
         Claims normalClaims = Jwts.parser().verifyWith(publicKeyFromJwks()).build()
                 .parseSignedClaims(normalTicket).getPayload();
 
-        assertThat(sellerClaims.get("channel", String.class))
-                .isEqualTo(StreamTicketProvider.CHANNEL_SELLER);
-        assertThat(sellerClaims.get("brand_id", Long.class)).isEqualTo(77L);
+        assertThat(sellerClaims.get("role", String.class))
+                .isEqualTo(StreamTicketProvider.ROLE_SELLER);
+        assertThat(sellerClaims.get("brandId", Long.class)).isEqualTo(77L);
         assertThat(sellerClaims.get("scope", String.class))
                 .isEqualTo(StreamTicketProvider.SCOPE_CHAT_STREAM);
-        assertThat(normalClaims.get("channel")).isNull();
-        assertThat(normalClaims.get("brand_id")).isNull();
+        assertThat(normalClaims.get("role")).isNull();
+        assertThat(normalClaims.get("brandId")).isNull();
     }
 
     @Test

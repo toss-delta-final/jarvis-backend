@@ -3,9 +3,11 @@ package com.jarvis.internal;
 import com.jarvis.cart.CartService;
 import com.jarvis.cart.dto.CartAddRequest;
 import com.jarvis.cart.dto.CartItemResponse;
-import com.jarvis.cart.dto.CartResponse;
 import com.jarvis.global.response.ApiResponse;
+import com.jarvis.global.response.BusinessException;
+import com.jarvis.global.response.ErrorCode;
 import com.jarvis.internal.dto.InternalCartAddRequest;
+import com.jarvis.internal.dto.InternalCartResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,8 +38,12 @@ public class InternalCartController {
 
     /** I-18 — 응답 item에 productName·optionName 포함(LLM이 그대로 발화), 빈 장바구니도 200 (05 §I-18) */
     @GetMapping
-    public ApiResponse<CartResponse> getCart(@RequestParam(required = false) Long userId,
-                                             @RequestParam(required = false) String guestId) {
-        return ApiResponse.success(cartService.getCart(userId, guestId));
+    public ApiResponse<InternalCartResponse> getCart(@RequestParam(required = false) Long userId,
+                                                     @RequestParam(required = false) String guestId) {
+        // userId XOR guestId — 둘 다 없거나 둘 다 있으면 400 (05 §I-18)
+        if ((userId == null) == (guestId == null)) {
+            throw new BusinessException(ErrorCode.CART_QUERY_INVALID);
+        }
+        return ApiResponse.success(InternalCartResponse.from(cartService.getCart(userId, guestId)));
     }
 }

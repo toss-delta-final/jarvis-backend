@@ -24,12 +24,13 @@ public class StreamTicketProvider {
     public static final String ISSUER = "jarvis-spring-auth";
     public static final String AUDIENCE = "jarvis-fastapi-ai";
     public static final String SCOPE_CHAT_STREAM = "chat:stream";
-    public static final String CHANNEL_SELLER = "SELLER";
+    public static final String ROLE_SELLER = "seller";
 
     private static final String CLAIM_SUB_TYPE = "sub_type";
     private static final String CLAIM_SCOPE = "scope";
-    private static final String CLAIM_CHANNEL = "channel";
-    private static final String CLAIM_BRAND_ID = "brand_id";
+    // 노션 CH-6 계약(2026-07-18 확정): 판매자 티켓은 role=seller + brandId — FastAPI가 노션 기준으로 검증
+    private static final String CLAIM_ROLE = "role";
+    private static final String CLAIM_BRAND_ID = "brandId";
 
     private final RSAPrivateCrtKey privateKey;
     private final RSAPublicKey publicKey;
@@ -71,7 +72,7 @@ public class StreamTicketProvider {
                 .audience().add(AUDIENCE).and()
                 .claim(CLAIM_SCOPE, SCOPE_CHAT_STREAM);
         if (brandId != null) {
-            builder.claim(CLAIM_CHANNEL, CHANNEL_SELLER).claim(CLAIM_BRAND_ID, brandId);
+            builder.claim(CLAIM_ROLE, ROLE_SELLER).claim(CLAIM_BRAND_ID, brandId);
         }
         return builder
                 .issuedAt(now)

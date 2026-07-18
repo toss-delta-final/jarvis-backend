@@ -39,19 +39,24 @@ public class ChatController {
     private final GuestService guestService;
     private final SellerBrandResolver sellerBrandResolver;
 
-    /** CH-1 — "새 대화" 버튼도 이걸 재호출 (05 §1-0). SELLER 채널은 S-4 별도 입구 전용 */
+    /**
+     * CH-1 — "새 대화" 버튼도 이걸 재호출 (05 §1-0). Body 없음·channel 미지정은 SHOPPING 기본값,
+     * SELLER 채널은 S-4 별도 입구 전용
+     */
     @PostMapping("/sessions")
-    public ApiResponse<ChatSessionResponse> createSession(@Valid @RequestBody ChatSessionRequest request,
+    public ApiResponse<ChatSessionResponse> createSession(@RequestBody(required = false) ChatSessionRequest request,
                                                           @AuthenticationPrincipal AuthUser authUser,
                                                           HttpServletRequest httpRequest,
                                                           HttpServletResponse httpResponse) {
-        if (request.channel() == ChatChannel.SELLER) {
+        ChatChannel channel = request == null || request.channel() == null
+                ? ChatChannel.SHOPPING : request.channel();
+        if (channel == ChatChannel.SELLER) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         ChatIdentity identity = authUser != null
                 ? ChatIdentity.member(authUser.memberId())
                 : guestIdentity(httpRequest, httpResponse);
-        return ApiResponse.success(chatSessionService.issueSession(identity, request.channel()));
+        return ApiResponse.success(chatSessionService.issueSession(identity, channel));
     }
 
     /**

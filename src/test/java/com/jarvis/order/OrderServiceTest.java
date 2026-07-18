@@ -18,6 +18,7 @@ import com.jarvis.cart.CartItem;
 import com.jarvis.cart.CartItemRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
+import com.jarvis.member.MemberRepository;
 import com.jarvis.order.PaymentService.PaymentResult;
 import com.jarvis.order.dto.OrderCreateRequest;
 import com.jarvis.order.dto.OrderCreateResponse;
@@ -50,6 +51,7 @@ class OrderServiceTest {
     @Mock ProductOptionRepository productOptionRepository;
     @Mock ProductChangeLogRepository productChangeLogRepository;
     @Mock AddressRepository addressRepository;
+    @Mock MemberRepository memberRepository;
     @Mock ReviewRepository reviewRepository;
     @Mock PaymentService paymentService;
     @Mock OrderStatusChanger statusChanger;

@@ -1,11 +1,11 @@
 package com.jarvis.address;
 
 import com.jarvis.address.dto.AddressCreateRequest;
+import com.jarvis.address.dto.AddressListResponse;
 import com.jarvis.address.dto.AddressResponse;
 import com.jarvis.address.dto.AddressUpdateRequest;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,10 +21,11 @@ public class AddressService {
 
     private final AddressRepository addressRepository;
 
-    public List<AddressResponse> list(Long memberId) {
-        return addressRepository.findAllByMemberIdOrderByIsDefaultDescIdAsc(memberId).stream()
-                .map(AddressResponse::from)
-                .toList();
+    public AddressListResponse list(Long memberId) {
+        return new AddressListResponse(
+                addressRepository.findAllByMemberIdOrderByIsDefaultDescIdAsc(memberId).stream()
+                        .map(AddressResponse::from)
+                        .toList());
     }
 
     /** 첫 배송지는 요청값과 무관하게 기본. is_default 지정 시 기존 기본 해제 — 같은 트랜잭션 (04 §5) */

@@ -14,7 +14,7 @@ public record InternalOrderListResponse(List<Summary> orders) {
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
     public record Summary(Long orderId, String orderNo, String representativeStatus,
-                          int totalAmount, int shippingFee, OffsetDateTime orderedAt,
+                          int itemsTotal, int shippingFee, int totalAmount, OffsetDateTime orderedAt,
                           List<Item> items) {
     }
 
@@ -32,10 +32,11 @@ public record InternalOrderListResponse(List<Summary> orders) {
                                                  Map<Long, List<OrderItem>> itemsByOrder) {
         List<Summary> summaries = orders.stream().map(order -> {
             List<OrderItem> items = itemsByOrder.getOrDefault(order.getId(), List.of());
+            int itemsTotal = items.stream().mapToInt(item -> item.getPrice() * item.getQuantity()).sum();
             return new Summary(order.getId(), order.orderNo(),
                     RepresentativeStatus.of(order.getStatus(),
                             items.stream().map(OrderItem::getStatus).toList()).name(),
-                    order.getTotalAmount(), 0,
+                    itemsTotal, 0, order.getTotalAmount(),
                     order.getCreatedAt().atZone(ZONE).toOffsetDateTime(),
                     items.stream().map(Item::from).toList());
         }).toList();

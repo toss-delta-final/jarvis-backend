@@ -2,10 +2,10 @@ package com.jarvis.wishlist;
 
 import com.jarvis.global.auth.AuthUser;
 import com.jarvis.global.response.ApiResponse;
-import com.jarvis.product.dto.ProductCardResponse;
+import com.jarvis.product.dto.ProductCardListResponse;
 import com.jarvis.wishlist.dto.WishlistAddRequest;
+import com.jarvis.wishlist.dto.WishlistAddResponse;
 import jakarta.validation.Valid;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,15 +25,16 @@ public class WishlistController {
     private final WishlistService wishlistService;
 
     @GetMapping
-    public ApiResponse<List<ProductCardResponse>> getList(@AuthenticationPrincipal AuthUser authUser) {
-        return ApiResponse.success(wishlistService.getList(authUser.memberId()));
+    public ApiResponse<ProductCardListResponse> getList(@AuthenticationPrincipal AuthUser authUser) {
+        return ApiResponse.success(
+                new ProductCardListResponse(wishlistService.getList(authUser.memberId())));
     }
 
     @PostMapping
-    public ApiResponse<Void> add(@Valid @RequestBody WishlistAddRequest request,
-                                 @AuthenticationPrincipal AuthUser authUser) {
+    public ApiResponse<WishlistAddResponse> add(@Valid @RequestBody WishlistAddRequest request,
+                                                @AuthenticationPrincipal AuthUser authUser) {
         wishlistService.add(authUser.memberId(), request.productId());
-        return ApiResponse.success(null);
+        return ApiResponse.success(new WishlistAddResponse(request.productId()));
     }
 
     @DeleteMapping("/{productId}")

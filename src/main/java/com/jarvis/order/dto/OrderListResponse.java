@@ -11,15 +11,15 @@ import java.util.Map;
 import org.springframework.data.domain.Page;
 
 /**
- * O-3 (04 §4) — status는 대표 상태 enum 코드 8종(01 §4), 표시 문구는 FE 매핑.
+ * O-3 (04 §4) — representativeStatus는 대표 상태 enum 코드 8종(01 §4), 표시 문구는 FE 매핑.
  * imageUrl은 스냅샷이 아니라 현재 상품 이미지(표시용) — 상품 삭제 정책이 RESTRICT라 항상 존재.
  */
-public record OrderListResponse(List<Summary> items, int page, int size,
+public record OrderListResponse(List<Summary> content, int page, int size,
                                 long totalElements, int totalPages) {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
-    public record Summary(Long orderId, String orderNo, String status, int totalAmount,
+    public record Summary(Long orderId, String orderNo, String representativeStatus, int totalAmount,
                           OffsetDateTime orderedAt, List<ItemSummary> items) {
     }
 

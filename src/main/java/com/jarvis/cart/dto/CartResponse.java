@@ -9,7 +9,7 @@ import java.util.List;
  */
 public record CartResponse(List<Item> items, int totalOriginal, int totalSale, int discount) {
 
-    public record Item(Long cartItemId, Long productId, String productName,
+    public record Item(Long cartItemId, Long productId, String name,
                        Long brandId, String brandName,
                        Long optionId, String optionName,
                        int quantity, int price, int originalPrice,

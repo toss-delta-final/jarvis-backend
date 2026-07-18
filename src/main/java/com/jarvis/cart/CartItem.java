@@ -61,7 +61,7 @@ public class CartItem extends BaseTimeEntity {
         return item;
     }
 
-    /** 재담기 합산 — 상한 99 클램프 (04 §3, 02 D30과 동일 규칙) */
+    /** 합산 상한 99 클램프 — 로그인 병합 전용. 담기(C-2/I-2) 초과는 호출 전 400 (노션 C-2, 2026-07-18) */
     public void addQuantity(int amount) {
         this.quantity = Math.min(MAX_QUANTITY, this.quantity + amount);
     }

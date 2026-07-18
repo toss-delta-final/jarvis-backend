@@ -6,6 +6,7 @@ import com.jarvis.cart.CartItem;
 import com.jarvis.cart.CartItemRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
+import com.jarvis.member.MemberRepository;
 import com.jarvis.order.PaymentService.PaymentResult;
 import com.jarvis.order.dto.InternalOrderListResponse;
 import com.jarvis.order.dto.InternalOrderStatusResponse;
@@ -60,6 +61,7 @@ public class OrderService {
     private final ProductOptionRepository productOptionRepository;
     private final ProductChangeLogRepository productChangeLogRepository;
     private final AddressRepository addressRepository;
+    private final MemberRepository memberRepository;
     private final ReviewRepository reviewRepository;
     private final PaymentService paymentService;
     private final OrderStatusChanger statusChanger;
@@ -144,6 +146,7 @@ public class OrderService {
 
     /** I-4 — 최근 주문 상태 요약 (05 §I-4) — 문의 챗봇 전용, I-19(목록)와 역할 분담 */
     public InternalOrderStatusResponse statusSummary(Long memberId, int recent) {
+        requireMember(memberId);
         var orders = orderRepository.findAllByMemberIdOrderByIdDesc(
                 memberId, PageRequest.of(0, Math.min(Math.max(recent, 1), CHAT_LIST_LIMIT)));
         return InternalOrderStatusResponse.from(orders.getContent(), itemsByOrder(orders.getContent()));
@@ -151,6 +154,7 @@ public class OrderService {
 
     /** I-19 — CS 챗봇 구매 이력 목록 (05 §I-19) — status는 우리 상태명 단일 필터(아이템 기준) */
     public InternalOrderListResponse listForChat(Long memberId, String status) {
+        requireMember(memberId);
         OrderItemStatus filter = parseChatStatus(status);
         var orders = orderRepository.findAllByMemberIdOrderByIdDesc(
                 memberId, PageRequest.of(0, CHAT_LIST_LIMIT));
@@ -176,9 +180,16 @@ public class OrderService {
             return null;
         }
         if (!CHAT_STATUS_VOCAB.contains(status)) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+            throw new BusinessException(ErrorCode.ORDER_INVALID_PARAM);
         }
         return OrderItemStatus.valueOf(status);
+    }
+
+    /** I-4·I-19 — 미존재 회원은 200 빈 목록이 아니라 404 (05 §I-4·§I-19) */
+    private void requireMember(Long memberId) {
+        if (!memberRepository.existsById(memberId)) {
+            throw new BusinessException(ErrorCode.MEMBER_NOT_FOUND);
+        }
     }
 
     /** O-4 — 가능 액션(canCancel/canReturn/canReview)은 01 §3 매트릭스를 서버가 계산 */
