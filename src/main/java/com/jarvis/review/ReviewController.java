@@ -6,6 +6,7 @@ import com.jarvis.review.dto.ReviewCreateRequest;
 import com.jarvis.review.dto.ReviewCreateResponse;
 import com.jarvis.review.dto.ReviewListResponse;
 import com.jarvis.review.dto.ReviewReportRequest;
+import com.jarvis.review.dto.ReviewReportResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -44,10 +45,9 @@ public class ReviewController {
     }
 
     @PostMapping("/api/reviews/{id}/reports")
-    public ApiResponse<Void> report(@PathVariable Long id,
-                                    @Valid @RequestBody ReviewReportRequest request,
-                                    @AuthenticationPrincipal AuthUser authUser) {
-        reviewService.report(authUser.memberId(), id, request.reason());
-        return ApiResponse.success(null);
+    public ApiResponse<ReviewReportResponse> report(@PathVariable Long id,
+                                                    @Valid @RequestBody ReviewReportRequest request,
+                                                    @AuthenticationPrincipal AuthUser authUser) {
+        return ApiResponse.success(reviewService.report(authUser.memberId(), id, request.reason()));
     }
 }

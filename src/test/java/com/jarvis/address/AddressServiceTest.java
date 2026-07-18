@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
 import com.jarvis.address.dto.AddressCreateRequest;
+import com.jarvis.address.dto.AddressListResponse;
 import com.jarvis.address.dto.AddressResponse;
 import com.jarvis.address.dto.AddressUpdateRequest;
 import com.jarvis.global.response.BusinessException;
@@ -163,8 +164,8 @@ class AddressServiceTest {
         when(addressRepository.findAllByMemberIdOrderByIsDefaultDescIdAsc(MEMBER_ID))
                 .thenReturn(List.of(a1, a2));
 
-        List<AddressResponse> responses = addressService.list(MEMBER_ID);
+        AddressListResponse response = addressService.list(MEMBER_ID);
 
-        assertThat(responses).extracting(AddressResponse::id).containsExactly(3L, 1L);
+        assertThat(response.addresses()).extracting(AddressResponse::addressId).containsExactly(3L, 1L);
     }
 }

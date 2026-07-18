@@ -28,7 +28,7 @@ public record ProductDetailResponse(Long id, String name, int price, int origina
         }
     }
 
-    public record OptionResponse(Long id, String name, int extraPrice) {
+    public record OptionResponse(Long optionId, String name, int extraPrice) {
         public static OptionResponse from(ProductOption option) {
             return new OptionResponse(option.getId(), option.getName(), option.getExtraPrice());
         }

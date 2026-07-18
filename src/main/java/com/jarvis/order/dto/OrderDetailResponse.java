@@ -19,11 +19,14 @@ import java.util.function.Predicate;
 public record OrderDetailResponse(Long orderId, String orderNo, String status, String representativeStatus,
                                   String paymentMethod, int totalAmount,
                                   OffsetDateTime orderedAt, OffsetDateTime paidAt,
-                                  String recipient, String phone, String zipCode,
-                                  String address1, String address2, String deliveryRequest,
+                                  ShippingAddress address, String deliveryRequest,
                                   List<Item> items) {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
+
+    public record ShippingAddress(String recipient, String phone, String zipCode,
+                                  String address1, String address2) {
+    }
 
     public record Item(Long orderItemId, Long productId, String productName, String optionName,
                        int price, int originalPrice, int quantity, String status, String imageUrl,
@@ -48,8 +51,9 @@ public record OrderDetailResponse(Long orderId, String orderNo, String status, S
                 order.getPaymentMethod(), order.getTotalAmount(),
                 order.getCreatedAt().atZone(ZONE).toOffsetDateTime(),
                 order.getPaidAt() == null ? null : order.getPaidAt().atZone(ZONE).toOffsetDateTime(),
-                order.getRecipient(), order.getPhone(), order.getZipCode(),
-                order.getAddress1(), order.getAddress2(), order.getDeliveryRequest(),
+                new ShippingAddress(order.getRecipient(), order.getPhone(), order.getZipCode(),
+                        order.getAddress1(), order.getAddress2()),
+                order.getDeliveryRequest(),
                 orderItems.stream()
                         .map(item -> Item.from(item, imageUrlByProduct.get(item.getProductId()),
                                 reviewWritten.test(item.getId())))

@@ -44,12 +44,32 @@ class InquiryServiceTest {
 
         InquiryListResponse response = inquiryService.myInquiries(MEMBER_ID, 0, 10);
 
-        assertThat(response.items()).hasSize(1);
-        InquiryListResponse.Item item = response.items().get(0);
+        assertThat(response.content()).hasSize(1);
+        InquiryListResponse.Item item = response.content().get(0);
+        assertThat(item.inquiryId()).isEqualTo(3L);
         assertThat(item.title()).isEqualTo("배송 문의");
         assertThat(item.status()).isEqualTo("DONE");
-        assertThat(item.answer()).isEqualTo("내일 도착 예정입니다.");
-        assertThat(item.answeredAt()).isNotNull();
+        assertThat(item.answer().content()).isEqualTo("내일 도착 예정입니다.");
+        assertThat(item.answer().answeredAt()).isNotNull();
         assertThat(response.totalElements()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("M-9 — 답변 전 문의는 answer가 명시적 null (Notion 계약)")
+    void unansweredInquiryHasNullAnswer() {
+        Inquiry inquiry = mock(Inquiry.class, withSettings().strictness(Strictness.LENIENT));
+        when(inquiry.getId()).thenReturn(4L);
+        when(inquiry.getTitle()).thenReturn("환불 문의");
+        when(inquiry.getContent()).thenReturn("환불해주세요.");
+        when(inquiry.getStatus()).thenReturn(InquiryStatus.PENDING);
+        when(inquiry.getAnswer()).thenReturn(null);
+        when(inquiry.getAnsweredAt()).thenReturn(null);
+        when(inquiry.getCreatedAt()).thenReturn(LocalDateTime.of(2026, 7, 16, 9, 0));
+        when(inquiryRepository.findAllByMemberIdOrderByIdDesc(MEMBER_ID, PageRequest.of(0, 10)))
+                .thenReturn(new PageImpl<>(List.of(inquiry), PageRequest.of(0, 10), 1));
+
+        InquiryListResponse response = inquiryService.myInquiries(MEMBER_ID, 0, 10);
+
+        assertThat(response.content().get(0).answer()).isNull();
     }
 }

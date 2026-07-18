@@ -16,8 +16,10 @@ import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemRepository;
 import com.jarvis.order.OrderItemStatus;
 import com.jarvis.order.OrderRepository;
+import com.jarvis.product.ProductRepository;
 import com.jarvis.review.dto.ReviewCreateRequest;
 import com.jarvis.review.dto.ReviewCreateResponse;
+import com.jarvis.review.dto.ReviewReportResponse;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,7 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** M-1 후기 작성 + M-3 후기 신고 (04 §5, 01 §3) */
+/** M-1 후기 작성 + M-3 후기 신고 + P-3 존재 검증 (04 §5, 01 §3) */
 @ExtendWith(MockitoExtension.class)
 class ReviewWriteServiceTest {
 
@@ -42,6 +44,7 @@ class ReviewWriteServiceTest {
     @Mock ReviewReportRepository reviewReportRepository;
     @Mock OrderItemRepository orderItemRepository;
     @Mock OrderRepository orderRepository;
+    @Mock ProductRepository productRepository;
 
     @InjectMocks ReviewService reviewService;
 
@@ -80,7 +83,7 @@ class ReviewWriteServiceTest {
         assertThat(saved.getProductId()).isEqualTo(10L);
         assertThat(saved.getMemberId()).isEqualTo(MEMBER_ID);
         assertThat(saved.getOrderItemId()).isEqualTo(ORDER_ITEM_ID);
-        assertThat(response.id()).isEqualTo(7L);
+        assertThat(response.reviewId()).isEqualTo(7L);
     }
 
     @Test
@@ -130,18 +133,24 @@ class ReviewWriteServiceTest {
     }
 
     @Test
-    @DisplayName("M-3 — 신고 성공: PENDING으로 저장")
+    @DisplayName("M-3 — 신고 성공: PENDING으로 저장 + 생성된 reportId 반환")
     void reportSaved() {
         Review review = mock(Review.class);
         when(review.getMemberId()).thenReturn(999L);
         when(reviewRepository.findById(7L)).thenReturn(Optional.of(review));
+        when(reviewReportRepository.save(any(ReviewReport.class))).thenAnswer(inv -> {
+            ReviewReport report = inv.getArgument(0);
+            ReflectionTestUtils.setField(report, "id", 3L);
+            return report;
+        });
 
-        reviewService.report(MEMBER_ID, 7L, "부적절한 내용");
+        ReviewReportResponse response = reviewService.report(MEMBER_ID, 7L, "부적절한 내용");
 
         ArgumentCaptor<ReviewReport> captor = ArgumentCaptor.forClass(ReviewReport.class);
         verify(reviewReportRepository).save(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo(ReviewReportStatus.PENDING);
         assertThat(captor.getValue().getReporterId()).isEqualTo(MEMBER_ID);
+        assertThat(response.reportId()).isEqualTo(3L);
     }
 
     @Test
@@ -169,6 +178,17 @@ class ReviewWriteServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.REVIEW_REPORT_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("P-3 — 없는 상품의 후기 목록은 404 PRODUCT_NOT_FOUND")
+    void listMissingProduct() {
+        when(productRepository.existsById(404L)).thenReturn(false);
+
+        assertThatThrownBy(() -> reviewService.getProductReviews(404L, 0, 10, "latest"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.PRODUCT_NOT_FOUND);
     }
 
     @Test

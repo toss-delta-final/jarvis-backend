@@ -56,7 +56,8 @@ class ChatSessionServiceTest {
 
         assertThat(response.sessionId()).isNotBlank();
         assertThat(response.streamTicket()).isEqualTo("ticket");
-        assertThat(response.expiresIn()).isEqualTo(60L);
+        assertThat(response.ttlSeconds()).isEqualTo(600L);
+        assertThat(response.ticketTtlSeconds()).isEqualTo(60L);
         verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
                 eq("member|1|SHOPPING"), eq(Duration.ofMinutes(10)));
         verify(valueOperations).set(eq("chat:owner:member:1"),

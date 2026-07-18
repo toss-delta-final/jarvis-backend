@@ -12,7 +12,7 @@ import org.springframework.data.domain.Page;
  * 모의 결제라 실제 환불 처리는 없고 표시용 (01 §5).
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record ClaimListResponse(List<Item> items, int page, int size,
+public record ClaimListResponse(List<Item> content, int page, int size,
                                 long totalElements, int totalPages) {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");

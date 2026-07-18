@@ -5,10 +5,12 @@ import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemRepository;
 import com.jarvis.order.OrderRepository;
+import com.jarvis.product.ProductRepository;
 import com.jarvis.review.dto.RatingStats;
 import com.jarvis.review.dto.ReviewCreateRequest;
 import com.jarvis.review.dto.ReviewCreateResponse;
 import com.jarvis.review.dto.ReviewListResponse;
+import com.jarvis.review.dto.ReviewReportResponse;
 import com.jarvis.review.dto.ReviewRow;
 import java.util.Collection;
 import java.util.HashMap;
@@ -23,8 +25,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * P-3 목록·P-2 통계 + M-1 작성·M-3 신고 (04 §5).
- * 조회는 상품 존재 검증을 하지 않는다(미존재 productId → 빈 목록) —
- * ProductService가 이 서비스에 의존(P-2 통계)하므로 역방향 의존을 만들지 않기 위함 (03 §3-1 순환 방지).
+ * 조회의 상품 존재 검증은 ProductRepository로 직접 — ProductService가 이 서비스에 의존(P-2 통계)하므로
+ * 역방향 의존을 만들지 않기 위함 (03 §3-1 순환 방지).
  */
 @Service
 @RequiredArgsConstructor
@@ -35,6 +37,7 @@ public class ReviewService {
     private final ReviewReportRepository reviewReportRepository;
     private final OrderItemRepository orderItemRepository;
     private final OrderRepository orderRepository;
+    private final ProductRepository productRepository;
 
     /** M-1 — 자격: 본인 주문 + DELIVERED/CONFIRMED + 미작성 (01 §3, 02 D4) */
     @Transactional
@@ -58,7 +61,7 @@ public class ReviewService {
 
     /** M-3 — 자기 후기 400, 중복 신고 409 (02 D29) */
     @Transactional
-    public void report(Long memberId, Long reviewId, String reason) {
+    public ReviewReportResponse report(Long memberId, Long reviewId, String reason) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REVIEW_NOT_FOUND));
         if (memberId.equals(review.getMemberId())) {
@@ -67,10 +70,15 @@ public class ReviewService {
         if (reviewReportRepository.existsByReviewIdAndReporterId(reviewId, memberId)) {
             throw new BusinessException(ErrorCode.REVIEW_REPORT_DUPLICATE);
         }
-        reviewReportRepository.save(ReviewReport.request(reviewId, memberId, reason));
+        ReviewReport report = reviewReportRepository.save(
+                ReviewReport.request(reviewId, memberId, reason));
+        return new ReviewReportResponse(report.getId());
     }
 
     public ReviewListResponse getProductReviews(Long productId, int page, int size, String sort) {
+        if (!productRepository.existsById(productId)) {
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
         Pageable pageable = PageRequest.of(page, size);
         Page<ReviewRow> rows = "rating".equals(sort)
                 ? reviewRepository.findVisibleRowsByRating(productId, pageable)

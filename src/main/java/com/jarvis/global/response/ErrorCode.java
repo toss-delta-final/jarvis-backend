@@ -25,6 +25,7 @@ public enum ErrorCode {
 
     // member
     MEMBER_EMAIL_DUPLICATE(HttpStatus.CONFLICT, "이미 가입된 이메일입니다."),
+    MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "회원을 찾을 수 없습니다."),
 
     // catalog
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "상품을 찾을 수 없습니다."),
@@ -61,6 +62,8 @@ public enum ErrorCode {
     // internal (03 D4 — Phase 5)
     INTERNAL_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "서비스 토큰이 유효하지 않습니다."),
     NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "아직 제공하지 않는 기능입니다."),
+    CART_QUERY_INVALID(HttpStatus.BAD_REQUEST, "userId 또는 guestId 중 하나만 지정해야 합니다."),
+    ORDER_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
 
     // seller (04 §7·§10 — Phase 6)
     SELLER_BRAND_NOT_FOUND(HttpStatus.NOT_FOUND, "판매자에 연결된 브랜드가 없습니다."),

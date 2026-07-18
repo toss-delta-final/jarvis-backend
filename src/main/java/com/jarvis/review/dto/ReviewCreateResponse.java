@@ -5,7 +5,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 /** M-1 응답 — 날짜는 ISO 8601 + 오프셋 (03 D2) */
-public record ReviewCreateResponse(Long id, Long orderItemId, Long productId,
+public record ReviewCreateResponse(Long reviewId, Long orderItemId, Long productId,
                                    int rating, String content, OffsetDateTime createdAt) {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
