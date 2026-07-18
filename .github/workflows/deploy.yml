@@ -3,6 +3,8 @@ name: Deploy to EC2 with CI/CD
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   # 🛡️ 1단계: 진정한 자동화의 핵심, 기능 테스트 (CI)
@@ -27,6 +29,7 @@ jobs:
   # 🚚 2단계: 테스트가 '패스'했을 때만 실행되는 자동 배포 (CD)
   deploy:
     needs: test # 위의 test 작업이 무조건 성공해야만 이 단계가 실행됩니다!
+    if: github.event_name == 'push' # PR에서는 테스트만 돌리고 배포는 하지 않는다
     runs-on: ubuntu-latest
     steps:
       - name: EC2 서버 원격 접속 및 배포 시작
