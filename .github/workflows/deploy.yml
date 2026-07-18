@@ -47,6 +47,6 @@ jobs:
             docker stop jarvis-backend || true
             docker rm jarvis-backend || true
             
-            # 새 이미지 빌드 및 .env 주입하여 실행
+            # 새 이미지 빌드 및 토큰 강제 주입하여 실행
             docker build -t jarvis-backend .
-            docker run -d --name jarvis-backend --network host jarvis-backend
+            docker run -d --name jarvis-backend --network host -e INTERNAL_TOKEN="shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk" jarvis-backend
