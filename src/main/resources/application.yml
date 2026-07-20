@@ -33,7 +33,7 @@ management:
 
 # 인증 (03 D3 — AT 30분 / RT 14일, 시크릿은 환경변수)
 jwt:
-  secret: "shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk"
+  secret: ${JWT_SECRET} # HS256 서명 키 — 256bit(32자) 이상. 값이 바뀌면 발급된 AT/RT가 전부 무효화된다
   access-token-minutes: 30
   refresh-token-days: 14
 

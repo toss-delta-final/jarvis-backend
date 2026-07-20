@@ -435,10 +435,11 @@ public class SellerAnalyticsService {
         if (targetIds.isEmpty()) {
             return List.of();
         }
-        return behaviorEventRepository
-                .findAllByEventTypeAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
-                        CHECKOUT_START, from, to)
-                .stream()
+        // 브랜드 필터는 SQL(JSON_OVERLAPS)에서 끝내고, 살아남은 행만 파싱해 매칭 id를 뽑는다
+        String targetIdsJson = targetIds.stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(",", "[", "]"));
+        return behaviorEventRepository.findBrandCheckouts(targetIdsJson, from, to).stream()
                 .map(e -> new BrandCheckout(e.getCreatedAt(),
                         matchedProductIds(e.getProperties(), targetIds)))
                 .filter(c -> !c.matchedProductIds().isEmpty())

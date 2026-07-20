@@ -65,10 +65,12 @@ class SellerAnalyticsServiceTest {
         };
     }
 
-    private static BehaviorEvent checkoutEvent(String properties) {
-        BehaviorEvent event = mock(BehaviorEvent.class);
-        when(event.getProperties()).thenReturn(properties);
-        return event;
+    /** 브랜드 필터는 SQL(JSON_OVERLAPS)이 하고, 매칭 상품 id 산출만 서비스가 파싱한다 */
+    private static BehaviorEventRepository.CheckoutRow checkoutEvent(String properties) {
+        return new BehaviorEventRepository.CheckoutRow() {
+            public java.time.LocalDateTime getCreatedAt() { return java.time.LocalDateTime.now(); }
+            public String getProperties() { return properties; }
+        };
     }
 
     @Test
@@ -80,13 +82,11 @@ class SellerAnalyticsServiceTest {
         Product brandProduct = mock(Product.class);
         when(brandProduct.getId()).thenReturn(37L);
         when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of(brandProduct));
-        List<BehaviorEvent> checkouts = List.of(
+        List<BehaviorEventRepository.CheckoutRow> checkouts = List.of(
                 checkoutEvent("{\"productIds\":[37,999]}"),
                 checkoutEvent("{\"productIds\":[999]}"),
                 checkoutEvent(null));
-        when(behaviorEventRepository
-                .findAllByEventTypeAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
-                        anyString(), any(), any()))
+        when(behaviorEventRepository.findBrandCheckouts(anyString(), any(), any()))
                 .thenReturn(checkouts);
         when(orderItemRepository.countSellerPurchaseOrders(eq(BRAND_ID), any(), any())).thenReturn(1L);
 
