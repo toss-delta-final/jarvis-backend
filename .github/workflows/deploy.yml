@@ -43,7 +43,7 @@ jobs:
             cd ~/jarvis-backend
             git pull
             
-            # 1. 서버 내부에 자동으로 .env 파일 생성 (S3 변수 주입 완료)
+            # 1. 서버 내부에 자동으로 .env 파일 생성
             cat << 'EOF' > .env
             DB_URL=${{ secrets.DB_URL }}
             DB_USERNAME=admin
@@ -59,15 +59,17 @@ jobs:
             AWS_REGION=ap-northeast-2
             EOF
             
-            # 2. 레디스 컨테이너 자동 다운로드 및 실행
+            # 2. 레디스 컨테이너 자동 다운로드 및 강제 삭제 후 실행
             docker stop jarvis-redis || true
-            docker rm jarvis-redis || true
+            docker rm -f jarvis-redis || true
             docker run -d --name jarvis-redis --network host redis:7-alpine
             
-            # 3. 기존 백엔드 컨테이너 중지 및 강제 삭제 (충돌 방지를 위해 -f 추가)
+            # 3. [순서 최적화] 기존 컨테이너를 유지한 상태에서 새 이미지 선-빌드 (다운타임 최소화)
+            docker build -t jarvis-backend .
+            
+            # 4. [충돌 원천 차단] 실행 직전 기존 백엔드 컨테이너 중지 및 강제 완전히 삭제
             docker stop jarvis-backend || true
             docker rm -f jarvis-backend || true
             
-            # 4. 새 이미지 빌드 및 완벽하게 구워진 .env 파일 주입하여 실행
-            docker build -t jarvis-backend .
+            # 5. 완벽하게 구워진 .env 파일 주입하여 최종 실행
             docker run -d --name jarvis-backend --network host --env-file .env jarvis-backend
