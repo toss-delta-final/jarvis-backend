@@ -79,12 +79,10 @@ class AddressServiceTest {
     @DisplayName("M-8 — isDefault=true로 추가하면 기존 기본이 해제된다 (같은 트랜잭션)")
     void newDefaultClearsPrevious() {
         // isDefault=true 요청은 존재 여부 조회 없이 바로 기본 지정 (단락 평가)
-        Address previous = savedAddress(5L, true);
-        when(addressRepository.findByMemberIdAndIsDefaultTrue(MEMBER_ID)).thenReturn(Optional.of(previous));
-
         addressService.create(MEMBER_ID, createRequest(true));
 
-        verify(previous).unmarkDefault();
+        // 조건부 UPDATE로 해제 — 단건 Optional 조회는 기본 2건 상태에서 영구 500이 되므로 금지
+        verify(addressRepository).clearDefault(MEMBER_ID);
     }
 
     @Test
@@ -145,14 +143,12 @@ class AddressServiceTest {
     @DisplayName("M-8 — 수정에서 isDefault=true면 기존 기본 해제 후 자신이 기본")
     void updatePromotesDefault() {
         Address target = savedAddress(5L, false);
-        Address previous = savedAddress(2L, true);
         when(addressRepository.findByIdAndMemberId(5L, MEMBER_ID)).thenReturn(Optional.of(target));
-        when(addressRepository.findByMemberIdAndIsDefaultTrue(MEMBER_ID)).thenReturn(Optional.of(previous));
 
         addressService.update(MEMBER_ID, 5L,
                 new AddressUpdateRequest(null, null, null, null, null, null, true));
 
-        verify(previous).unmarkDefault();
+        verify(addressRepository).clearDefault(MEMBER_ID);
         verify(target).markDefault();
     }
 

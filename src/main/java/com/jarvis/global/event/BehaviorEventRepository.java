@@ -76,9 +76,28 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
                                                          @Param("from") LocalDateTime from,
                                                          @Param("to") LocalDateTime to);
 
-    /** I-7 3단·I-13 checkout_start — properties.productIds 포함 여부는 Java 측 판정 (04 §10) */
-    List<BehaviorEvent> findAllByEventTypeAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
-            String eventType, LocalDateTime from, LocalDateTime to);
+    interface CheckoutRow {
+        LocalDateTime getCreatedAt();
+        String getProperties();
+    }
+
+    /**
+     * I-7 3단·I-13 checkout_start (04 §10) — checkout_start는 product_id 컬럼이 비어 있고
+     * properties.productIds(JSON 배열)로만 상품에 귀속된다. 브랜드 필터를 SQL에서 끝내려고
+     * JSON_OVERLAPS(MariaDB 10.9+)로 자사 상품 id 집합과 교집합이 있는 행만 가져온다
+     * (기간 내 전 브랜드 이벤트를 앱으로 끌어오던 방식 대체 — 2026-07-18).
+     * 매칭된 상품 id 산출은 호출부가 properties를 파싱해 계속 담당(숫자 노드만 인정 — 종전 동작 유지).
+     */
+    @Query(value = """
+            SELECT be.created_at AS createdAt, be.properties AS properties
+            FROM behavior_events be
+            WHERE be.event_type = 'checkout_start'
+              AND be.created_at >= :from AND be.created_at < :to
+              AND JSON_OVERLAPS(JSON_EXTRACT(be.properties, '$.productIds'), :targetIdsJson)
+            """, nativeQuery = true)
+    List<CheckoutRow> findBrandCheckouts(@Param("targetIdsJson") String targetIdsJson,
+                                         @Param("from") LocalDateTime from,
+                                         @Param("to") LocalDateTime to);
 
     /** I-13 상품×타입 집계 — product_id 컬럼 기반(checkout_start는 서비스에서 JSON 판정) */
     @Query(value = """

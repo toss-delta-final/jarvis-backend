@@ -163,11 +163,15 @@ CREATE TABLE address (
     zip_code    VARCHAR(10)  NOT NULL,
     address1    VARCHAR(255) NOT NULL,
     address2    VARCHAR(255) NULL,
-    is_default  BOOLEAN      NOT NULL DEFAULT FALSE,       -- 회원당 1개 — 서비스 보장. 삭제 규칙은 D29
+    is_default  BOOLEAN      NOT NULL DEFAULT FALSE,       -- 회원당 1개 — DB 보장(uk_address_default). 삭제 규칙은 D29
     created_at  DATETIME     NOT NULL,
     updated_at  DATETIME     NULL,
+    -- 부분 유니크가 없는 MariaDB에서 "회원당 기본 1개"를 강제하는 관용구:
+    -- 기본이 아니면 NULL이라 유니크 대상에서 빠지고, 기본인 행만 (member_id, 1)로 충돌한다.
+    default_flag TINYINT(1) AS (IF(is_default, 1, NULL)) VIRTUAL,
     PRIMARY KEY (id),
     KEY idx_address_member (member_id),
+    UNIQUE KEY uk_address_default (member_id, default_flag),
     CONSTRAINT fk_address_member FOREIGN KEY (member_id)
         REFERENCES member (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -33,7 +33,7 @@ public class AddressService {
     public AddressResponse create(Long memberId, AddressCreateRequest request) {
         boolean isDefault = request.wantsDefault() || !addressRepository.existsByMemberId(memberId);
         if (isDefault) {
-            clearDefault(memberId);
+            addressRepository.clearDefault(memberId);
         }
         Address address = addressRepository.save(Address.create(memberId, request.label(),
                 request.recipient(), request.phone(), request.zipCode(),
@@ -47,7 +47,7 @@ public class AddressService {
         address.update(request.label(), request.recipient(), request.phone(),
                 request.zipCode(), request.address1(), request.address2());
         if (request.wantsDefault() && !address.isDefault()) {
-            clearDefault(memberId);
+            addressRepository.clearDefault(memberId);
             address.markDefault();
         }
         return AddressResponse.from(address);
@@ -70,10 +70,5 @@ public class AddressService {
     private Address getOwned(Long memberId, Long addressId) {
         return addressRepository.findByIdAndMemberId(addressId, memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADDRESS_NOT_FOUND));
-    }
-
-    private void clearDefault(Long memberId) {
-        addressRepository.findByMemberIdAndIsDefaultTrue(memberId)
-                .ifPresent(Address::unmarkDefault);
     }
 }

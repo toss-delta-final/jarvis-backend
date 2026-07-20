@@ -96,6 +96,8 @@ mariadb -h <host> -u <user> -p<pw> <db> < scripts/seed-phase1.sql   # 이후 pha
 
 - [ ] `docker build -t jarvis-backend .`
 - [ ] `deploy.env` 작성 — **시크릿은 §3대로 새로 생성**, `INTERNAL_TOKEN`은 LLM팀과 합의, `LLM_BASE_URL`은 LLM팀에서 수령
+      - `JWT_SECRET`은 **배포 서버 전용 값**으로 생성(로컬 개발값과 달라도 무방 — 각 서버가 자기 키로 서명·검증).
+        기본값이 없으므로 미설정 시 기동 실패. **운영 중 교체하면 발급된 AT/RT가 전부 무효화**되어 전원 재로그인.
 - [ ] 배포 DB에 `docs/backend/schema.sql` + 시드(phase1·2·6) 적용
 - [ ] 컨테이너 실행 후 `/actuator/health` = UP 확인
 - [ ] FE팀에 **공개 API URL** 공유 (FE는 프록시 타깃으로 사용)
