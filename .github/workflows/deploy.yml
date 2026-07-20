@@ -43,7 +43,7 @@ jobs:
             cd ~/jarvis-backend
             git pull
             
-            # 1. 서버 내부에 자동으로 .env 파일 생성
+            # 1. 서버 내부에 자동으로 .env 파일 생성 (JWT_SECRET 환경변수 안전 주입)
             cat << 'EOF' > .env
             DB_URL=${{ secrets.DB_URL }}
             DB_USERNAME=admin
@@ -51,6 +51,7 @@ jobs:
             REDIS_HOST=localhost
             REDIS_PORT=6379
             INTERNAL_TOKEN=shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
             STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
             STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
             AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
