@@ -7,11 +7,11 @@ on:
     branches: [ main ]
 
 jobs:
-  # 🛡️ 1단계: 진정한 자동화의 핵심, 기능 테스트 (CI)
+  # 1단계: 기능 테스트 (CI)
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: 깃허브 코드 가져오기
+      - name: 소스코드 가져오기
         uses: actions/checkout@v4
 
       - name: JDK 21 설치
@@ -20,22 +20,21 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           
-      - name: Gradle 실행 권한 부여
+      - name: Gradle 권한 부여
         run: chmod +x ./gradlew
 
-      - name: ✨ 팀원들이 짠 기능 테스트 코드를 자동으로 실행
+      - name: 테스트 실행
         run: ./gradlew test
 
-  # 🚚 2단계: 테스트가 '패스'했을 때만 실행되는 자동 배포 (CD)
+  # 2단계: 자동 배포 (CD)
   deploy:
-    needs: test # 위의 test 작업이 무조건 성공해야만 이 단계가 실행됩니다!
-    if: github.event_name == 'push' # PR에서는 테스트만 돌리고 배포는 하지 않는다
+    needs: test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: EC2 서버 원격 접속 및 배포 시작
+      - name: EC2 원격 접속 및 배포
         uses: appleboy/ssh-action@master
         with:
-          # 💥 1번 서버와 2번 서버 주소를 모두 바라보도록 수정했습니다.
           host: ${{ secrets.EC2_HOST }}, ${{ secrets.EC2_HOST_2 }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
@@ -44,8 +43,27 @@ jobs:
             cd ~/jarvis-backend
             git pull
             
-            # 구버전 도커 끄고 새버전 빌드해서 켜기
+            # 1. 서버 내부에 자동으로 .env 파일 생성
+            cat << 'EOF' > .env
+            DB_URL=${{ secrets.DB_URL }}
+            DB_USERNAME=admin
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            REDIS_HOST=localhost
+            REDIS_PORT=6379
+            INTERNAL_TOKEN=shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk
+            STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
+            STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
+            EOF
+            
+            # 2. [수정 반영] 레디스 컨테이너 자동 다운로드 및 실행
+            docker stop jarvis-redis || true
+            docker rm jarvis-redis || true
+            docker run -d --name jarvis-redis --network host redis:7-alpine
+            
+            # 3. 기존 백엔드 컨테이너 중지 및 삭제
             docker stop jarvis-backend || true
             docker rm jarvis-backend || true
+            
+            # 4. 새 이미지 빌드 및 완벽하게 구워진 .env 파일 주입하여 실행
             docker build -t jarvis-backend .
-            docker run -d --name jarvis-backend --network host jarvis-backend
+            docker run -d --name jarvis-backend --network host --env-file .env jarvis-backend

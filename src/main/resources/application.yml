@@ -57,7 +57,7 @@ app:
     ttl-seconds: 60
   # internal 서비스 토큰 (03 D4 — FastAPI와 .env로 공유)
   internal:
-    token: ${INTERNAL_TOKEN}
+    token: "shsmsrp_wpdlf_whgdk_clsrnemf_ahdufk"
   # Spring→FastAPI 아웃바운드 (03 §5) — base-url 빈 값이면 통지 skip(FastAPI 미기동 로컬)
   llm:
     base-url: ${LLM_BASE_URL:}
