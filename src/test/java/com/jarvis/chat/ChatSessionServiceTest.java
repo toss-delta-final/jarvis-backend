@@ -62,7 +62,7 @@ class ChatSessionServiceTest {
                 eq("member|1|SHOPPING"), eq(Duration.ofMinutes(10)));
         verify(valueOperations).set(eq("chat:owner:member:1"),
                 eq(response.sessionId()), eq(Duration.ofMinutes(10)));
-        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), any());
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyString(), any());
     }
 
     @Test
@@ -73,7 +73,8 @@ class ChatSessionServiceTest {
         service.issueSession(ChatIdentity.member(1L), ChatChannel.SHOPPING);
 
         verify(redisTemplate).delete("chat:session:old-session");
-        verify(llmNotifyClient).notifySessionEnd("old-session", SessionEndReason.NEW_CONVERSATION);
+        verify(llmNotifyClient).notifySessionEnd(
+                "old-session", "1", SessionEndReason.NEW_CONVERSATION);
     }
 
     @Test
@@ -125,7 +126,7 @@ class ChatSessionServiceTest {
 
         verify(redisTemplate).delete("chat:session:s1");
         verify(redisTemplate).delete("chat:owner:member:1");
-        verify(llmNotifyClient).notifySessionEnd("s1", SessionEndReason.LOGOUT);
+        verify(llmNotifyClient).notifySessionEnd("s1", "1", SessionEndReason.LOGOUT);
     }
 
     @Test
@@ -135,6 +136,6 @@ class ChatSessionServiceTest {
 
         service.endSession(ChatIdentity.member(1L), SessionEndReason.LOGOUT);
 
-        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), any());
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyString(), any());
     }
 }

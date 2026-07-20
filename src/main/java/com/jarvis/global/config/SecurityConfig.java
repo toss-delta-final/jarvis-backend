@@ -82,12 +82,12 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /** 로컬 개발만 FE(3000) → BE(8080) 직행 허용 — 배포는 nginx 동일 오리진이라 불필요 (03 §5) */
+    /** 로컬 개발 FE(Vite 3000, 구 기본 5173) → BE(8080) 직행 허용. */
     @Bean
     @Profile("local")
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of("http://localhost:3000"));
+        config.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173"));
         config.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

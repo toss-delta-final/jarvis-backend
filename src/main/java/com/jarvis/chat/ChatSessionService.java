@@ -42,7 +42,8 @@ public class ChatSessionService {
         String previousSessionId = redisTemplate.opsForValue().get(ownerKey);
         if (previousSessionId != null) {
             redisTemplate.delete(sessionKey(previousSessionId));
-            llmNotifyClient.notifySessionEnd(previousSessionId, SessionEndReason.NEW_CONVERSATION);
+            llmNotifyClient.notifySessionEnd(
+                    previousSessionId, identity.sub(), SessionEndReason.NEW_CONVERSATION);
         }
         String sessionId = UUID.randomUUID().toString();
         Duration ttl = sessionTtl();
@@ -85,7 +86,7 @@ public class ChatSessionService {
         }
         redisTemplate.delete(sessionKey(sessionId));
         redisTemplate.delete(ownerKey);
-        llmNotifyClient.notifySessionEnd(sessionId, reason);
+        llmNotifyClient.notifySessionEnd(sessionId, identity.sub(), reason);
     }
 
     private ChatSessionResponse response(String sessionId, ChatIdentity identity, Long brandId) {

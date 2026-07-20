@@ -1,8 +1,8 @@
 package com.jarvis.chat;
 
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -14,22 +14,34 @@ import org.springframework.web.client.RestClient;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class LlmNotifyClient {
 
     private final RestClient llmRestClient;
     private final LlmProperties llmProperties;
+    private final String internalToken;
+
+    public LlmNotifyClient(RestClient llmRestClient, LlmProperties llmProperties,
+                           @Value("${app.internal.token:}") String internalToken) {
+        this.llmRestClient = llmRestClient;
+        this.llmProperties = llmProperties;
+        this.internalToken = internalToken;
+    }
 
     @Async
-    public void notifySessionEnd(String sessionId, SessionEndReason reason) {
+    public void notifySessionEnd(String sessionId, String userId, SessionEndReason reason) {
         if (llmProperties.baseUrl() == null || llmProperties.baseUrl().isBlank()) {
             return; // FastAPI 미기동(로컬) — 통지 생략
         }
         try {
             llmRestClient.post()
                     .uri(llmProperties.baseUrl() + "/events/session-end")
+                    .header("X-Internal-Token", internalToken)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("sessionId", sessionId, "reason", reason.name()))
+                    .body(Map.of(
+                            "eventId", sessionId + ":" + reason.name(),
+                            "sessionId", sessionId,
+                            "userId", userId,
+                            "reason", reason.name()))
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {

@@ -9,6 +9,15 @@ spring:
     redis:
       host: localhost
       port: 6379
+  cloud:
+    aws:
+      credentials:
+        access-key: local
+        secret-key: local
+      region:
+        static: ap-northeast-2
+      s3:
+        bucket: jarvis-local
 
 jwt:
   secret: # AT/RT 서명용 HS256 시크릿 — 256bit 이상 임의 문자열 (03 §5)
