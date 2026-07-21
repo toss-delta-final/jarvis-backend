@@ -1,6 +1,5 @@
 package com.jarvis.order.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.jarvis.order.Order;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -10,8 +9,8 @@ import org.springframework.data.domain.Page;
 /**
  * O-6 (04 §4) — 행에 orderNo 포함(07-17 FE). 환불 금액 = 스냅샷 가격 × 수량 —
  * 모의 결제라 실제 환불 처리는 없고 표시용 (01 §5).
+ * NON_NULL 금지 — processedAt은 미처리 시 키 생략이 아니라 명시적 null(노션 O-6).
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ClaimListResponse(List<Item> content, int page, int size,
                                 long totalElements, int totalPages) {
 

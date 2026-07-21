@@ -2,6 +2,7 @@ package com.jarvis.member;
 
 import com.jarvis.global.auth.AuthUser;
 import com.jarvis.global.auth.ClientIp;
+import com.jarvis.global.auth.GuestCookieManager;
 import com.jarvis.global.auth.RefreshCookieManager;
 import com.jarvis.global.response.ApiResponse;
 import com.jarvis.member.dto.AuthResult;
@@ -22,7 +23,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** A-1~A-5 (04 §1). RT 쿠키 읽기/쓰기만 여기서 — 나머지는 전부 서비스 (03 §3-1) */
+/**
+ * A-1~A-5 (04 §1). RT·guest_id 쿠키 읽기/쓰기만 여기서 — 나머지는 전부 서비스 (03 §3-1).
+ * 게스트 승계 신원은 guest_id HttpOnly 쿠키에서 서버가 직접 취한다(노션 A-1/A-2 2026-07-20 개정
+ * — E-1과 동일 원칙: 신원은 서버 주입, body의 신원 주장은 무시).
+ */
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
@@ -30,12 +35,14 @@ public class AuthController {
 
     private final AuthService authService;
     private final RefreshCookieManager refreshCookieManager;
+    private final GuestCookieManager guestCookieManager;
 
     @PostMapping("/signup")
     public ApiResponse<SignupResponse> signup(@Valid @RequestBody SignupRequest request,
                                               HttpServletRequest httpRequest,
                                               HttpServletResponse httpResponse) {
-        AuthResult result = authService.signup(request, ClientIp.resolve(httpRequest));
+        AuthResult result = authService.signup(request, ClientIp.resolve(httpRequest),
+                guestCookieManager.resolve(httpRequest).orElse(null));
         refreshCookieManager.write(httpResponse, result.refreshToken());
         return ApiResponse.success(new SignupResponse(result.accessToken(), result.member()));
     }
@@ -44,7 +51,8 @@ public class AuthController {
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
                                             HttpServletRequest httpRequest,
                                             HttpServletResponse httpResponse) {
-        AuthResult result = authService.login(request, ClientIp.resolve(httpRequest));
+        AuthResult result = authService.login(request, ClientIp.resolve(httpRequest),
+                guestCookieManager.resolve(httpRequest).orElse(null));
         refreshCookieManager.write(httpResponse, result.refreshToken());
         return ApiResponse.success(new LoginResponse(result.accessToken(), result.member()));
     }

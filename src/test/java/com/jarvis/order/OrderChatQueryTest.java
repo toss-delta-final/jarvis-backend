@@ -40,6 +40,7 @@ class OrderChatQueryTest {
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
     @Mock ProductChangeLogRepository productChangeLogRepository;
+    @Mock com.jarvis.category.CategoryRepository categoryRepository;
     @Mock AddressRepository addressRepository;
     @Mock MemberRepository memberRepository;
     @Mock ReviewRepository reviewRepository;

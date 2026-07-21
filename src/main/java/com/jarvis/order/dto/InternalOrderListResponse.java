@@ -18,18 +18,20 @@ public record InternalOrderListResponse(List<Summary> orders) {
                           List<Item> items) {
     }
 
+    /** categoryName — 상품 소분류명(노션 I-19 응답 필드, 현재 상품 기준 표시용) */
     public record Item(Long orderItemId, Long productId, String productName, String optionName,
-                       int price, int quantity, String status) {
+                       int price, int quantity, String status, String categoryName) {
 
-        public static Item from(OrderItem item) {
+        public static Item from(OrderItem item, String categoryName) {
             return new Item(item.getId(), item.getProductId(), item.getProductName(),
                     item.getOptionName(), item.getPrice(), item.getQuantity(),
-                    item.getStatus().name());
+                    item.getStatus().name(), categoryName);
         }
     }
 
     public static InternalOrderListResponse from(List<Order> orders,
-                                                 Map<Long, List<OrderItem>> itemsByOrder) {
+                                                 Map<Long, List<OrderItem>> itemsByOrder,
+                                                 Map<Long, String> categoryNameByProduct) {
         List<Summary> summaries = orders.stream().map(order -> {
             List<OrderItem> items = itemsByOrder.getOrDefault(order.getId(), List.of());
             int itemsTotal = items.stream().mapToInt(item -> item.getPrice() * item.getQuantity()).sum();
@@ -38,7 +40,9 @@ public record InternalOrderListResponse(List<Summary> orders) {
                             items.stream().map(OrderItem::getStatus).toList()).name(),
                     itemsTotal, 0, order.getTotalAmount(),
                     order.getCreatedAt().atZone(ZONE).toOffsetDateTime(),
-                    items.stream().map(Item::from).toList());
+                    items.stream()
+                            .map(item -> Item.from(item, categoryNameByProduct.get(item.getProductId())))
+                            .toList());
         }).toList();
         return new InternalOrderListResponse(summaries);
     }

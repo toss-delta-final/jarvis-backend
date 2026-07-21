@@ -38,8 +38,8 @@ public record SignupRequest(
 
         @NotNull(message = "개인정보처리방침 동의는 필수입니다.")
         @AssertTrue(message = "개인정보처리방침 동의는 필수입니다.")
-        Boolean agreePrivacy,
-
-        String guestId
+        Boolean agreePrivacy
 ) {
+    // 구 명세의 body guestId는 폐기(노션 A-1 2026-07-20) — 신원은 guest_id 쿠키에서 서버가 취하고,
+    // FE가 보내는 잔여 guestId 필드는 역직렬화에서 무시된다(FE·BE 배포 순서 무관)
 }

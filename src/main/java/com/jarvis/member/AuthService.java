@@ -40,9 +40,9 @@ public class AuthService {
     private final CartService cartService;
     private final ChatSessionService chatSessionService;
 
-    /** A-1 — 가입 + 자동 로그인 + 게스트 승계 (04) */
+    /** A-1 — 가입 + 자동 로그인 + 게스트 승계(백필 + 병합 — 가입 전용). guestId는 쿠키 유래(컨트롤러 주입) */
     @Transactional
-    public AuthResult signup(SignupRequest request, String clientIp) {
+    public AuthResult signup(SignupRequest request, String clientIp, String guestId) {
         if (memberRepository.existsByEmail(request.email())) {
             throw new BusinessException(ErrorCode.MEMBER_EMAIL_DUPLICATE);
         }
@@ -53,20 +53,20 @@ public class AuthService {
                 request.gender(),
                 request.birthDate(),
                 LocalDateTime.now()));
-        convertGuest(member.getId(), request.guestId());
+        inheritGuest(member.getId(), guestId, true);
         accountEventLogger.log(member.getId(), AccountEventType.SIGNUP, clientIp);
         return issueTokens(member);
     }
 
-    /** A-2 — 실패는 계정 존재 여부 무관 통일 401 AUTH_LOGIN_FAILED (04) */
+    /** A-2 — 실패는 계정 존재 여부 무관 통일 401 AUTH_LOGIN_FAILED (04). 승계는 장바구니 병합만 */
     @Transactional
-    public AuthResult login(LoginRequest request, String clientIp) {
+    public AuthResult login(LoginRequest request, String clientIp, String guestId) {
         Member member = memberRepository.findByEmail(request.email())
                 .orElseThrow(() -> loginFail(null, clientIp));
         if (!passwordEncoder.matches(request.password(), member.getPassword())) {
             throw loginFail(member.getId(), clientIp);
         }
-        convertGuest(member.getId(), request.guestId());
+        inheritGuest(member.getId(), guestId, false);
         accountEventLogger.log(member.getId(), AccountEventType.LOGIN_SUCCESS, clientIp);
         return issueTokens(member);
     }
@@ -124,17 +124,20 @@ public class AuthService {
     }
 
     /**
-     * 게스트 승계 (02 D5·D30) — converted_member_id 기록 + behavior_events member_id 백필 + 장바구니 병합.
-     * 백필·convertTo는 최초 1회지만, 장바구니 병합은 재로그인에도 수행 —
-     * 로그아웃 후 같은 쿠키로 담은 게스트분이 다음 로그인에 따라오도록 (02 D30 "그대로 따라온다").
+     * 게스트 승계 (02 D5·D30, 노션 A-1/A-2 2026-07-20 개정) —
+     * 가입(A-1): converted_member_id 기록 + behavior_events member_id 백필 + 장바구니 병합.
+     * 로그인(A-2): 장바구니 병합만 — 공용 PC에서 앞 사람의 탐색 이력이 다른 계정에 귀속되면
+     * 추천·분석이 오염되므로 백필은 가입 전용. 병합은 재로그인에도 매번 수행(02 D30).
+     * 승계 후 해당 게스트의 채팅 세션 종료 + I-20 NEW_CONVERSATION 통지(FastAPI 맥락 초기화)
+     * — 이후 채팅은 CH-1로 새 세션.
      */
-    private void convertGuest(Long memberId, String guestId) {
+    private void inheritGuest(Long memberId, String guestId, boolean backfill) {
         if (guestId == null || guestId.isBlank()) {
             return;
         }
         guestRepository.findById(guestId)
                 .ifPresent(guest -> {
-                    if (!guest.isConverted()) {
+                    if (backfill && !guest.isConverted()) {
                         guest.convertTo(memberId);
                         jdbcTemplate.update(
                                 "UPDATE behavior_events SET member_id = ? WHERE guest_id = ? AND member_id IS NULL",
@@ -142,6 +145,7 @@ public class AuthService {
                     }
                     cartService.mergeGuestCart(memberId, guestId);
                 });
+        chatSessionService.endSessionAsync(ChatIdentity.guest(guestId), SessionEndReason.NEW_CONVERSATION);
     }
 
     private AuthResult issueTokens(Member member) {

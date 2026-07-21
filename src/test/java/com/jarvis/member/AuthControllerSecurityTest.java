@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jarvis.global.auth.EnvelopeAccessDeniedHandler;
+import com.jarvis.global.auth.GuestCookieManager;
 import com.jarvis.global.auth.EnvelopeAuthenticationEntryPoint;
 import com.jarvis.global.auth.JwtAuthenticationFilter;
 import com.jarvis.global.auth.JwtProperties;
@@ -34,7 +35,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(AuthController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtProvider.class,
         EnvelopeAuthenticationEntryPoint.class, EnvelopeAccessDeniedHandler.class,
-        RefreshCookieManager.class})
+        RefreshCookieManager.class, GuestCookieManager.class})
 @TestPropertySource(properties = {
         "jwt.secret=test-hs256-secret-key-at-least-256-bits-long-0123456789",
         "jwt.access-token-minutes=30",
@@ -125,7 +126,7 @@ class AuthControllerSecurityTest {
     @Test
     @DisplayName("A-1 성공 — 200 + accessToken + RT HttpOnly 쿠키(Path=/api/auth)")
     void signup_success_setsRefreshCookie() throws Exception {
-        when(authService.signup(any(), anyString())).thenReturn(new AuthResult(
+        when(authService.signup(any(), anyString(), any())).thenReturn(new AuthResult(
                 "access-token", "refresh-token-raw",
                 new MeResponse(1L, "user@test.com", "지현", Role.USER)));
 
