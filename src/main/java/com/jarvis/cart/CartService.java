@@ -89,9 +89,11 @@ public class CartService {
             guestId = issuedGuestId != null ? issuedGuestId : guestId;
         }
 
+        // 잠금 조회(PESSIMISTIC_WRITE) — 유저 직접 담기(C-2)와 챗봇 콜백(I-2)이 같은 라인에 동시
+        // 진입해도 consolidate → 상한 검사 → 합산이 직렬화돼 증가분이 유실되지 않는다
         Optional<CartItem> existing = memberId != null
-                ? consolidate(cartItemRepository.findMemberLines(memberId, request.productId(), request.optionId()))
-                : consolidate(cartItemRepository.findGuestLines(guestId, request.productId(), request.optionId()));
+                ? consolidate(cartItemRepository.findMemberLinesForUpdate(memberId, request.productId(), request.optionId()))
+                : consolidate(cartItemRepository.findGuestLinesForUpdate(guestId, request.productId(), request.optionId()));
         CartItem item;
         if (existing.isPresent()) {
             item = existing.get();
@@ -131,7 +133,7 @@ public class CartService {
     public void mergeGuestCart(Long memberId, String guestId) {
         for (CartItem guestItem : cartItemRepository.findAllByGuestId(guestId)) {
             Optional<CartItem> memberLine = consolidate(cartItemRepository
-                    .findMemberLines(memberId, guestItem.getProductId(), guestItem.getOptionId()));
+                    .findMemberLinesForUpdate(memberId, guestItem.getProductId(), guestItem.getOptionId()));
             if (memberLine.isPresent()) {
                 memberLine.get().addQuantity(guestItem.getQuantity());
                 cartItemRepository.delete(guestItem);
