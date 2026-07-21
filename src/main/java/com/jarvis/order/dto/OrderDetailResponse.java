@@ -1,6 +1,5 @@
 package com.jarvis.order.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.jarvis.order.Order;
 import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemStatus;
@@ -14,8 +13,8 @@ import java.util.function.Predicate;
 /**
  * O-4 (04 §4) — 아이템별 가능 액션(canCancel/canReturn/canReview)은 01 §3 매트릭스를 서버가 계산.
  * FE는 boolean만 보고 버튼 노출(상태 판단 중복 구현 금지). canExchange는 D11 제거로 없음.
+ * NON_NULL 금지 — paidAt 등 미확정 값은 키 생략이 아니라 명시적 null(노션 O-4, FE 코멘트 반영).
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record OrderDetailResponse(Long orderId, String orderNo, String status, String representativeStatus,
                                   String paymentMethod, int totalAmount,
                                   OffsetDateTime orderedAt, OffsetDateTime paidAt,

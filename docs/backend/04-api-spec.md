@@ -9,6 +9,7 @@
 > 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
 > **유지(노션 쪽 수정 완료)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR — 공개 API), `+09:00` 오프셋(03 D2), I-1/I-3 최소필드(05 7-17 재설계 — 노션 페이지를 05 기준으로 갱신), 카드 `purchasable` 등 추가 필드.
 > **Phase 2(판매자 분석·상품 쓰기, 같은 날)**: I-6~I-16·S-1~S-3·S-5도 노션 기준으로 정합화 — from/to 필수+`INVALID_PERIOD`, 422 어휘(`MISSING_FIELD`/`INVALID_PRICE`/`INVALID_STOCK`), I-12 재삭제 409 `ALREADY_HIDDEN`(05 §1-3 멱등 규정 폐기), I-13 구현(501 스텁 해소), I-8/I-14 어뷰징 지표·I-16 코호트 재설계, I-10/I-11/S-5 `attributes` JSON 객체 수용, internal 상품 쓰기 소유권 위반은 404(공개 S-5는 403 유지), CH-6 티켓 클레임 `role`/`brandId`(노션 기준). 노션 쪽은 판매자 페이지 401 코드를 `INTERNAL_TOKEN_INVALID`로 통일하고 I-14 상태 어휘를 01 기준으로 정정.
+> **Round 5(노션 07-20/07-21 개정 정합, 2026-07-21)**: A-1/A-2 게스트 승계를 body `guestId` → **guest_id 쿠키 기준**으로(보내도 무시), 백필은 가입 전용·로그인은 병합만, 가입/로그인 성공 시 게스트 채팅 세션 종료(I-20 `NEW_CONVERSATION`). E-1 익명 요청에서 쿠키 없으면 게스트 발급(주체 없는 행 방지). I-19 아이템에 `categoryName` 추가. O-4 `paidAt`·O-6 `processedAt` 등 미확정 값은 키 생략이 아니라 **명시적 null**(NON_NULL 제거 — P-3 `distribution`의 page≥1 생략은 유지).
 > **Round 4(멱등성·시크릿·성능, 2026-07-20)**: 성공 응답의 `data`를 **항상 직렬화**(값 없으면 `"data": null` — A-3·C-4·M-6·M-8d. 실패 응답은 종전대로 `data` 키 없음, `ApiResponseSerializer`). `JWT_SECRET`을 환경변수로 분리(하드코딩 제거). 기본 배송지 단일성을 DB가 강제(`uk_address_default` 생성컬럼 유니크) + 해제를 조건부 UPDATE로 — 경합 시 영구 500이던 것을 409로. E-1 배치 적재는 UNIQUE 경합 시 건별 저장으로 폴백(중복 1건이 배치 전체를 날리던 문제). I-7/I-13 `checkout_start` 브랜드 귀속을 `JSON_OVERLAPS`로 SQL화(전 브랜드 이벤트 앱 로드 제거).
 > **Round 3(전체 검토 후속, 2026-07-18)**: E-1 응답을 노션대로 202 **본문 없음**으로(envelope 제거), I-6 summary `statusCounts`를 노션 확정 어휘로(주문 단위 `PAID`/`PAYMENT_FAILED` + 아이템 단위 `CANCELLED`/`RETURNED`, 4키 고정·0 채움), S-2/S-3 `page`/`size`·I-9 `limit`/`offset` 검증 추가(범위 밖 400 — 기존 500 제거), 로그아웃의 채팅 세션 정리를 Redis 장애로부터 격리(실패해도 로그아웃 성공, TTL 소멸 위임). 노션 쪽 정정: I-7 v1 `computable:false` 규정 폐기, I-10 `categoryId` 필수(소분류만), I-18 응답 superset 기재, I-21 listId 엔트로피 요구(UUID급 ≥128bit), M-8b/8c 응답 전체 주소 객체 기재.
 
@@ -16,8 +17,8 @@
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
-| A-1 | POST | /api/auth/signup | 🔓 | 회원가입. body: email, password, nickname, gender, birthDate, agreeTerms(true 필수), agreePrivacy(true 필수), guestId? — 성공 시 자동 로그인(토큰 발급) + 게스트 승계(behavior_events member_id 백필 + 장바구니 병합 — 02 D5·D30·D31). 400 검증 실패는 `VALIDATION_ERROR` + fields[](03 규약 — 07-17 FE) |
-| A-2 | POST | /api/auth/login | 🔓 | 일반 로그인. body: email, password, guestId? |
+| A-1 | POST | /api/auth/signup | 🔓 | 회원가입. body: email, password, nickname, gender, birthDate, agreeTerms(true 필수), agreePrivacy(true 필수) — 성공 시 자동 로그인(토큰 발급) + 게스트 승계(behavior_events member_id 백필 + 장바구니 병합 — 02 D5·D30·D31). **승계 신원은 guest_id HttpOnly 쿠키에서 서버가 취함**(노션 07-20 개정 — body guestId 폐기, 보내도 무시). 부수효과: 해당 게스트 채팅 세션 종료 + I-20 `NEW_CONVERSATION` 통지. 400 검증 실패는 `VALIDATION_ERROR` + fields[](03 규약 — 07-17 FE) |
+| A-2 | POST | /api/auth/login | 🔓 | 일반 로그인. body: email, password — 게스트 승계는 guest_id 쿠키 기준(노션 07-20 개정, body guestId 폐기). **장바구니 병합만** 수행(백필·convertTo는 가입 전용 — 공용 PC 이력 오염 방지), 재로그인에도 매번(02 D30). 부수효과: 게스트 채팅 세션 종료 + I-20 `NEW_CONVERSATION` |
 | A-3 | POST | /api/auth/logout | 🔓(RT쿠키) | RT 삭제 + 쿠키 만료. AT가 만료돼도 로그아웃은 가능해야 하므로 RT 쿠키 기준(없어도 성공 응답) |
 | A-4 | POST | /api/auth/refresh | 🔓(RT쿠키) | AT 재발급 |
 | A-5 | GET | /api/auth/me | 🔑 | 내 정보(id, email, nickname, role) — FE 라우팅 가드용 |
@@ -54,7 +55,7 @@
 | C-4 | DELETE | /api/cart/items/{id} | 🔓(게스트 허용) | 삭제 (복수 삭제는 FE에서 반복 호출 — 데모 규모) |
 
 - 옵션 있는 상품에 optionId 누락 → 400 `CART_OPTION_REQUIRED`. optionId가 해당 상품의 옵션이 아니면 400 `CART_OPTION_INVALID`(02 D26 ①). 본인(회원 또는 게스트 쿠키) 아이템 아니면 403. quantity는 1~99(합산 결과 포함 — INT 오버플로·비정상 입력 방지, I-2 동일).
-- 게스트 장바구니(02 D30): 소유 주체는 guest_id 쿠키. 가입/로그인(A-1/A-2 guestId) 시 회원 장바구니로 병합(동일 상품+옵션 수량 합산·상한 99). **주문(O-1)은 로그인 필수** — 게스트가 결제 진입 시 FE가 로그인 유도.
+- 게스트 장바구니(02 D30): 소유 주체는 guest_id 쿠키. 가입/로그인(A-1/A-2 — guest_id 쿠키) 시 회원 장바구니로 병합(동일 상품+옵션 수량 합산·상한 99). **주문(O-1)은 로그인 필수** — 게스트가 결제 진입 시 FE가 로그인 유도.
 - 부분 선택 결제는 O-1의 cartItemIds[]로 지원 — 선택 항목 합계 표시는 FE 계산, 결제 금액의 진실은 O-1 서버 재계산(원칙 유지).
 
 ## 4. order / claim
@@ -125,7 +126,7 @@
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
-| E-1 | POST | /api/events | 🔓(인증 선택) | FE 행동 이벤트 배치 수집. body: `{"events":[{ "id":"<uuid>", "sessionKey":"...", "eventType":"...", "productId":null, "properties":{...}, "occurredAt":"..." }]}` — FE가 버퍼(10건 or 5초)로 묶어 전송. 응답 **202 즉시, 본문 없음**(노션 기준 — 2026-07-18 Round 3) |
+| E-1 | POST | /api/events | 🔓(인증 선택) | FE 행동 이벤트 배치 수집. body: `{"events":[{ "id":"<uuid>", "sessionKey":"...", "eventType":"...", "productId":null, "properties":{...}, "occurredAt":"..." }]}` — FE가 버퍼(10건 or 5초)로 묶어 전송. 응답 **202 즉시, 본문 없음**(노션 기준 — 2026-07-18 Round 3). 신원은 서버 주입(member_id=JWT, guest_id=쿠키) — **익명인데 쿠키 없으면 여기서 게스트 발급**(노션 07-20 변경, 주체 없는 행 방지 — I-13 왜곡 원인 제거) |
 
 - 서버 처리 4단계: ① `member_id`는 JWT에서, `guest_id`는 쿠키에서 주입(**body의 신원 주장은 무시**) ② 아래 8종 화이트리스트 외 eventType은 폐기+경고 로그 ③ `session_start`에 ipHash 주입 ④ 배치 INSERT(`created_at`=서버 수신 시각), `client_event_id`(body의 `id`) UNIQUE로 중복 차단.
 - 실패 건은 세지 않는다 — 담기 실패·결제 실패 시 FE가 이벤트를 보내지 않음. `properties`에 개인정보 금지.
@@ -177,7 +178,7 @@
 | I-16 | GET | /internal/seller/{brandId}/churn | 이탈 코호트 — inactiveDays(기본 30), preChurnSignals, 마지막 로그인 = account_event_logs.LOGIN_SUCCESS |
 | I-17 | GET | /internal/products/changes | 상품 정보 배치 pull(AI 벡터DB 동기화) — since 커서+limit, items[].status ACTIVE\|DELISTED, 초기 전체 구축은 since="0". 커서 방식·attributes 스키마·리뷰 포함 여부 **OPEN(LLM 협의 중)** |
 | I-18 | GET | /internal/cart | 챗봇 장바구니 조회 — userId/guestId 메아리(게스트 허용), 응답 item에 productName·optionName 필수, 빈 장바구니도 200 |
-| I-19 | GET | /internal/members/{id}/orders | 구매 이력 목록(CS 챗봇 "내 주문 어때?") — status 단일 필터(어휘: ORDERED\|SHIPPING\|DELIVERED\|CONFIRMED\|CANCELLED\|RETURNED), 응답 camelCase·숫자 id, shippingFee 항상 0(배송비 없음 확정). I-4(요약)와 역할 분담 |
+| I-19 | GET | /internal/members/{id}/orders | 구매 이력 목록(CS 챗봇 "내 주문 어때?") — status 단일 필터(어휘: ORDERED\|SHIPPING\|DELIVERED\|CONFIRMED\|CANCELLED\|RETURNED), 응답 camelCase·숫자 id, 아이템에 `categoryName`(소분류명 — 노션 I-19), shippingFee 항상 0(배송비 없음 확정). I-4(요약)와 역할 분담 |
 | I-20 | POST | {LLM_BASE_URL}/events/session-end | **방향 예외: Spring→FastAPI(아웃바운드)** 세션 종료 통지 — 트리거 로그아웃/30분 유휴/새 대화, reason enum LOGOUT\|IDLE_TIMEOUT\|NEW_CONVERSATION\|TAB_CLOSE, **멱등**(없는 세션도 200 + cleared:false). sessionId는 **UUID 그대로 수신(2026-07-17 LLM 합의 — 구 S- 형식 폐기)**. 상세는 05 §2-1(아웃바운드 관례) |
 | I-21 | POST | /internal/recommendations | **추천 목록 콜백 (확정 2026-07-18)** — FastAPI가 리랭킹 확정 Top5를 저장: `{sessionId(UUID), listId(FastAPI 생성 문자열 — 영숫자·`-`·`_` ≤64), productIds[](≤20, 순서 유지), reasons[{productId, reason}]?}` → Redis TTL 10분. reasons는 **추천 카드용 이유**(SSE의 채팅용 이유와 이원화) — CH-5 카드에 echo. **products.ready 발행 전 호출, 콜백 실패 시 products.ready 발행 금지**(05 §1-2-1). CH-5와 쌍 |
 

@@ -4,6 +4,8 @@ import com.jarvis.address.Address;
 import com.jarvis.address.AddressRepository;
 import com.jarvis.cart.CartItem;
 import com.jarvis.cart.CartItemRepository;
+import com.jarvis.category.Category;
+import com.jarvis.category.CategoryRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.member.MemberRepository;
@@ -60,6 +62,7 @@ public class OrderService {
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
     private final ProductChangeLogRepository productChangeLogRepository;
+    private final CategoryRepository categoryRepository;
     private final AddressRepository addressRepository;
     private final MemberRepository memberRepository;
     private final ReviewRepository reviewRepository;
@@ -164,7 +167,24 @@ public class OrderService {
                         .filter(order -> itemsByOrder.getOrDefault(order.getId(), List.<OrderItem>of())
                                 .stream().anyMatch(item -> item.getStatus() == filter))
                         .toList();
-        return InternalOrderListResponse.from(filtered, itemsByOrder);
+        return InternalOrderListResponse.from(filtered, itemsByOrder, categoryNamesByProduct(itemsByOrder));
+    }
+
+    /** I-19 categoryName(노션 응답 필드) — 아이템 상품의 소분류명. 상품 삭제 정책이 RESTRICT라 항상 존재 */
+    private Map<Long, String> categoryNamesByProduct(Map<Long, List<OrderItem>> itemsByOrder) {
+        List<Long> productIds = itemsByOrder.values().stream()
+                .flatMap(List::stream).map(OrderItem::getProductId).distinct().toList();
+        if (productIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Long> categoryByProduct = productRepository.findAllById(productIds).stream()
+                .collect(Collectors.toMap(Product::getId, Product::getCategoryId));
+        Map<Long, String> categoryNames = categoryRepository
+                .findAllById(categoryByProduct.values().stream().distinct().toList()).stream()
+                .collect(Collectors.toMap(Category::getId, Category::getName));
+        return categoryByProduct.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey,
+                        entry -> categoryNames.get(entry.getValue())));
     }
 
     private Map<Long, List<OrderItem>> itemsByOrder(List<Order> orders) {

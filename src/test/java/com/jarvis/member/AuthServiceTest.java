@@ -3,6 +3,7 @@ package com.jarvis.member;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -61,9 +62,9 @@ class AuthServiceTest {
                 cartService, chatSessionService);
     }
 
-    private SignupRequest signupRequest(String guestId) {
+    private SignupRequest signupRequest() {
         return new SignupRequest("user@test.com", "password1", "지현", Gender.FEMALE,
-                LocalDate.of(1999, 1, 1), true, true, guestId);
+                LocalDate.of(1999, 1, 1), true, true);
     }
 
     private Member memberFixture(Long id) {
@@ -81,7 +82,7 @@ class AuthServiceTest {
         void duplicateEmail_throws409() {
             when(memberRepository.existsByEmail("user@test.com")).thenReturn(true);
 
-            assertThatThrownBy(() -> authService.signup(signupRequest(null), IP))
+            assertThatThrownBy(() -> authService.signup(signupRequest(), IP, null))
                     .isInstanceOf(BusinessException.class)
                     .extracting("errorCode").isEqualTo(ErrorCode.MEMBER_EMAIL_DUPLICATE);
             verify(memberRepository, never()).save(any());
@@ -97,7 +98,7 @@ class AuthServiceTest {
                 return m;
             });
 
-            AuthResult result = authService.signup(signupRequest(null), IP);
+            AuthResult result = authService.signup(signupRequest(), IP, null);
 
             ArgumentCaptor<Member> memberCaptor = ArgumentCaptor.forClass(Member.class);
             verify(memberRepository).save(memberCaptor.capture());
@@ -118,7 +119,7 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("guestId가 오면 게스트 승계 — converted_member_id 기록 + behavior_events 백필")
+        @DisplayName("게스트 쿠키가 오면 승계 — converted_member_id 기록 + 백필 + 병합 + 게스트 세션 종료(I-20)")
         void withGuestId_convertsGuest() {
             String guestId = "11111111-1111-1111-1111-111111111111";
             Guest guest = Guest.issue(guestId);
@@ -130,12 +131,15 @@ class AuthServiceTest {
             });
             when(guestRepository.findById(guestId)).thenReturn(Optional.of(guest));
 
-            authService.signup(signupRequest(guestId), IP);
+            authService.signup(signupRequest(), IP, guestId);
 
             assertThat(guest.getConvertedMemberId()).isEqualTo(1L);
             verify(jdbcTemplate).update(
                     eq("UPDATE behavior_events SET member_id = ? WHERE guest_id = ? AND member_id IS NULL"),
                     eq(1L), eq(guestId));
+            verify(cartService).mergeGuestCart(1L, guestId);
+            verify(chatSessionService).endSessionAsync(
+                    com.jarvis.chat.ChatIdentity.guest(guestId), com.jarvis.chat.SessionEndReason.NEW_CONVERSATION);
         }
     }
 
@@ -148,7 +152,7 @@ class AuthServiceTest {
             when(memberRepository.findByEmail("user@test.com")).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> authService.login(
-                    new LoginRequest("user@test.com", "password1", null), IP))
+                    new LoginRequest("user@test.com", "password1"), IP, null))
                     .isInstanceOf(BusinessException.class)
                     .extracting("errorCode").isEqualTo(ErrorCode.AUTH_LOGIN_FAILED);
 
@@ -162,7 +166,7 @@ class AuthServiceTest {
                     .thenReturn(Optional.of(memberFixture(1L)));
 
             assertThatThrownBy(() -> authService.login(
-                    new LoginRequest("user@test.com", "wrong-pw1", null), IP))
+                    new LoginRequest("user@test.com", "wrong-pw1"), IP, null))
                     .isInstanceOf(BusinessException.class)
                     .extracting("errorCode").isEqualTo(ErrorCode.AUTH_LOGIN_FAILED);
 
@@ -176,11 +180,29 @@ class AuthServiceTest {
                     .thenReturn(Optional.of(memberFixture(1L)));
 
             AuthResult result = authService.login(
-                    new LoginRequest("user@test.com", "password1", null), IP);
+                    new LoginRequest("user@test.com", "password1"), IP, null);
 
             assertThat(jwtProvider.parseAccessToken(result.accessToken()).memberId()).isEqualTo(1L);
             verify(refreshTokenRepository).save(any(RefreshToken.class));
             verify(accountEventLogger).log(1L, AccountEventType.LOGIN_SUCCESS, IP);
+        }
+
+        @Test
+        @DisplayName("로그인 승계는 장바구니 병합만 — 백필·convertTo 금지(노션 A-2 07-20, 공용 PC 이력 오염 방지)")
+        void loginInheritsMergeOnly() {
+            String guestId = "22222222-2222-2222-2222-222222222222";
+            Guest guest = Guest.issue(guestId);
+            when(memberRepository.findByEmail("user@test.com"))
+                    .thenReturn(Optional.of(memberFixture(1L)));
+            when(guestRepository.findById(guestId)).thenReturn(Optional.of(guest));
+
+            authService.login(new LoginRequest("user@test.com", "password1"), IP, guestId);
+
+            assertThat(guest.isConverted()).isFalse();
+            verify(jdbcTemplate, never()).update(anyString(), any(), any());
+            verify(cartService).mergeGuestCart(1L, guestId);
+            verify(chatSessionService).endSessionAsync(
+                    com.jarvis.chat.ChatIdentity.guest(guestId), com.jarvis.chat.SessionEndReason.NEW_CONVERSATION);
         }
     }
 
