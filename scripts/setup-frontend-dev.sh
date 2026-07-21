@@ -72,7 +72,7 @@ fi
 HAS_MEMBER=$(MDB -u"$DB_USER" -p"$DB_PASS" -N -e "SHOW TABLES LIKE 'member'" "$DB_NAME")
 if [ -z "$HAS_MEMBER" ]; then
   say "스키마 적용 중 (docs/backend/schema.sql)"
-  MDB -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < ../docs/backend/schema.sql
+  MDB -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < docs/backend/schema.sql
 else
   say "스키마 이미 적용됨 — 건너뜀"
 fi
