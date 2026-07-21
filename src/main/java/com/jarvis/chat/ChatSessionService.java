@@ -6,13 +6,16 @@ import com.jarvis.global.response.ErrorCode;
 import java.time.Duration;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 /**
  * CH-1/CH-1b (04 §6) — 세션은 Redis TTL 10분 sliding, 대화 내용은 저장하지 않는다(03 §1).
  * 신원별 활성 세션을 1개로 유지(owner 인덱스)해 "새 대화"·로그아웃 시 I-20 통지 대상을 찾는다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChatSessionService {
@@ -74,6 +77,22 @@ public class ChatSessionService {
         redisTemplate.expire(ownerKey(identity), ttl);
         Long brandId = parts.length >= 4 ? Long.valueOf(parts[3]) : null;
         return response(sessionId, identity, brandId);
+    }
+
+    /**
+     * endSession의 비동기 입구 — 열린 DB 트랜잭션 안에서 Redis를 기다리지 않도록 분리
+     * (로그아웃처럼 @Transactional 안에서 호출하는 곳 전용). Redis 장애는 warn만 남기고
+     * 세션은 TTL 소멸에 위임 — 호출측 흐름(RT 삭제 등)은 영향받지 않는다.
+     * 주의: issue()의 "새 대화" 정리는 새 세션 발급과의 순서 보장이 필요해 동기 경로를 유지한다.
+     */
+    @Async
+    public void endSessionAsync(ChatIdentity identity, SessionEndReason reason) {
+        try {
+            endSession(identity, reason);
+        } catch (RuntimeException e) {
+            log.warn("채팅 세션 정리 실패 — TTL 소멸에 위임. identity={}:{}, reason={}",
+                    identity.subType(), identity.sub(), reason, e);
+        }
     }
 
     /** 로그아웃 등 종료 트리거 — 활성 세션이 있으면 삭제 + I-20 통지 (05 §2-1) */
