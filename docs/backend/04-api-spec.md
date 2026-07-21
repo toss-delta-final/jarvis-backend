@@ -3,6 +3,7 @@
 > 기준: 「기능 정의 - 이소희」의 페이지별 기능에서 역산. 응답은 전부 03 문서의 envelope(`{success, data|error}`), 인증 규약도 03을 따른다.
 > 표기: 🔓 인증 불필요 / 🔑 로그인 필요 / 🏪 SELLER / 🛡 ADMIN / ⚙ internal(서비스 토큰). `{}`는 path variable.
 > LLM 콜백(⚙ `/internal/*`)과 채팅 직결(SSE·티켓)의 상세 스키마는 [05 LLM 연동 계약](05-llm-contract.md)이 원본이고 여기서는 목록만 둔다.
+> **2026-07-21 S-5 폐기(팀 결정)**: 판매자 상품 **직접 수정(S-5 `PATCH /api/seller/products/{id}`)은 미채택** — 상품 수정은 챗봇 경로(I-11, HITL confirm)만. 판매자 직접 경로는 조회(S-1 대시보드·S-2 주문·S-3 상품목록)만 남긴다(백엔드→프론트 정보 표시). 이전 "S-5·I-11 병존 확정(07-17)"은 이 결정으로 폐기. 아래 표·05 §1-3의 병존 문구도 정정.
 
 > **2026-07-18 응답 스키마 정합화(팀 결정: 노션 「📡 API 명세서」가 응답 예시의 기준)** — FE 파싱을 깨는 차이를 노션에 맞춰 일괄 수정:
 > 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
@@ -114,9 +115,9 @@
 |---|---|---|---|---|
 | S-1 | GET | /api/seller/summary | 🏪 | 자사 요약: 기간별 매출/주문수(order_item 집계), 상품별 조회수·담김수·판매수(**behavior_events** `product_view`/`add_to_cart` + order_item) query: from, to. **집계 규칙**: 매출·판매수 = PAID 주문의 order_item 중 `PENDING`/`CANCELLED`/`RETURNED` 제외(처리중 포함) — I-6도 동일 |
 | S-2 | GET | /api/seller/orders | 🏪 | 자사 상품이 포함된 주문 **아이템 단위** 목록(자사 아이템만) — 페이지네이션(page, size) |
-| S-3 | GET | /api/seller/products | 🏪 | 자사 상품 목록(판매자 화면용). query: status?(ON_SALE\|HIDDEN), q?(상품명), sort(latest\|price_asc\|price_desc), page, size — 응답 행: productId, name, price, originalPrice, **stockQuantity**(02 D33), status, displayedSalesCount(= base_sales_count + order_item 집계), category, imageUrl. HIDDEN도 노출(본인 화면), 상세 필드(description·attributes)는 S-5 수정 화면 소관. **I-9(챗봇용 동일 목록)와 같은 서비스 재사용** — 입구·페이지네이션만 다름(FE 관례 page/size) *(구 로컬 S-3의 PATCH는 S-5로 이동)* |
+| S-3 | GET | /api/seller/products | 🏪 | 자사 상품 목록(판매자 화면용). query: status?(ON_SALE\|HIDDEN), q?(상품명), sort(latest\|price_asc\|price_desc), page, size — 응답 행: productId, name, price, originalPrice, **stockQuantity**(02 D33), status, displayedSalesCount(= base_sales_count + order_item 집계), category, imageUrl. HIDDEN도 노출(본인 화면), 상세 필드(description·attributes)는 챗봇 수정(I-11) 소관. **I-9(챗봇용 동일 목록)와 같은 서비스 재사용** — 입구·페이지네이션만 다름(FE 관례 page/size) |
 | S-4 | POST | /api/chat/seller/sessions | 🏪 | 판매자 챗봇 **세션 + SELLER 스코프 스트림 티켓 발급**(직결 — 채팅 SSE는 FE↔FastAPI). `brandId`는 JWT 검증 후 **BE가 DB에서 도출해 티켓 claim에 박음**(클라이언트/LLM 주장 무시). 실제 SSE 스트림은 05 §1-3 소관 — 주소 표기는 **OPEN**(`{AI_SERVER}/seller/chat` 별도 경로 vs 공용 `/chat`+`channel:SELLER`, LLM 확인 중). AI 분석(매출 이상/퍼널/행동/이탈)은 LLM이 internal 콜백(I-6~I-16) 사용, 상품 수정은 draft + 2왕복 confirm(HITL) — 05 §1-3. *(구 `POST /api/chat/seller` SSE 프록시는 직결로 폐기)* |
-| S-5 | PATCH | /api/seller/products/{id} | 🏪 | **판매자 직접 수정(화면 경로)**: name, summary, attributes, description, price, original_price, status, stockQuantity — 검증 `price ≤ original_price`(02 D28)·`stock ≥ 0`, 본인 브랜드 상품 아니면 403. description은 서버측 sanitize(XSS 차단). 바뀐 필드마다 **product_change_logs 기록**(동일값 미기록 — I-11과 동일 규칙). **챗봇 경로(I-11)와 병존 확정(2026-07-17)** *(구 로컬 S-3에서 이동)* |
+| ~~S-5~~ | ~~PATCH~~ | ~~/api/seller/products/{id}~~ | — | **폐기(2026-07-21)** — 판매자 직접 상품수정 미채택. 상품 수정은 챗봇 경로(I-11, HITL)만. 상세는 상단 결정 노트 참조. |
 
 ## 8. events (FE 행동 이벤트 배치 수집)
 
@@ -168,7 +169,7 @@
 | I-8 | GET | /internal/account-events | 계정 이벤트 집계(**전역** — brandId 스코프 아님) — groupBy ip\|eventType\|hour, IP 마스킹, **집계 전용(raw 미반환)** |
 | I-9 | GET | /internal/seller/{brandId}/products | 자사 상품 목록 — status/q/limit/offset, displayedSalesCount = base_sales_count + order_item 집계, stockQuantity 포함 (구 I-7의 소유권 403 승계) |
 | I-10 | POST | /internal/seller/{brandId}/products | 상품 등록 — name·price·stockQuantity 필수, 검증 price ≤ originalPrice. **등록은 product_change_logs 미기록** |
-| I-11 | PATCH | /internal/seller/{brandId}/products/{productId} | 상품 수정 통합(가격·설명·상태·재고) — 바뀐 필드마다 product_change_logs 기록(동일값 미기록), 응답에 changes[]. HITL confirm 후 실행(05 §1-3), 판매자 화면 경로(S-5)와 병존 |
+| I-11 | PATCH | /internal/seller/{brandId}/products/{productId} | 상품 수정 통합(가격·설명·상태·재고) — 바뀐 필드마다 product_change_logs 기록(동일값 미기록), 응답에 changes[]. HITL confirm 후 실행(05 §1-3) — 상품 수정의 유일 경로(구 S-5 직접수정 폐기 2026-07-21) |
 | I-12 | DELETE | /internal/seller/{brandId}/products/{productId} | soft delete(status=HIDDEN) — **HITL 승인 후에만**(05 §1-3), STATUS 변경 로그 기록 |
 | I-13 | GET | /internal/seller/{brandId}/events | 행동 이벤트 조회/집계 — 노션 명세 확정(2026-07-18)·구현 완료: groupBy=product\|eventType\|date, counts camelCase, uniqueVisitors·viewToCartRate |
 | I-14 | GET | /internal/seller/{brandId}/order-events | 주문 상태 전이 로그 조회 — toStatus 복수/actorType/stats/groupBy=memberId(어뷰징 탐지), 상태 어휘는 우리 상태명 기준 |

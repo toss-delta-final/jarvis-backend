@@ -92,7 +92,7 @@ public class Product extends BaseTimeEntity {
         return product;
     }
 
-    // S-5/I-11 공용 수정 (04 §7·§10) — 검증(price ≤ originalPrice 등)·change log는 SellerProductService 소관
+    // I-11 상품 수정 (04 §10) — 검증(price ≤ originalPrice 등)·change log는 SellerProductService 소관
 
     public void changeName(String name) {
         this.name = name;

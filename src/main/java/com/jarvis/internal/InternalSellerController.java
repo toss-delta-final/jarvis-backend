@@ -105,7 +105,7 @@ public class InternalSellerController {
         return ApiResponse.success(sellerProductService.create(brandId, request));
     }
 
-    /** I-11 — 상품 수정 통합(HITL confirm 후) — S-5와 같은 검증·change log, 소유 아님 404 (노션 I-11) */
+    /** I-11 — 상품 수정 통합(HITL confirm 후) — 가격·설명·상태·재고, 소유 아님 404 (노션 I-11) */
     @PatchMapping("/seller/{brandId}/products/{productId}")
     public ApiResponse<SellerProductUpdateResponse> updateProduct(
             @PathVariable Long brandId,

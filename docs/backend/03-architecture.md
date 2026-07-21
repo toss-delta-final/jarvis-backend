@@ -317,7 +317,7 @@ com.jarvis
 
 **⑤ 판매자 조회(대시보드)** — FE `GET /api/seller/summary`(Bearer) → 시큐리티 필터가 JWT+`SELLER` 확인 → SellerController가 **토큰 memberId에서 brandId 유도**(주장받지 않음) → SellerService 집계(매출·주문수는 order_item, 조회/담김수는 behavior_events의 product_view·add_to_cart — 02 D31; 복잡 집계만 JdbcTemplate) → WHERE에 brandId 박혀 남의 데이터는 쿼리 단계에서 안 나옴 → envelope. (S-2도 동형.)
 
-**⑥ 판매자 쓰기(상품수정)** — FE `PATCH /api/seller/products/{id}`(Bearer) → JWT+`SELLER` → SellerProductService가 **먼저 소유권 검사**(상품의 브랜드 == 내 brandId, 아니면 403) → UPDATE(`status=HIDDEN` 비노출 포함). ②엔 없던 소유권 스텝이 결정적.
+**⑥ 판매자 쓰기(상품수정/삭제)** — 판매자 직접 경로는 없다(구 S-5 폐기 2026-07-21). 챗봇 HITL만: FastAPI가 confirm된 draft를 `PATCH /internal/seller/{brandId}/products/{productId}`(I-11)·`DELETE`(I-12) 콜백(`X-Internal-Token`, brandId는 **티켓 claim의 메아리**) → SellerProductService가 **먼저 소유권 검사**(상품의 브랜드 == 티켓 brandId, 아니면 **404로 존재 은닉** — productId가 LLM 값) → UPDATE(`status=HIDDEN` 비노출 포함). ②엔 없던 소유권 스텝이 결정적.
 
 **⑦ 판매자 에이전트(챗봇)** — FE가 `POST /api/chat/seller/sessions`(S-4)로 JWT+`SELLER`+세션 검증 후 **SELLER 스코프 스트림 티켓**을 받아(brandId는 **서버가 계정에서 유도**해 티켓 claim에 박음 — 클라이언트/LLM 주장 불가) → FE가 티켓으로 FastAPI에 직접 SSE 연결(`channel:SELLER`) → 분석에 수치 필요 시 `GET /internal/seller/{brandId}/sales` 등 집계 콜백(I-6~I-16 — brandId는 **티켓 claim의 메아리**, FastAPI 툴 인자 아님) → InternalController가 ⑤와 같은 집계 서비스로 **집계값만** 반환(raw 로그·임의 쿼리 권한 없음 → text2SQL 실패·타 판매자 접근 원천 차단) → FastAPI가 분석 답변 `token`(+차트용 구조화 데이터) SSE 발행. ※ **판매자용 구조화 이벤트(예: `stats`) 스키마는 05에 미정 — LLM 팀 합의 필요(05 §4).**
 

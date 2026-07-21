@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * 판매자 → 자기 브랜드 도출 (04 §7) — brandId는 클라이언트/LLM 주장이 아니라
- * JWT 검증 후 DB에서 도출한다 (S-4 티켓 claim·S-1~S-5 공통).
+ * JWT 검증 후 DB에서 도출한다 (S-4 티켓 claim·S-1~S-3 공통).
  */
 @Component
 @RequiredArgsConstructor

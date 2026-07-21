@@ -44,7 +44,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
-/** S-5/I-11 공용 수정 — 검증·change log 규칙 (04 §7·§10, 02 D28·D32, 노션 I-9~I-12) */
+/** I-11 상품 수정 — 검증·change log 규칙 (04 §7·§10, 02 D28·D32, 노션 I-9~I-12) */
 @ExtendWith(MockitoExtension.class)
 class SellerProductServiceTest {
 
@@ -85,7 +85,7 @@ class SellerProductServiceTest {
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         SellerProductUpdateRequest request = updateRequest("새 이름", null, 89000, null, 50, null);
 
-        SellerProductUpdateResponse response = service.update(BRAND_ID, 1L, request);
+        SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L, request);
 
         assertThat(response.changes()).containsExactlyInAnyOrder("PRICE", "STOCK");
         assertThat(response.productId()).isEqualTo(1L);
@@ -109,20 +109,20 @@ class SellerProductServiceTest {
         SellerProductUpdateRequest request = updateRequest(
                 "에어프라이어", null, 96800, ProductStatus.ON_SALE, 100, null);
 
-        SellerProductUpdateResponse response = service.update(BRAND_ID, 1L, request);
+        SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L, request);
 
         assertThat(response.changes()).isEmpty();
         verify(productChangeLogRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("attributes는 JSON 객체로 받아 문자열 저장, imageUrl은 로그·changes 없이 반영 (노션 I-10·S-5)")
+    @DisplayName("attributes는 JSON 객체로 받아 문자열 저장, imageUrl은 로그·changes 없이 반영 (노션 I-10·I-11)")
     void updateSerializesAttributesAndAppliesImageUrl() throws Exception {
         Product product = ownProduct();
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         JsonNode attributes = objectMapper.readTree("{\"size\":[\"250\",\"260\"]}");
 
-        SellerProductUpdateResponse response = service.update(BRAND_ID, 1L,
+        SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L,
                 updateRequest(null, attributes, null, null, null, "/new.webp"));
 
         assertThat(product.getAttributes()).isEqualTo("{\"size\":[\"250\",\"260\"]}");
@@ -138,7 +138,7 @@ class SellerProductServiceTest {
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         SellerProductUpdateRequest request = updateRequest(null, null, 150000, null, null, null);
 
-        assertThatThrownBy(() -> service.update(BRAND_ID, 1L, request))
+        assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L, request))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PRICE);
     }
@@ -149,22 +149,10 @@ class SellerProductServiceTest {
         Product product = ownProduct();
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
-        assertThatThrownBy(() -> service.update(BRAND_ID, 1L,
+        assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
                 updateRequest(null, null, null, null, -1, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_STOCK);
-    }
-
-    @Test
-    @DisplayName("공개 경로(S-5) — 타 브랜드 상품이면 403 AUTH_FORBIDDEN (노션 S-5)")
-    void updateRejectsOtherBrandProduct() {
-        Product product = ownProduct();
-        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
-
-        assertThatThrownBy(() -> service.update(999L, 1L,
-                updateRequest("이름", null, null, null, null, null)))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.AUTH_FORBIDDEN);
     }
 
     @Test
@@ -324,7 +312,7 @@ class SellerProductServiceTest {
     }
 
     @Test
-    @DisplayName("description sanitize — script/인라인 핸들러/javascript: 제거 (04 §7 S-5)")
+    @DisplayName("description sanitize — script/인라인 핸들러/javascript: 제거 (04 §10 I-11)")
     void sanitizeStripsExecutableHtml() {
         String dirty = "<p onclick=\"x()\">좋은 상품</p><script>alert(1)</script>"
                 + "<a href=\"javascript:evil()\">링크</a>";
@@ -338,7 +326,7 @@ class SellerProductServiceTest {
     @Test
     @DisplayName("전 필드 null 요청은 400 (부분 수정이라도 최소 1개 필드)")
     void updateRejectsEmptyRequest() {
-        assertThatThrownBy(() -> service.update(BRAND_ID, 1L,
+        assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
                 new SellerProductUpdateRequest(null, null, null, null, null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
