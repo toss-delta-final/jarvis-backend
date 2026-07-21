@@ -7,8 +7,7 @@ import com.jarvis.cart.dto.CartItemResponse;
 import com.jarvis.cart.dto.CartResponse;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
-import com.jarvis.member.Guest;
-import com.jarvis.member.GuestRepository;
+import com.jarvis.member.GuestService;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
@@ -17,7 +16,6 @@ import com.jarvis.product.ProductStatus;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +35,7 @@ public class CartService {
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
     private final BrandRepository brandRepository;
-    private final GuestRepository guestRepository;
+    private final GuestService guestService;
 
     /** C-2 결과 — issuedGuestId가 있으면 컨트롤러가 guest_id 쿠키를 새로 내린다 */
     public record CartAddResult(CartItemResponse item, String issuedGuestId) {
@@ -85,7 +83,7 @@ public class CartService {
 
         String issuedGuestId = null;
         if (memberId == null) {
-            issuedGuestId = ensureGuest(guestId);
+            issuedGuestId = guestService.ensureGuest(guestId);
             guestId = issuedGuestId != null ? issuedGuestId : guestId;
         }
 
@@ -173,16 +171,6 @@ public class CartService {
         if (!belongs) {
             throw new BusinessException(ErrorCode.CART_OPTION_INVALID);
         }
-    }
-
-    /** 게스트 담기 — 쿠키가 없거나 guest 행이 없으면(INSERT 동반 — 03 D3) 발급/복구 */
-    private String ensureGuest(String guestId) {
-        if (guestId != null && guestRepository.existsById(guestId)) {
-            return null;
-        }
-        String id = guestId != null ? guestId : UUID.randomUUID().toString();
-        guestRepository.save(Guest.issue(id));
-        return id;
     }
 
     private CartItem findOwnedItem(Long memberId, String guestId, Long cartItemId) {

@@ -51,6 +51,8 @@ public class SecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler))
                 .authorizeHttpRequests(auth -> auth
                         // 🔑 상품 하위 경로 중 로그인 필요 항목은 permitAll보다 먼저 (M-7·P-5)
+                        // recommended(P-5)는 미구현이지만 규칙 선점 유지 — 아래 /api/products/** permitAll보다
+                        // 선행해야 하므로, 지우면 P-5 구현 시 인증 없이 열리는 함정이 된다
                         .requestMatchers("/api/products/recent", "/api/products/recommended").hasRole("USER")
                         // 🔓 permitAll (03 D3) — 단 A-5(me)는 🔑라 /api/auth/** 보다 먼저 매칭
                         .requestMatchers("/api/auth/me").authenticated()

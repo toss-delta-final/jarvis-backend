@@ -26,8 +26,6 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     runtimeOnly 'org.mariadb.jdbc:mariadb-java-client'
 
-    // AWS S3 연동 의존성 추가
-    implementation 'io.awspring.cloud:spring-cloud-aws-starter-s3:3.1.1'
 
     // 스케줄러 분산 락 (03 §4, D-분산5 — 틱당 1대만 실행, 단일 인스턴스에서도 무해)
     implementation 'net.javacrumbs.shedlock:shedlock-spring:6.2.0'

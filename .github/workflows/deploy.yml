@@ -54,10 +54,6 @@ jobs:
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
             STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
-            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }}
-            AWS_REGION=ap-northeast-2
             EOF
             
             # 2. 레디스 컨테이너 자동 다운로드 및 강제 삭제 후 실행
