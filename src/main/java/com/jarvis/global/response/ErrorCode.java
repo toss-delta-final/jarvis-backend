@@ -68,6 +68,9 @@ public enum ErrorCode {
     // seller (04 §7·§10 — Phase 6)
     SELLER_BRAND_NOT_FOUND(HttpStatus.NOT_FOUND, "판매자에 연결된 브랜드가 없습니다."),
     PRODUCT_CATEGORY_INVALID(HttpStatus.BAD_REQUEST, "상품은 소분류 카테고리에만 등록할 수 있습니다."),
+    // 판매자 화면 조회 파라미터 오류 — 계약(노션 S-1/S-3)이 엔드포인트별 code를 요구 (S-2는 ORDER_INVALID_PARAM 재사용)
+    SELLER_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
+    PRODUCT_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
 
     // seller 분석·상품 쓰기 (노션 명세 정합화 — 2026-07-18)
     INVALID_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),

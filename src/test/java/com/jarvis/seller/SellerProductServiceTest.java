@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,6 +29,7 @@ import com.jarvis.seller.dto.SellerProductCreateRequest;
 import com.jarvis.seller.dto.SellerProductCreateResponse;
 import com.jarvis.seller.dto.SellerProductDeleteResponse;
 import com.jarvis.seller.dto.SellerProductInternalListResponse;
+import com.jarvis.seller.dto.SellerProductListResponse;
 import com.jarvis.seller.dto.SellerProductUpdateRequest;
 import com.jarvis.seller.dto.SellerProductUpdateResponse;
 import java.util.List;
@@ -330,5 +332,75 @@ class SellerProductServiceTest {
                 new SellerProductUpdateRequest(null, null, null, null, null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    /** S-3 목록 테스트용 — 단위 테스트라 id를 명시(정렬 tiebreak)·나머지 필드는 lenient */
+    private static Product product(long id, ProductStatus status, int stock, int price, long categoryId) {
+        Product p = mock(Product.class);
+        lenient().when(p.getId()).thenReturn(id);
+        lenient().when(p.getStatus()).thenReturn(status);
+        lenient().when(p.getStockQuantity()).thenReturn(stock);
+        lenient().when(p.getPrice()).thenReturn(price);
+        lenient().when(p.getOriginalPrice()).thenReturn(price);
+        lenient().when(p.getBaseSalesCount()).thenReturn(0);
+        lenient().when(p.getCategoryId()).thenReturn(categoryId);
+        lenient().when(p.getName()).thenReturn("상품" + id);
+        lenient().when(p.getImageUrl()).thenReturn("/img" + id + ".webp");
+        return p;
+    }
+
+    @Test
+    @DisplayName("S-3 목록 — displayStatus 파생(ON_SALE/SOLD_OUT/HIDDEN) + tabCounts 전량 기준 (노션 S-3)")
+    void listDerivesDisplayStatusAndTabCounts() {
+        Product onSale = product(1L, ProductStatus.ON_SALE, 5, 10000, 20L);
+        Product soldOut = product(2L, ProductStatus.ON_SALE, 0, 20000, 20L);
+        Product hidden = product(3L, ProductStatus.HIDDEN, 0, 30000, 20L);
+        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of(onSale, soldOut, hidden));
+        when(orderItemRepository.sumPaidQuantityByProduct(any())).thenReturn(List.of());
+        Category leaf = mock(Category.class);
+        lenient().when(leaf.getId()).thenReturn(20L);
+        lenient().when(leaf.getName()).thenReturn("신발");
+        when(categoryRepository.findAllById(any())).thenReturn(List.of(leaf));
+
+        SellerProductListResponse res = service.list(BRAND_ID, null, "latest", 0, 20);
+
+        assertThat(res.tabCounts()).containsEntry("ALL", 3L).containsEntry("ON_SALE", 1L)
+                .containsEntry("SOLD_OUT", 1L).containsEntry("HIDDEN", 1L);
+        assertThat(res.content()).extracting(SellerProductListResponse.Row::productId)
+                .containsExactly(3L, 2L, 1L); // latest = id desc
+        assertThat(res.content()).extracting(SellerProductListResponse.Row::displayStatus)
+                .containsExactly("HIDDEN", "SOLD_OUT", "ON_SALE");
+        assertThat(res.content().get(1).status()).isEqualTo("ON_SALE"); // 원본 status는 SOLD_OUT 파생과 별개
+        assertThat(res.totalElements()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("S-3 목록 — status=SOLD_OUT 필터는 ON_SALE·재고 0만 (displayStatus 기준, 노션 S-3)")
+    void listFiltersByDisplayStatus() {
+        Product onSale = product(1L, ProductStatus.ON_SALE, 5, 10000, 20L);
+        Product soldOut = product(2L, ProductStatus.ON_SALE, 0, 20000, 20L);
+        Product hidden = product(3L, ProductStatus.HIDDEN, 0, 30000, 20L);
+        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of(onSale, soldOut, hidden));
+        when(orderItemRepository.sumPaidQuantityByProduct(any())).thenReturn(List.of());
+        when(categoryRepository.findAllById(any())).thenReturn(List.of());
+
+        SellerProductListResponse res = service.list(BRAND_ID, "SOLD_OUT", "latest", 0, 20);
+
+        assertThat(res.content()).extracting(SellerProductListResponse.Row::productId).containsExactly(2L);
+        assertThat(res.tabCounts()).containsEntry("ALL", 3L); // 카운트는 필터 무관 전량
+    }
+
+    @Test
+    @DisplayName("S-3 목록 — 잘못된 status/sort/size는 400 PRODUCT_INVALID_PARAM (노션 S-3)")
+    void listRejectsInvalidParams() {
+        assertThatThrownBy(() -> service.list(BRAND_ID, "BOGUS", "latest", 0, 20))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PRODUCT_INVALID_PARAM);
+        assertThatThrownBy(() -> service.list(BRAND_ID, null, "unknown", 0, 20))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PRODUCT_INVALID_PARAM);
+        assertThatThrownBy(() -> service.list(BRAND_ID, null, "latest", 0, 101))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PRODUCT_INVALID_PARAM);
     }
 }

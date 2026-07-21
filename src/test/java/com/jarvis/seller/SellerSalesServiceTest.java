@@ -3,18 +3,23 @@ package com.jarvis.seller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.jarvis.brand.Brand;
 import com.jarvis.brand.BrandRepository;
 import com.jarvis.global.event.BehaviorEventRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.OrderItemRepository;
+import com.jarvis.order.OrderStatusLogRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.SellerSalesResponse;
+import com.jarvis.seller.dto.SellerSummaryResponse;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +36,7 @@ class SellerSalesServiceTest {
     private static final Long BRAND_ID = 7L;
 
     @Mock private OrderItemRepository orderItemRepository;
+    @Mock private OrderStatusLogRepository orderStatusLogRepository;
     @Mock private BehaviorEventRepository behaviorEventRepository;
     @Mock private ProductRepository productRepository;
     @Mock private BrandRepository brandRepository;
@@ -127,6 +133,62 @@ class SellerSalesServiceTest {
         assertThatThrownBy(() -> service.sales(999L, "daily", period))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.BRAND_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("S-1 summary — 전 블록 구성 + orderStatus 6종/activeTotal + 어제 대비 changeRate (노션 S-1)")
+    void summaryBuildsAllBlocksWithYesterdayChangeRate() {
+        when(orderItemRepository.countSellerItemsByStatus(BRAND_ID))
+                .thenReturn(List.of(status("ORDERED", 3), status("SHIPPING", 2), status("CANCELLED", 1)));
+        when(orderStatusLogRepository.avgSellerDeliverySeconds(BRAND_ID)).thenReturn(155520.0); // 1.8일
+        // today() → sumSellerSales(오늘), 그다음 sumSellerSales(어제)
+        when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any()))
+                .thenReturn(totals(120000, 4, 0), totals(100000, 2, 0));
+        when(behaviorEventRepository.countActiveVisitors(eq(BRAND_ID), any())).thenReturn(42L);
+        when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(), any()))
+                .thenReturn(List.of());
+        when(productRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
+        when(orderItemRepository.sumSellerSalesByProduct(eq(BRAND_ID), any(), any())).thenReturn(List.of());
+        when(behaviorEventRepository.countSellerEventsByProduct(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of());
+        Brand brand = mock(Brand.class);
+        when(brand.getId()).thenReturn(BRAND_ID);
+
+        SellerSummaryResponse res = service.summary(brand, null, null, null, null);
+
+        assertThat(res.orderStatus().counts())
+                .containsEntry("ORDERED", 3L).containsEntry("SHIPPING", 2L)
+                .containsEntry("DELIVERED", 0L).containsEntry("CONFIRMED", 0L)
+                .containsEntry("CANCELLED", 1L).containsEntry("RETURNED", 0L);
+        assertThat(res.orderStatus().activeTotal()).isEqualTo(5); // 3+2, CANCELLED 제외
+        assertThat(res.orderStatus().avgDeliveryDays()).isEqualTo(1.8);
+        assertThat(res.today().sales()).isEqualTo(120000);
+        assertThat(res.today().avgOrderValue()).isEqualTo(30000); // 120000/4
+        assertThat(res.today().activeVisitors()).isEqualTo(42);
+        assertThat(res.today().salesChangeRate()).isEqualTo(20.0);      // (120000-100000)/100000
+        assertThat(res.today().orderCountChangeRate()).isEqualTo(100.0); // (4-2)/2
+        assertThat(res.period().from()).isEqualTo(res.period().to());   // 기본 오늘~오늘
+        assertThat(res.salesTrend().points()).hasSize(7);               // trendDays 기본 7
+        assertThat(res.salesTrend().total()).isZero();
+    }
+
+    @Test
+    @DisplayName("S-1 summary — 범위 밖 파라미터·날짜 형식 오류·from>to는 400 SELLER_INVALID_PARAM (노션 S-1)")
+    void summaryRejectsInvalidParams() {
+        Brand brand = mock(Brand.class);
+        assertThatThrownBy(() -> service.summary(brand, null, null, 0, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SELLER_INVALID_PARAM);
+        assertThatThrownBy(() -> service.summary(brand, null, null, null, 91))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SELLER_INVALID_PARAM);
+        assertThatThrownBy(() -> service.summary(brand, "2026-13-99", null, null, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SELLER_INVALID_PARAM);
+        assertThatThrownBy(() -> service.summary(brand, "2026-07-10", "2026-07-01", null, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SELLER_INVALID_PARAM);
     }
 
     @Test

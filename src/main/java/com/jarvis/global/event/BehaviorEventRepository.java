@@ -76,6 +76,18 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
                                                          @Param("from") LocalDateTime from,
                                                          @Param("to") LocalDateTime to);
 
+    /**
+     * S-1 실시간 방문자 — 최근 30분 자사 상품 관련 이벤트의 distinct session_key (노션 S-1).
+     * session_key는 30분 무활동 시 재발급이라 "실시간 접속" 정의와 정합. 캐시 미적용(성격이 실시간).
+     */
+    @Query(value = """
+            SELECT COUNT(DISTINCT be.session_key)
+            FROM behavior_events be
+            JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
+            WHERE be.created_at >= :since
+            """, nativeQuery = true)
+    long countActiveVisitors(@Param("brandId") Long brandId, @Param("since") LocalDateTime since);
+
     interface CheckoutRow {
         LocalDateTime getCreatedAt();
         String getProperties();

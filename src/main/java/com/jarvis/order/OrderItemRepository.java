@@ -3,8 +3,6 @@ package com.jarvis.order;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -70,14 +68,62 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             """, nativeQuery = true)
     List<ProductQuantityRow> sumPaidQuantityByProduct(@Param("productIds") Collection<Long> productIds);
 
-    /** S-2 자사 아이템 단위 주문 목록 (04 §7) — PAID 주문만, 최신순 */
+    /**
+     * S-2 주문 단위 탭 카운트 (노션 S-2) — 자사 아이템이 포함된 PAID 주문을 대표상태로 분류.
+     * 대표 탭 규칙(위에서부터): 활성 클레임(*_REQUESTED) 또는 전량 종결(CANCELLED/RETURNED) → CLAIM,
+     * ORDERED 존재 → ORDERED, SHIPPING 존재 → SHIPPING, 그 외(DELIVERED/CONFIRMED) → DELIVERED.
+     * item.status는 claim REQUESTED와 동기 전이(01 §5)라 클레임 판정에 claim 테이블 조인 불필요.
+     */
+    @Query(value = """
+            SELECT t.tab AS bucket, COUNT(*) AS cnt FROM (
+                SELECT
+                    CASE
+                        WHEN SUM(oi.status IN ('CANCEL_REQUESTED','RETURN_REQUESTED')) > 0 THEN 'CLAIM'
+                        WHEN SUM(oi.status NOT IN ('CANCELLED','RETURNED')) = 0 THEN 'CLAIM'
+                        WHEN SUM(oi.status = 'ORDERED') > 0 THEN 'ORDERED'
+                        WHEN SUM(oi.status = 'SHIPPING') > 0 THEN 'SHIPPING'
+                        ELSE 'DELIVERED'
+                    END AS tab
+                FROM order_item oi
+                JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+                JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+                GROUP BY oi.order_id
+            ) t
+            GROUP BY t.tab
+            """, nativeQuery = true)
+    List<StatusCountRow> countSellerOrderTabs(@Param("brandId") Long brandId);
+
+    /** S-2 페이지 orderId — 대표 탭 필터(null=전체) + 주문일시 최신순. 대표상태 파생은 countSellerOrderTabs와 동일. */
+    @Query(value = """
+            SELECT t.order_id FROM (
+                SELECT oi.order_id AS order_id, o.created_at AS created_at,
+                    CASE
+                        WHEN SUM(oi.status IN ('CANCEL_REQUESTED','RETURN_REQUESTED')) > 0 THEN 'CLAIM'
+                        WHEN SUM(oi.status NOT IN ('CANCELLED','RETURNED')) = 0 THEN 'CLAIM'
+                        WHEN SUM(oi.status = 'ORDERED') > 0 THEN 'ORDERED'
+                        WHEN SUM(oi.status = 'SHIPPING') > 0 THEN 'SHIPPING'
+                        ELSE 'DELIVERED'
+                    END AS tab
+                FROM order_item oi
+                JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+                JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+                GROUP BY oi.order_id, o.created_at
+            ) t
+            WHERE (:tab IS NULL OR t.tab = :tab)
+            ORDER BY t.created_at DESC, t.order_id DESC
+            LIMIT :limit OFFSET :offset
+            """, nativeQuery = true)
+    List<Long> findSellerOrderIdsByTab(@Param("brandId") Long brandId, @Param("tab") String tab,
+                                       @Param("limit") int limit, @Param("offset") long offset);
+
+    /** S-2 페이지 주문들의 자사 아이템 — 금액·건수·대표상품·대표상태 산출용 */
     @Query("""
             select oi from OrderItem oi
-            where oi.productId in (select p.id from Product p where p.brandId = :brandId)
-              and oi.orderId in (select o.id from Order o where o.status = com.jarvis.order.OrderStatus.PAID)
-            order by oi.id desc
+            where oi.orderId in :orderIds
+              and oi.productId in (select p.id from Product p where p.brandId = :brandId)
             """)
-    Page<OrderItem> findSellerOrderItems(@Param("brandId") Long brandId, Pageable pageable);
+    List<OrderItem> findSellerItemsByOrderIds(@Param("brandId") Long brandId,
+                                              @Param("orderIds") Collection<Long> orderIds);
 
     /**
      * S-1/I-6 매출·판매수 집계 규칙 (04 §7) — PAID 주문의 order_item 중
@@ -165,6 +211,18 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     List<StatusCountRow> countSellerStatusBuckets(@Param("brandId") Long brandId,
                                                   @Param("from") LocalDateTime from,
                                                   @Param("to") LocalDateTime to);
+
+    /**
+     * S-1 주문상태 카드 — 자사 아이템 상태 분포(현재 스냅샷). 반환은 order_item.status 원값(9종),
+     * 화면 6종(ORDERED/SHIPPING/DELIVERED/CONFIRMED/CANCELLED/RETURNED) 매핑과 activeTotal은 서비스 계산.
+     */
+    @Query(value = """
+            SELECT oi.status AS bucket, COUNT(*) AS cnt
+            FROM order_item oi
+            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+            GROUP BY oi.status
+            """, nativeQuery = true)
+    List<StatusCountRow> countSellerItemsByStatus(@Param("brandId") Long brandId);
 
     /** I-7 4단 purchase 정본 — order_item×product×brand, 주문서 1회=1 (02 §4) */
     @Query(value = """
