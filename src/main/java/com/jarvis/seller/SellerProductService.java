@@ -39,9 +39,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * S-3=I-9(같은 목록), S-5=I-11(같은 검증·change log) 공용 서비스 (04 §7·§10).
+ * S-3=I-9(같은 목록) + 상품 쓰기(I-10/I-11/I-12) 서비스 (04 §7·§10).
  * change log는 어휘가 있는 PRICE(판매가)/STOCK/STATUS만 기록 — 응답 changes[]도 이 어휘만 (노션 I-11).
- * 소유 아님: 공개 경로(S-5)는 403, internal(I-11/I-12)은 404 — productId가 LLM 값이라 존재 은닉.
+ * 상품 수정은 챗봇 경로(I-11, HITL)만 — 소유 아님은 404로 존재 은닉(productId가 LLM 값).
  */
 @Service
 @RequiredArgsConstructor
@@ -96,30 +96,18 @@ public class SellerProductService {
         return new SellerProductInternalListResponse(rows, products.getTotalElements());
     }
 
-    /** S-5 — 공개 경로 수정 (소유 아님 403) */
-    @Transactional
-    public SellerProductUpdateResponse update(Long brandId, Long productId,
-                                              SellerProductUpdateRequest request) {
-        return update(brandId, productId, request, false);
-    }
-
-    /** I-11 — internal 경로 수정 (소유 아님 404 — 존재 은닉) */
+    /**
+     * I-11 — internal 경로 수정 (HITL confirm 후, 소유 아님 404 — 존재 은닉).
+     * price ≤ originalPrice(02 D28), stockQuantity ≥ 0, 동일값 미기록.
+     * changes는 change log가 남은 어휘만(PRICE/STOCK/STATUS — 노션 I-11), 그 외 필드 변경은 미포함.
+     */
     @Transactional
     public SellerProductUpdateResponse updateInternal(Long brandId, Long productId,
                                                       SellerProductUpdateRequest request) {
-        return update(brandId, productId, request, true);
-    }
-
-    /**
-     * S-5/I-11 공용 수정 — price ≤ originalPrice(02 D28), stockQuantity ≥ 0, 동일값 미기록.
-     * changes는 change log가 남은 어휘만(PRICE/STOCK/STATUS — 노션 I-11), 그 외 필드 변경은 미포함.
-     */
-    private SellerProductUpdateResponse update(Long brandId, Long productId,
-                                               SellerProductUpdateRequest request, boolean hideOwnership) {
         if (request.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        Product product = ownedProduct(brandId, productId, hideOwnership);
+        Product product = ownedProduct(brandId, productId);
         validateStock(request.stockQuantity());
         validatePriceRange(
                 request.price() != null ? request.price() : product.getPrice(),
@@ -196,7 +184,7 @@ public class SellerProductService {
     /** I-12 — soft delete(HIDDEN 전환)만, hard delete 문 없음. 이미 HIDDEN이면 409 (노션 I-12) */
     @Transactional
     public SellerProductDeleteResponse softDelete(Long brandId, Long productId) {
-        Product product = ownedProduct(brandId, productId, true);
+        Product product = ownedProduct(brandId, productId);
         if (product.getStatus() == ProductStatus.HIDDEN) {
             throw new BusinessException(ErrorCode.ALREADY_HIDDEN);
         }
@@ -208,15 +196,14 @@ public class SellerProductService {
 
     /**
      * 소유권 검증 — productId는 LLM이 채우는 값이라 신뢰 불가, internal에서도 반복 (05 §I-9).
-     * hideOwnership(internal)이면 소유 아님도 404로 은닉, 공개 경로는 403 (노션 I-11 vs S-5).
+     * internal 경로(I-11/I-12)라 소유 아님도 404로 은닉 — 존재 여부 미노출 (노션 I-11).
      * 쓰기 경로(수정·soft delete)라 비관적 락으로 로드 — 재고 절대값 수정이 주문 차감과 경합해도 lost update 없음 (02 D33).
      */
-    private Product ownedProduct(Long brandId, Long productId, boolean hideOwnership) {
+    private Product ownedProduct(Long brandId, Long productId) {
         Product product = productRepository.findByIdForUpdate(productId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
         if (!product.getBrandId().equals(brandId)) {
-            throw new BusinessException(hideOwnership
-                    ? ErrorCode.PRODUCT_NOT_FOUND : ErrorCode.AUTH_FORBIDDEN);
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
         }
         return product;
     }
@@ -317,7 +304,7 @@ public class SellerProductService {
     }
 
     /**
-     * 서버측 XSS 최소 방어 (04 §7 S-5) — 실행 가능 태그·인라인 핸들러·javascript: 제거.
+     * 서버측 XSS 최소 방어 (04 §10 I-10/I-11) — 실행 가능 태그·인라인 핸들러·javascript: 제거.
      * 라이브러리 없이 정규식 수준 — 고도화 시 전용 sanitizer로 교체.
      */
     static String sanitizeDescription(String description) {
