@@ -48,6 +48,16 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     /** S-1 상품별 지표 조인용 — 판매자 브랜드는 시드 규모가 작아 전건 로드 (04 §7) */
     List<Product> findAllByBrandId(Long brandId);
 
+    /** S-1 재고 부족 알림 — ON_SALE 중 재고 ≤ threshold, 재고 오름차순 (노션 S-1) */
+    @Query("""
+            select p from Product p
+            where p.brandId = :brandId
+              and p.status = com.jarvis.product.ProductStatus.ON_SALE
+              and p.stockQuantity <= :threshold
+            order by p.stockQuantity asc, p.id asc
+            """)
+    List<Product> findLowStock(@Param("brandId") Long brandId, @Param("threshold") int threshold);
+
     Page<Product> findAllByBrandIdAndStatus(Long brandId, ProductStatus status, Pageable pageable);
 
     Page<Product> findAllByBrandIdAndCategoryIdAndStatus(Long brandId, Long categoryId,

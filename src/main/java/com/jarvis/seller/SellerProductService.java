@@ -26,13 +26,14 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -57,22 +58,103 @@ public class SellerProductService {
     private final BrandRepository brandRepository;
     private final ObjectMapper objectMapper;
 
-    /** S-3 — 판매자 화면 목록 (04 §7). sort: latest|price_asc|price_desc */
+    private static final List<String> PRODUCT_SORTS = List.of("latest", "sales", "stock", "price");
+
+    /**
+     * S-3 — 판매자 화면 목록 (노션 S-3). 브랜드 전 상품 로드 후 파생(displayStatus·tabCounts)·정렬·페이징을
+     * 서비스에서 수행 — 판매량 정렬이 파생값(base_sales_count + PAID 집계)이라 컬럼 정렬로 불가, 시드 규모가
+     * 작아 전건 로드(S-1과 동일 패턴). q·offset 기반 챗봇 목록(I-9)은 findSellerProducts를 그대로 쓴다(불변).
+     * sort: latest(기본, 등록일 desc) | sales(판매량 desc) | stock(재고 asc) | price(판매가 asc).
+     */
     @Transactional(readOnly = true)
-    public SellerProductListResponse list(Long brandId, ProductStatus status, String q,
-                                          String sort, int page, int size) {
-        Page<Product> products = productRepository.findSellerProducts(
-                brandId, status, blankToNull(q), PageRequest.of(page, size, toSort(sort)));
-        Map<Long, Long> salesById = paidQuantities(products.getContent());
-        Map<Long, String> categoryNames = categoryNames(products.getContent());
-        List<SellerProductListResponse.Row> rows = products.getContent().stream()
-                .map(p -> new SellerProductListResponse.Row(p.getId(), p.getName(), p.getPrice(),
-                        p.getOriginalPrice(), p.getStockQuantity(), p.getStatus().name(),
-                        displayedSalesCount(p, salesById), categoryNames.get(p.getCategoryId()),
-                        p.getImageUrl(), toKst(p.getUpdatedAt())))
+    public SellerProductListResponse list(Long brandId, String statusParam, String sort,
+                                          int page, int size) {
+        if (page < 0 || size < 1 || size > 100) {
+            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+        }
+        SellerDisplayStatus filter = parseDisplayStatus(statusParam);
+        String sortKey = parseProductSort(sort);
+
+        List<Product> all = productRepository.findAllByBrandId(brandId);
+        Map<Long, Long> salesById = paidQuantities(all);
+        Map<String, Long> tabCounts = productTabCounts(all);
+
+        List<Product> matched = all.stream()
+                .filter(p -> filter == null || filter.matches(p))
+                .sorted(productComparator(sortKey, salesById))
                 .toList();
-        return new SellerProductListResponse(rows, products.getNumber(), products.getSize(),
-                products.getTotalElements(), products.getTotalPages());
+
+        long total = matched.size();
+        long fromLong = (long) page * size;
+        int fromIndex = fromLong >= matched.size() ? matched.size() : (int) fromLong;
+        List<Product> pageItems = matched.subList(fromIndex, Math.min(fromIndex + size, matched.size()));
+        Map<Long, String> categoryNames = categoryNames(pageItems);
+
+        List<SellerProductListResponse.Row> rows = pageItems.stream()
+                .map(p -> new SellerProductListResponse.Row(p.getId(), p.getName(), p.getImageUrl(),
+                        categoryNames.get(p.getCategoryId()), p.getPrice(), p.getOriginalPrice(),
+                        p.getStockQuantity(), displayedSalesCount(p, salesById), p.getStatus().name(),
+                        SellerDisplayStatus.of(p.getStatus(), p.getStockQuantity()).name(),
+                        toKst(p.getCreatedAt()), toKst(p.getUpdatedAt())))
+                .toList();
+        int totalPages = (int) Math.ceil((double) total / size);
+        return new SellerProductListResponse(tabCounts, rows, page, size, total, totalPages);
+    }
+
+    private static SellerDisplayStatus parseDisplayStatus(String value) {
+        String v = blankToNull(value);
+        if (v == null) {
+            return null;
+        }
+        try {
+            return SellerDisplayStatus.valueOf(v);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+        }
+    }
+
+    private static String parseProductSort(String sort) {
+        String v = sort == null || sort.isBlank() ? "latest" : sort;
+        if (!PRODUCT_SORTS.contains(v)) {
+            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+        }
+        return v;
+    }
+
+    /** tabCounts는 필터와 무관하게 항상 전량 기준 (노션 S-3) — displayStatus 파생으로 집계 */
+    private static Map<String, Long> productTabCounts(List<Product> products) {
+        long onSale = 0;
+        long soldOut = 0;
+        long hidden = 0;
+        for (Product p : products) {
+            switch (SellerDisplayStatus.of(p.getStatus(), p.getStockQuantity())) {
+                case ON_SALE -> onSale++;
+                case SOLD_OUT -> soldOut++;
+                case HIDDEN -> hidden++;
+            }
+        }
+        Map<String, Long> counts = new LinkedHashMap<>();
+        counts.put("ALL", (long) products.size());
+        counts.put("ON_SALE", onSale);
+        counts.put("SOLD_OUT", soldOut);
+        counts.put("HIDDEN", hidden);
+        return counts;
+    }
+
+    /**
+     * 판매량은 파생값(base + PAID 집계)이라 salesById로 계산해 비교. 정렬 방향은 노션 미명시분에 대한
+     * 합리적 기본값(sales desc / stock asc / price asc). latest는 id desc — created_at과 단조 등가라 더 저렴.
+     */
+    private Comparator<Product> productComparator(String sortKey, Map<Long, Long> salesById) {
+        Comparator<Product> byIdDesc = Comparator.comparingLong(Product::getId).reversed();
+        return switch (sortKey) {
+            case "sales" -> Comparator
+                    .comparingLong((Product p) -> displayedSalesCount(p, salesById)).reversed()
+                    .thenComparing(byIdDesc);
+            case "stock" -> Comparator.comparingInt(Product::getStockQuantity).thenComparing(byIdDesc);
+            case "price" -> Comparator.comparingInt(Product::getPrice).thenComparing(byIdDesc);
+            default -> byIdDesc;
+        };
     }
 
     /** I-9 — 챗봇용 동일 목록 (노션 I-9) — {rows, total(필터 적용 전체 건수)}, offset은 진짜 row offset */
