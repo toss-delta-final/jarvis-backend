@@ -6,6 +6,7 @@ import com.jarvis.global.event.BehaviorEventRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.OrderItemRepository;
+import com.jarvis.order.OrderStatusLogRepository;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.SellerSalesResponse;
@@ -42,41 +43,155 @@ public class SellerSalesService {
     private static final double ANOMALY_THRESHOLD_PCT = 30.0;
 
     private final OrderItemRepository orderItemRepository;
+    private final OrderStatusLogRepository orderStatusLogRepository;
     private final BehaviorEventRepository behaviorEventRepository;
     private final ProductRepository productRepository;
     private final BrandRepository brandRepository;
 
-    /** S-1 — 기본 기간 최근 30일 */
-    public SellerSummaryResponse summary(Brand brand, LocalDate from, LocalDate to) {
-        LocalDate effectiveTo = to != null ? to : LocalDate.now();
-        LocalDate effectiveFrom = from != null ? from : effectiveTo.minusDays(29);
-        LocalDateTime fromDt = effectiveFrom.atStartOfDay();
-        LocalDateTime toDt = effectiveTo.plusDays(1).atStartOfDay();
+    private static final int DEFAULT_LOW_STOCK = 10;
+    private static final int DEFAULT_TREND_DAYS = 7;
+    private static final int ACTIVE_VISITOR_MINUTES = 30;
+    /** 화면 노출 6종 — PENDING·CANCEL_REQUESTED·RETURN_REQUESTED는 제외(노션 S-1) */
+    private static final List<String> STATUS_KEYS =
+            List.of("ORDERED", "SHIPPING", "DELIVERED", "CONFIRMED", "CANCELLED", "RETURNED");
 
-        OrderItemRepository.SalesTotalsRow totals =
-                orderItemRepository.sumSellerSales(brand.getId(), fromDt, toDt);
+    /** S-1 — 대시보드 진입 1회 호출로 전 블록(주문상태·오늘지표·매출추이·재고부족·상품퍼널)을 덮는다 (노션 S-1) */
+    public SellerSummaryResponse summary(Brand brand, String fromParam, String toParam,
+                                         Integer lowStockThreshold, Integer trendDays) {
+        LocalDate today = LocalDate.now();
+        LocalDate to = parseDate(toParam, today);
+        LocalDate from = parseDate(fromParam, today);
+        if (from.isAfter(to)) {
+            throw new BusinessException(ErrorCode.SELLER_INVALID_PARAM);
+        }
+        int threshold = require(lowStockThreshold, DEFAULT_LOW_STOCK, 1, 999);
+        int trend = require(trendDays, DEFAULT_TREND_DAYS, 1, 90);
+        Long brandId = brand.getId();
+
+        SellerSummaryResponse.OrderStatus orderStatus = orderStatus(brandId);
+        SellerSummaryResponse.Today todayBlock = today(brandId, today);
+        SellerSummaryResponse.SalesTrend salesTrend = salesTrend(brandId, to, trend);
+        SellerSummaryResponse.LowStock lowStock = lowStock(brandId, threshold);
+        List<SellerSummaryResponse.ProductMetric> products = productMetrics(brandId, from, to);
+
+        return new SellerSummaryResponse(new SellerSummaryResponse.Period(from, to),
+                orderStatus, todayBlock, salesTrend, lowStock, products);
+    }
+
+    /** 주문상태 카드 — 현재 스냅샷. counts 6종 0채움, activeTotal은 CANCELLED·RETURNED 제외 합 */
+    private SellerSummaryResponse.OrderStatus orderStatus(Long brandId) {
+        Map<String, Long> raw = orderItemRepository.countSellerItemsByStatus(brandId).stream()
+                .collect(Collectors.toMap(OrderItemRepository.StatusCountRow::getBucket,
+                        OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a));
+        Map<String, Long> counts = new LinkedHashMap<>();
+        long activeTotal = 0;
+        for (String key : STATUS_KEYS) {
+            long cnt = raw.getOrDefault(key, 0L);
+            counts.put(key, cnt);
+            if (!"CANCELLED".equals(key) && !"RETURNED".equals(key)) {
+                activeTotal += cnt;
+            }
+        }
+        Double avgSeconds = orderStatusLogRepository.avgSellerDeliverySeconds(brandId);
+        Double avgDeliveryDays = avgSeconds == null ? null
+                : Math.round(avgSeconds / 86_400.0 * 10) / 10.0;
+        return new SellerSummaryResponse.OrderStatus(counts, activeTotal, avgDeliveryDays);
+    }
+
+    /** 오늘 지표 — 항상 오늘(자정~현재), *ChangeRate는 어제 하루 대비(어제 0이면 null) */
+    private SellerSummaryResponse.Today today(Long brandId, LocalDate today) {
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDateTime tomorrowStart = today.plusDays(1).atStartOfDay();
+        LocalDateTime yesterdayStart = today.minusDays(1).atStartOfDay();
+
+        OrderItemRepository.SalesTotalsRow t = orderItemRepository.sumSellerSales(brandId, todayStart, tomorrowStart);
+        OrderItemRepository.SalesTotalsRow y = orderItemRepository.sumSellerSales(brandId, yesterdayStart, todayStart);
+        long sales = t.getSales();
+        long orders = t.getOrders();
+        long aov = orders == 0 ? 0 : Math.round((double) sales / orders);
+        long ySales = y.getSales();
+        long yOrders = y.getOrders();
+        long yAov = yOrders == 0 ? 0 : Math.round((double) ySales / yOrders);
+        long activeVisitors = behaviorEventRepository.countActiveVisitors(
+                brandId, LocalDateTime.now().minusMinutes(ACTIVE_VISITOR_MINUTES));
+        return new SellerSummaryResponse.Today(sales, orders, aov, activeVisitors,
+                changeRate(sales, ySales), changeRate(orders, yOrders), changeRate(aov, yAov));
+    }
+
+    /** 매출 추이 — to 기준 trend일, 매출 0인 날도 채워 반환 + total = points 합 */
+    private SellerSummaryResponse.SalesTrend salesTrend(Long brandId, LocalDate to, int trend) {
+        LocalDate trendFrom = to.minusDays(trend - 1L);
+        Map<String, OrderItemRepository.PeriodSalesRow> byDay = orderItemRepository
+                .sumSellerSalesByPeriod(brandId, "%Y-%m-%d",
+                        trendFrom.atStartOfDay(), to.plusDays(1).atStartOfDay()).stream()
+                .collect(Collectors.toMap(OrderItemRepository.PeriodSalesRow::getPeriod, Function.identity()));
+        List<SellerSummaryResponse.SalesTrend.Point> points = new ArrayList<>();
+        long total = 0;
+        for (LocalDate d = trendFrom; !d.isAfter(to); d = d.plusDays(1)) {
+            OrderItemRepository.PeriodSalesRow row = byDay.get(d.toString());
+            long sales = row != null ? row.getSales() : 0L;
+            points.add(new SellerSummaryResponse.SalesTrend.Point(d, sales));
+            total += sales;
+        }
+        return new SellerSummaryResponse.SalesTrend(total, points);
+    }
+
+    private SellerSummaryResponse.LowStock lowStock(Long brandId, int threshold) {
+        List<SellerSummaryResponse.LowStock.Item> items = productRepository.findLowStock(brandId, threshold)
+                .stream()
+                .map(p -> new SellerSummaryResponse.LowStock.Item(p.getId(), p.getName(),
+                        p.getImageUrl(), p.getStockQuantity()))
+                .toList();
+        return new SellerSummaryResponse.LowStock(threshold, items.size(), items);
+    }
+
+    /** 상품별 퍼널 — from..to 기간, 판매수 desc → 조회수 desc (구 스키마 유지) */
+    private List<SellerSummaryResponse.ProductMetric> productMetrics(Long brandId, LocalDate from, LocalDate to) {
+        LocalDateTime fromDt = from.atStartOfDay();
+        LocalDateTime toDt = to.plusDays(1).atStartOfDay();
         Map<Long, Long> salesByProduct = orderItemRepository
-                .sumSellerSalesByProduct(brand.getId(), fromDt, toDt).stream()
+                .sumSellerSalesByProduct(brandId, fromDt, toDt).stream()
                 .collect(Collectors.toMap(OrderItemRepository.ProductQuantityRow::getProductId,
                         OrderItemRepository.ProductQuantityRow::getQuantity));
         Map<Long, Map<String, Long>> eventsByProduct = new HashMap<>();
-        behaviorEventRepository.countSellerEventsByProduct(brand.getId(), fromDt, toDt)
+        behaviorEventRepository.countSellerEventsByProduct(brandId, fromDt, toDt)
                 .forEach(row -> eventsByProduct
                         .computeIfAbsent(row.getProductId(), k -> new HashMap<>())
                         .put(row.getEventType(), row.getCnt()));
+        return productRepository.findAllByBrandId(brandId).stream()
+                .map(p -> toMetric(p, salesByProduct, eventsByProduct))
+                .sorted(Comparator
+                        .comparingLong(SellerSummaryResponse.ProductMetric::salesCount).reversed()
+                        .thenComparing(Comparator
+                                .comparingLong(SellerSummaryResponse.ProductMetric::viewCount).reversed()))
+                .toList();
+    }
 
-        List<SellerSummaryResponse.ProductMetric> products =
-                productRepository.findAllByBrandId(brand.getId()).stream()
-                        .map(p -> toMetric(p, salesByProduct, eventsByProduct))
-                        .sorted(Comparator
-                                .comparingLong(SellerSummaryResponse.ProductMetric::salesCount).reversed()
-                                .thenComparing(Comparator
-                                        .comparingLong(SellerSummaryResponse.ProductMetric::viewCount)
-                                        .reversed()))
-                        .toList();
+    /** (오늘 - 어제) / 어제 × 100, 소수 1자리. 어제가 0이면 null(FE "—") */
+    private static Double changeRate(long todayValue, long yesterdayValue) {
+        if (yesterdayValue == 0) {
+            return null;
+        }
+        return Math.round((todayValue - yesterdayValue) * 1000.0 / yesterdayValue) / 10.0;
+    }
 
-        return new SellerSummaryResponse(brand.getId(), brand.getName(), effectiveFrom, effectiveTo,
-                totals.getSales(), totals.getOrders(), totals.getQuantity(), products);
+    private static LocalDate parseDate(String value, LocalDate fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new BusinessException(ErrorCode.SELLER_INVALID_PARAM);
+        }
+    }
+
+    private static int require(Integer value, int fallback, int min, int max) {
+        int v = value != null ? value : fallback;
+        if (v < min || v > max) {
+            throw new BusinessException(ErrorCode.SELLER_INVALID_PARAM);
+        }
+        return v;
     }
 
     /** I-6 — granularity daily|weekly|monthly|summary, 기간은 필수(AnalysisPeriod로 사전 검증) */

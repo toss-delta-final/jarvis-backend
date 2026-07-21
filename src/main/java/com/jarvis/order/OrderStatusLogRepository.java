@@ -47,6 +47,21 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
     }
 
     /**
+     * S-1 평균 배송 소요(초) — 자사 주문의 SHIPPING→DELIVERED 전이 시각 차 평균. 전이 로그가 없으면 null.
+     * 로그는 주문 단위 1행(D32)이라 order_id 자기조인으로 SHIPPING·DELIVERED 시각을 짝짓는다. 모의 배송 값.
+     */
+    @Query(value = """
+            SELECT AVG(TIMESTAMPDIFF(SECOND, s.created_at, d.created_at))
+            FROM order_status_logs s
+            JOIN order_status_logs d ON d.order_id = s.order_id AND d.to_status = 'DELIVERED'
+            WHERE s.to_status = 'SHIPPING'
+              AND s.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                 JOIN product p ON p.id = oi.product_id
+                                 WHERE p.brand_id = :brandId)
+            """, nativeQuery = true)
+    Double avgSellerDeliverySeconds(@Param("brandId") Long brandId);
+
+    /**
      * I-14 자사 주문 전이 로그 (04 §10, 노션 I-14) — 브랜드 스코프는 주문에 자사 아이템 포함 여부.
      * buyerMemberId는 orders 조인으로 부착. applyToStatus=false면 toStatuses는 센티널(빈 IN 방지).
      */
