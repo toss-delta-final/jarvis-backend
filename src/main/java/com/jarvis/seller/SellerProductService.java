@@ -48,6 +48,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SellerProductService {
 
+    /** I-9는 최신순 고정(노션 I-9 — 정렬 파라미터 없음). S-3 정렬은 인메모리 comparator */
+    private static final Sort LATEST_SORT = Sort.by(Sort.Direction.DESC, "id");
+
     private static final String PLACEHOLDER_IMAGE = "/images/placeholder.webp";
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
@@ -165,7 +168,7 @@ public class SellerProductService {
             throw new BusinessException(ErrorCode.BRAND_NOT_FOUND);
         }
         Page<Product> products = productRepository.findSellerProducts(brandId, status, blankToNull(q),
-                new OffsetPageRequest(offset, limit, toSort("latest")));
+                new OffsetPageRequest(offset, limit, LATEST_SORT));
         Map<Long, Long> salesById = paidQuantities(products.getContent());
         Map<Long, String> categoryNames = categoryNames(products.getContent());
         List<SellerProductItemResponse> rows = products.getContent().stream()
@@ -308,15 +311,6 @@ public class SellerProductService {
 
     private static long displayedSalesCount(Product product, Map<Long, Long> salesById) {
         return product.getBaseSalesCount() + salesById.getOrDefault(product.getId(), 0L);
-    }
-
-    private static Sort toSort(String sort) {
-        return switch (sort == null ? "latest" : sort) {
-            case "price_asc" -> Sort.by(Sort.Direction.ASC, "price").and(Sort.by(Sort.Direction.DESC, "id"));
-            case "price_desc" -> Sort.by(Sort.Direction.DESC, "price").and(Sort.by(Sort.Direction.DESC, "id"));
-            case "latest" -> Sort.by(Sort.Direction.DESC, "id");
-            default -> throw new BusinessException(ErrorCode.VALIDATION_ERROR);
-        };
     }
 
     /** 노션 I-10 — 필수값 누락은 400 대신 422 MISSING_FIELD, 메시지에 누락 필드명 명시 */

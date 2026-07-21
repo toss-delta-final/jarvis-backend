@@ -77,8 +77,4 @@ public class Address extends BaseTimeEntity {
     public void markDefault() {
         this.isDefault = true;
     }
-
-    public void unmarkDefault() {
-        this.isDefault = false;
-    }
 }

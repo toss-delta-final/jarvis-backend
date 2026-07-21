@@ -13,8 +13,7 @@ import com.jarvis.brand.BrandRepository;
 import com.jarvis.cart.dto.CartAddRequest;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
-import com.jarvis.member.Guest;
-import com.jarvis.member.GuestRepository;
+import com.jarvis.member.GuestService;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
@@ -39,7 +38,7 @@ class CartServiceTest {
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
     @Mock BrandRepository brandRepository;
-    @Mock GuestRepository guestRepository;
+    @Mock GuestService guestService;
 
     @InjectMocks CartService cartService;
 
@@ -97,12 +96,12 @@ class CartServiceTest {
     void guestFirstAddIssuesGuest() {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(cartItemRepository.findGuestLinesForUpdate(any(), any(), any())).thenReturn(List.of());
-        when(guestRepository.save(any(Guest.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(guestService.ensureGuest(null)).thenReturn("issued-guest-id");
 
         CartService.CartAddResult result = cartService.addItem(null, null, new CartAddRequest(10L, null, 2));
 
-        assertThat(result.issuedGuestId()).isNotBlank();
-        verify(guestRepository).save(any(Guest.class));
+        assertThat(result.issuedGuestId()).isEqualTo("issued-guest-id");
+        verify(guestService).ensureGuest(null);
     }
 
     @Test

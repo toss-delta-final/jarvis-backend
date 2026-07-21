@@ -6,8 +6,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 게스트 발급 (03 D3) — 쿠키 세팅 + guest 행 INSERT가 한 동작. 채팅(CH-1) 등 장바구니 외
- * 입구용 — 장바구니 쪽은 CartService.ensureGuest가 같은 규칙으로 담기 트랜잭션 안에서 처리.
+ * 게스트 발급 (03 D3) — 쿠키 세팅 + guest 행 INSERT가 한 동작. 발급 입구(채팅 CH-1·담기 C-2·
+ * 이벤트 E-1) 공용 단일 규칙 — 호출측 @Transactional에 참여(REQUIRED)해 담기 트랜잭션 안에서도 동작.
  */
 @Service
 @RequiredArgsConstructor
