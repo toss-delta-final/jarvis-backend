@@ -61,8 +61,15 @@ public class AddressService {
             if (addressRepository.countByMemberId(memberId) <= 1) {
                 throw new BusinessException(ErrorCode.ADDRESS_LAST_UNDELETABLE);
             }
+            // 옛 기본 행을 먼저 DELETE·flush 한 뒤 승격한다. Hibernate는 UPDATE를 DELETE보다 먼저
+            // flush하므로, 순서를 강제하지 않으면 승격 UPDATE 시점에 옛 기본 행이 아직 살아 있어
+            // uk_address_default(member_id, default_flag=IF(is_default,1,NULL))에 default_flag=1이
+            // 순간 2건이 되어 위반한다(→ 409, 롤백으로 승격 자체가 불가).
+            addressRepository.delete(address);
+            addressRepository.flush();
             addressRepository.findFirstByMemberIdAndIdNotOrderByIdAsc(memberId, addressId)
                     .ifPresent(Address::markDefault);
+            return;
         }
         addressRepository.delete(address);
     }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -125,6 +127,11 @@ class AddressServiceTest {
 
         verify(oldest).markDefault();
         verify(addressRepository).delete(target);
+        // uk_address_default 위반 방지: 옛 기본 행 DELETE·flush가 승격(markDefault)보다 먼저여야 한다.
+        InOrder order = inOrder(addressRepository, oldest);
+        order.verify(addressRepository).delete(target);
+        order.verify(addressRepository).flush();
+        order.verify(oldest).markDefault();
     }
 
     @Test
