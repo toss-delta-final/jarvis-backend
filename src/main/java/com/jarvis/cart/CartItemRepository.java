@@ -1,7 +1,9 @@
 package com.jarvis.cart;
 
+import jakarta.persistence.LockModeType;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -39,4 +41,31 @@ public interface CartItemRepository extends JpaRepository<CartItem, Long> {
     List<CartItem> findGuestLines(@Param("guestId") String guestId,
                                   @Param("productId") Long productId,
                                   @Param("optionId") Long optionId);
+
+    /**
+     * 합산 쓰기 경로용 잠금 조회 (C-2·I-2·병합) — 같은 라인의 동시 담기(유저 클릭 vs 챗봇 콜백)가
+     * 읽고-더하고-쓰는 사이에 끼어들면 증가분 하나가 유실된다(lost update). PESSIMISTIC_WRITE로
+     * consolidate → 상한 검사 → 합산을 직렬화한다(O-2 findByIdForUpdate와 동일 관례).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT c FROM CartItem c
+            WHERE c.memberId = :memberId AND c.productId = :productId
+              AND ((:optionId IS NULL AND c.optionId IS NULL) OR c.optionId = :optionId)
+            ORDER BY c.id ASC
+            """)
+    List<CartItem> findMemberLinesForUpdate(@Param("memberId") Long memberId,
+                                            @Param("productId") Long productId,
+                                            @Param("optionId") Long optionId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT c FROM CartItem c
+            WHERE c.guestId = :guestId AND c.productId = :productId
+              AND ((:optionId IS NULL AND c.optionId IS NULL) OR c.optionId = :optionId)
+            ORDER BY c.id ASC
+            """)
+    List<CartItem> findGuestLinesForUpdate(@Param("guestId") String guestId,
+                                           @Param("productId") Long productId,
+                                           @Param("optionId") Long optionId);
 }

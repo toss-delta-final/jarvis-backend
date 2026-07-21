@@ -81,7 +81,7 @@ class CartServiceTest {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         CartItem existing = CartItem.forMember(1L, 10L, null, 98);
         ReflectionTestUtils.setField(existing, "id", 5L);
-        when(cartItemRepository.findMemberLines(1L, 10L, null)).thenReturn(List.of(existing));
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(existing));
 
         CartService.CartAddResult ok = cartService.addItem(1L, null, new CartAddRequest(10L, null, 1));
         assertThat(ok.item().quantity()).isEqualTo(99);
@@ -96,7 +96,7 @@ class CartServiceTest {
     @DisplayName("C-2 게스트 첫 담기 — guest 행 INSERT + 발급 guestId 반환(쿠키 세팅용)")
     void guestFirstAddIssuesGuest() {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
-        when(cartItemRepository.findGuestLines(any(), any(), any())).thenReturn(List.of());
+        when(cartItemRepository.findGuestLinesForUpdate(any(), any(), any())).thenReturn(List.of());
         when(guestRepository.save(any(Guest.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CartService.CartAddResult result = cartService.addItem(null, null, new CartAddRequest(10L, null, 2));
@@ -112,8 +112,8 @@ class CartServiceTest {
         CartItem guestNew = CartItem.forGuest("g-1", 20L, null, 1);
         CartItem memberLine = CartItem.forMember(1L, 10L, null, 2);
         when(cartItemRepository.findAllByGuestId("g-1")).thenReturn(List.of(guestDup, guestNew));
-        when(cartItemRepository.findMemberLines(1L, 10L, null)).thenReturn(List.of(memberLine));
-        when(cartItemRepository.findMemberLines(1L, 20L, null)).thenReturn(List.of());
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(memberLine));
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 20L, null)).thenReturn(List.of());
 
         cartService.mergeGuestCart(1L, "g-1");
 
