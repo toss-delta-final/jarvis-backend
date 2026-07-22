@@ -92,14 +92,18 @@ public class CartService {
         Optional<CartItem> existing = memberId != null
                 ? consolidate(cartItemRepository.findMemberLinesForUpdate(memberId, request.productId(), request.optionId()))
                 : consolidate(cartItemRepository.findGuestLinesForUpdate(guestId, request.productId(), request.optionId()));
+        int resultingQuantity = existing.map(CartItem::getQuantity).orElse(0) + request.quantity();
+        // 담기 합산 상한 초과는 400 (노션 C-2, 2026-07-18 확정 — 클램프는 로그인 병합 전용)
+        if (resultingQuantity > CartItem.MAX_QUANTITY) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "수량은 최대 " + CartItem.MAX_QUANTITY + "개까지 담을 수 있습니다.");
+        }
+        // 재고 부족은 400 (합산 후 수량 기준). 최종 방어선은 결제 조건부 차감(02 D33) — 담기 검증은 UX 가드
+        requireStock(product, resultingQuantity);
+
         CartItem item;
         if (existing.isPresent()) {
             item = existing.get();
-            // 담기 합산 상한 초과는 400 (노션 C-2, 2026-07-18 확정 — 클램프는 로그인 병합 전용)
-            if (item.getQuantity() + request.quantity() > CartItem.MAX_QUANTITY) {
-                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
-                        "수량은 최대 " + CartItem.MAX_QUANTITY + "개까지 담을 수 있습니다.");
-            }
             item.addQuantity(request.quantity());
         } else {
             item = cartItemRepository.save(memberId != null
@@ -109,10 +113,13 @@ public class CartService {
         return new CartAddResult(new CartItemResponse(item.getId(), item.getQuantity()), issuedGuestId);
     }
 
-    /** C-3 */
+    /** C-3 — 변경 수량은 합산이 아니라 치환이라 그 값 자체를 재고와 비교 */
     @Transactional
     public CartItemResponse changeQuantity(Long memberId, String guestId, Long cartItemId, int quantity) {
         CartItem item = findOwnedItem(memberId, guestId, cartItemId);
+        Product product = productRepository.findById(item.getProductId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+        requireStock(product, quantity);
         item.changeQuantity(quantity);
         return new CartItemResponse(item.getId(), item.getQuantity());
     }
@@ -155,6 +162,14 @@ public class CartService {
             cartItemRepository.delete(duplicate);
         }
         return Optional.of(head);
+    }
+
+    /** 재고는 상품 단위(02 D33) — 옵션별 재고 없음. detail.availableStock로 남은 수량 동반 */
+    private void requireStock(Product product, int requestedQuantity) {
+        if (requestedQuantity > product.getStockQuantity()) {
+            throw new BusinessException(ErrorCode.CART_STOCK_INSUFFICIENT,
+                    Map.of("availableStock", product.getStockQuantity()));
+        }
     }
 
     private void validateOption(Long productId, Long optionId) {
