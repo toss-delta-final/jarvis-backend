@@ -128,8 +128,8 @@ public class AuthService {
      * 가입(A-1): converted_member_id 기록 + behavior_events member_id 백필 + 장바구니 병합.
      * 로그인(A-2): 장바구니 병합만 — 공용 PC에서 앞 사람의 탐색 이력이 다른 계정에 귀속되면
      * 추천·분석이 오염되므로 백필은 가입 전용. 병합은 재로그인에도 매번 수행(02 D30).
-     * 승계 후 해당 게스트의 채팅 세션 종료 + I-20 NEW_CONVERSATION 통지(FastAPI 맥락 초기화)
-     * — 이후 채팅은 CH-1로 새 세션.
+     * 승계 후 해당 게스트의 채팅 세션 종료(Redis 정리) — 게스트는 프로필 대상이 아니라 I-20은
+     * 발화하지 않는다(노션 I-20 정본, FastAPI 맥락은 자체 TTL로 소멸). 이후 채팅은 CH-1로 새 세션.
      */
     private void inheritGuest(Long memberId, String guestId, boolean backfill) {
         if (guestId == null || guestId.isBlank()) {

@@ -3,6 +3,7 @@ package com.jarvis.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
@@ -62,7 +63,7 @@ class ChatSessionServiceTest {
                 eq("member|1|SHOPPING"), eq(Duration.ofMinutes(10)));
         verify(valueOperations).set(eq("chat:owner:member:1"),
                 eq(response.sessionId()), eq(Duration.ofMinutes(10)));
-        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), any());
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 
     @Test
@@ -73,7 +74,7 @@ class ChatSessionServiceTest {
         service.issueSession(ChatIdentity.member(1L), ChatChannel.SHOPPING);
 
         verify(redisTemplate).delete("chat:session:old-session");
-        verify(llmNotifyClient).notifySessionEnd("old-session", SessionEndReason.NEW_CONVERSATION);
+        verify(llmNotifyClient).notifySessionEnd("old-session", 1L, SessionEndReason.NEW_CONVERSATION);
     }
 
     @Test
@@ -125,7 +126,7 @@ class ChatSessionServiceTest {
 
         verify(redisTemplate).delete("chat:session:s1");
         verify(redisTemplate).delete("chat:owner:member:1");
-        verify(llmNotifyClient).notifySessionEnd("s1", SessionEndReason.LOGOUT);
+        verify(llmNotifyClient).notifySessionEnd("s1", 1L, SessionEndReason.LOGOUT);
     }
 
     @Test
@@ -135,6 +136,18 @@ class ChatSessionServiceTest {
 
         service.endSession(ChatIdentity.member(1L), SessionEndReason.LOGOUT);
 
-        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), any());
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("게스트 세션 종료 — Redis는 정리하되 I-20은 생략(게스트는 프로필 대상 아님, 노션 I-20 정본)")
+    void endSessionGuestSkipsNotify() {
+        when(valueOperations.get("chat:owner:guest:g-uuid")).thenReturn("gs1");
+
+        service.endSession(ChatIdentity.guest("g-uuid"), SessionEndReason.NEW_CONVERSATION);
+
+        verify(redisTemplate).delete("chat:session:gs1");
+        verify(redisTemplate).delete("chat:owner:guest:g-uuid");
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 }

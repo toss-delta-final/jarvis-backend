@@ -119,7 +119,7 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("게스트 쿠키가 오면 승계 — converted_member_id 기록 + 백필 + 병합 + 게스트 세션 종료(I-20)")
+        @DisplayName("게스트 쿠키가 오면 승계 — converted_member_id 기록 + 백필 + 병합 + 게스트 세션 종료(Redis 정리, I-20 미발화)")
         void withGuestId_convertsGuest() {
             String guestId = "11111111-1111-1111-1111-111111111111";
             Guest guest = Guest.issue(guestId);
