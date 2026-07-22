@@ -45,7 +45,7 @@ public class ChatSessionService {
         String previousSessionId = redisTemplate.opsForValue().get(ownerKey);
         if (previousSessionId != null) {
             redisTemplate.delete(sessionKey(previousSessionId));
-            llmNotifyClient.notifySessionEnd(previousSessionId, SessionEndReason.NEW_CONVERSATION);
+            notifyIfMember(previousSessionId, identity, SessionEndReason.NEW_CONVERSATION);
         }
         String sessionId = UUID.randomUUID().toString();
         Duration ttl = sessionTtl();
@@ -104,7 +104,18 @@ public class ChatSessionService {
         }
         redisTemplate.delete(sessionKey(sessionId));
         redisTemplate.delete(ownerKey);
-        llmNotifyClient.notifySessionEnd(sessionId, reason);
+        notifyIfMember(sessionId, identity, reason);
+    }
+
+    /**
+     * 게스트는 프로필 대상이 아니므로 I-20을 생략한다(노션 I-20 정본 — Redis 세션 정리는 유지,
+     * FastAPI 맥락은 자체 TTL로 소멸). 회원만 통지하며 userId는 신원 sub(회원 BIGINT).
+     */
+    private void notifyIfMember(String sessionId, ChatIdentity identity, SessionEndReason reason) {
+        if (!ChatIdentity.TYPE_MEMBER.equals(identity.subType())) {
+            return;
+        }
+        llmNotifyClient.notifySessionEnd(sessionId, Long.parseLong(identity.sub()), reason);
     }
 
     private ChatSessionResponse response(String sessionId, ChatIdentity identity, Long brandId) {

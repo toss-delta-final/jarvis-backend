@@ -4,7 +4,7 @@
   1. 스트림 티켓을 Spring JWKS(RS256)로 검증 (05 §1-0)
   2. I-1 후보 조회 → Top5 선정(여기선 상위 N 그대로)
   3. I-21 콜백으로 Spring에 목록 저장 → 성공 후에만 SSE products.ready{listId} 발행 (05 §1-2-1)
-  4. I-20 세션 종료 통지 수신(멱등 200)
+  4. I-20 세션 종료 통지 수신(서비스 토큰 검증·멱등 202)
 
 실행: uvicorn main:app --port 8000  (환경변수: SPRING_BASE_URL, INTERNAL_TOKEN)
 """
@@ -81,12 +81,24 @@ async def chat(request: Request):
                              headers={"X-Accel-Buffering": "no"})
 
 
-@app.post("/events/session-end")
+_seen_session_ends: set[str] = set()
+
+
+@app.post("/events/session-end", status_code=202)
 async def session_end(request: Request):
-    """I-20 수신 스텁 — 멱등: 없는 세션도 200 (05 §2-1)."""
+    """I-20 수신 스텁 — 서비스 토큰 검증 후 멱등 202 (05 §2-1, 노션 I-20 정본).
+
+    body: {sessionId, userId, reason} camelCase. 신규=accepted / 중복=duplicate.
+    게스트는 Spring이 호출을 생략하므로 userId는 항상 회원 BIGINT.
+    """
+    if request.headers.get("X-Internal-Token") != INTERNAL_TOKEN:
+        raise HTTPException(status_code=401, detail="INTERNAL_TOKEN_INVALID")
     body = await request.json()
-    print(f"[I-20] session-end: {body}")
-    return {"cleared": True}
+    dedup_key = f"session-end:{body.get('userId')}:{body.get('sessionId')}"
+    status = "duplicate" if dedup_key in _seen_session_ends else "accepted"
+    _seen_session_ends.add(dedup_key)
+    print(f"[I-20] session-end ({status}): {body}")
+    return {"status": status}
 
 
 @app.get("/health")
