@@ -49,6 +49,7 @@ class CartServiceTest {
         product = mock(Product.class, withSettings().strictness(Strictness.LENIENT));
         when(product.getId()).thenReturn(10L);
         when(product.getStatus()).thenReturn(ProductStatus.ON_SALE);
+        when(product.getStockQuantity()).thenReturn(100);        // 시드 기본 재고 (02 D33) — 개별 테스트가 필요 시 override
         lenient().when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         lenient().when(cartItemRepository.save(any(CartItem.class))).thenAnswer(inv -> {
             CartItem item = inv.getArgument(0);
@@ -89,6 +90,36 @@ class CartServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    @DisplayName("C-2 — 합산 후 수량이 재고 초과면 CART_STOCK_INSUFFICIENT + availableStock")
+    void addStockInsufficient() {
+        when(product.getStockQuantity()).thenReturn(3);
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 5)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> {
+                    BusinessException ex = (BusinessException) e;
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.CART_STOCK_INSUFFICIENT);
+                    assertThat(ex.getDetail()).isEqualTo(java.util.Map.of("availableStock", 3));
+                });
+    }
+
+    @Test
+    @DisplayName("C-3 — 변경 수량이 재고 초과면 CART_STOCK_INSUFFICIENT")
+    void changeQuantityStockInsufficient() {
+        when(product.getStockQuantity()).thenReturn(3);
+        CartItem owned = CartItem.forMember(1L, 10L, null, 1);
+        ReflectionTestUtils.setField(owned, "id", 5L);
+        when(cartItemRepository.findById(5L)).thenReturn(Optional.of(owned));
+
+        assertThatThrownBy(() -> cartService.changeQuantity(1L, null, 5L, 5))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CART_STOCK_INSUFFICIENT);
     }
 
     @Test

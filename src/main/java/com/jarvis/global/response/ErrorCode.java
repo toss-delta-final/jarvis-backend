@@ -35,6 +35,8 @@ public enum ErrorCode {
     CART_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "장바구니 항목을 찾을 수 없습니다."),
     CART_OPTION_REQUIRED(HttpStatus.BAD_REQUEST, "옵션을 선택해 주세요."),
     CART_OPTION_INVALID(HttpStatus.BAD_REQUEST, "해당 상품의 옵션이 아닙니다."),
+    // 재고는 상품 단위(02 D33). 합산 후 수량 > stock_quantity면 담기/수량변경 차단 — detail.availableStock 동반
+    CART_STOCK_INSUFFICIENT(HttpStatus.BAD_REQUEST, "재고가 부족합니다."),
 
     // order / claim (04 §4 — Phase 3)
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "주문을 찾을 수 없습니다."),
