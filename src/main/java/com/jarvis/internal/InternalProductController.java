@@ -1,10 +1,9 @@
 package com.jarvis.internal;
 
 import com.jarvis.global.response.ApiResponse;
-import com.jarvis.global.response.BusinessException;
-import com.jarvis.global.response.ErrorCode;
 import com.jarvis.product.ProductService;
 import com.jarvis.product.dto.ProductCandidateResponse;
+import com.jarvis.product.dto.ProductChangesResponse;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,10 +40,14 @@ public class InternalProductController {
         return ApiResponse.success(productService.getPopularCandidates(size));
     }
 
-    /** I-17 — 벡터DB 동기화 배치 pull: 커서 방식·attributes 스키마 OPEN(LLM 협의 중) → 스텁 (06 Phase 5) */
+    /**
+     * I-17 — 벡터DB 동기화 배치 pull (05 §I-17). (updatedAt, id) keyset 커서(Base64URL),
+     * since="0"이면 전체 구축. 잘못된 커서는 400 INVALID_CURSOR.
+     */
     @GetMapping("/changes")
-    public ApiResponse<Void> changes(@RequestParam(required = false) String since,
-                                     @RequestParam(required = false) Integer limit) {
-        throw new BusinessException(ErrorCode.NOT_IMPLEMENTED);
+    public ApiResponse<ProductChangesResponse> changes(
+            @RequestParam(defaultValue = "0") String since,
+            @RequestParam(required = false) Integer limit) {
+        return ApiResponse.success(productService.getChanges(since, limit));
     }
 }

@@ -10,9 +10,12 @@ import com.jarvis.product.dto.ProductCandidateResponse;
 import com.jarvis.product.dto.ProductCardPageResponse;
 import com.jarvis.product.dto.ProductCardResponse;
 import com.jarvis.product.dto.ProductDetailResponse;
+import com.jarvis.product.dto.ProductChangesResponse;
 import com.jarvis.review.ReviewService;
 import com.jarvis.review.dto.RatingStats;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +39,9 @@ public class ProductService {
     private static final int POPULAR_DAYS = 7;
     private static final int CANDIDATE_MAX_SIZE = 200; // I-1 라운드1 LIMIT 최대 (05 §I-1)
     private static final int CARDS_MAX_IDS = 20; // P-7 ids 상한 (04 §2)
+    private static final int SYNC_DEFAULT_LIMIT = 500; // I-17 기본 페이지 크기 (05 §I-17)
+    private static final int SYNC_MAX_LIMIT = 500; // I-17 페이지 상한 (05 §I-17)
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul"); // 응답 타임스탬프 관례 (I-19와 동일)
 
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
@@ -93,6 +99,49 @@ public class ProductService {
                 trimToNull(keyword), categoryIds != null, categoryIds != null ? categoryIds : List.of(-1L),
                 brandId, minPrice, maxPrice, trimToNull(color), PageRequest.of(0, limit));
         return toCandidates(products);
+    }
+
+    /**
+     * I-17 상품 변경분 배치 pull (05 §I-17) — (updatedAt, id) keyset 커서. since="0"이면 처음부터,
+     * 잘못된 커서는 INVALID_CURSOR. ON_SALE은 생성물 계산 입력 전체, HIDDEN은 최소 필드만.
+     * 평점·리뷰수는 저장 없이 조회 시 집계(02 D9) — product.updated_at 갱신 시점 스냅샷.
+     */
+    public ProductChangesResponse getChanges(String since, Integer limit) {
+        int size = limit == null ? SYNC_DEFAULT_LIMIT : Math.min(Math.max(limit, 1), SYNC_MAX_LIMIT);
+        ProductChangeCursor cursor = ProductChangeCursor.decode(since);
+        List<Product> rows = productRepository.findChangesSince(
+                cursor == null ? null : cursor.updatedAt(),
+                cursor == null ? null : cursor.id(),
+                PageRequest.of(0, size + 1)); // +1로 hasMore 판별
+        boolean hasMore = rows.size() > size;
+        List<Product> page = hasMore ? rows.subList(0, size) : rows;
+        String nextCursor = page.isEmpty()
+                ? (since == null || since.isBlank() ? "0" : since) // 빈 결과는 요청 since 그대로 echo
+                : ProductChangeCursor.encode(page.get(page.size() - 1).getUpdatedAt(),
+                        page.get(page.size() - 1).getId());
+        return new ProductChangesResponse(toChangeItems(page), nextCursor, hasMore);
+    }
+
+    /** ON_SALE만 이름·평점·집계를 채운다(HIDDEN은 최소 필드) — 배치 lookup으로 N+1 회피 */
+    private List<ProductChangesResponse.Item> toChangeItems(List<Product> products) {
+        List<Product> onSale = products.stream()
+                .filter(p -> p.getStatus() == ProductStatus.ON_SALE).toList();
+        Map<Long, String> categoryNames = categoryService.getNames(
+                onSale.stream().map(Product::getCategoryId).collect(Collectors.toSet()));
+        Map<Long, String> brandNames = brandService.getNames(
+                onSale.stream().map(Product::getBrandId).collect(Collectors.toSet()));
+        Map<Long, RatingStats> stats = reviewService.getStats(
+                onSale.stream().map(Product::getId).toList());
+        return products.stream().map(p -> {
+            OffsetDateTime updatedAt = p.getUpdatedAt().atZone(SEOUL).toOffsetDateTime();
+            if (p.getStatus() != ProductStatus.ON_SALE) {
+                return ProductChangesResponse.Item.hidden(p.getId(), updatedAt);
+            }
+            RatingStats s = stats.getOrDefault(p.getId(), RatingStats.EMPTY);
+            return ProductChangesResponse.Item.onSale(p.getId(), updatedAt, p.getName(),
+                    categoryNames.get(p.getCategoryId()), brandNames.get(p.getBrandId()),
+                    p.getPrice(), s.average(), s.count(), parseJson(p.getAttributes()));
+        }).toList();
     }
 
     /** P-6 상품 목록 — HIDDEN 제외, popular는 표시 판매량(02 D18) 기준 */

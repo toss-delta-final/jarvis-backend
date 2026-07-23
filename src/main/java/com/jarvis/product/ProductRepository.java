@@ -45,6 +45,21 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT p.stockQuantity FROM Product p WHERE p.id = :id")
     Optional<Integer> findStockQuantity(@Param("id") Long id);
 
+    /**
+     * I-17 상품 변경분 커서 조회 (05 §I-17) — (updated_at, id) 복합 인덱스 keyset 페이지네이션.
+     * 커서 이후 조건: updatedAt > cur.updatedAt OR (= AND id > cur.id). since="0"이면 cursor=null →
+     * 전체(처음부터). ON_SALE/HIDDEN 모두 포함(HIDDEN도 AI가 생성물을 삭제해야 하므로).
+     */
+    @Query("""
+            select p from Product p
+            where :cursorUpdatedAt is null
+               or p.updatedAt > :cursorUpdatedAt
+               or (p.updatedAt = :cursorUpdatedAt and p.id > :cursorId)
+            order by p.updatedAt asc, p.id asc
+            """)
+    List<Product> findChangesSince(@Param("cursorUpdatedAt") LocalDateTime cursorUpdatedAt,
+                                   @Param("cursorId") Long cursorId, Pageable pageable);
+
     /** S-1 상품별 지표 조인용 — 판매자 브랜드는 시드 규모가 작아 전건 로드 (04 §7) */
     List<Product> findAllByBrandId(Long brandId);
 
