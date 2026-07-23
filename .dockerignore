@@ -16,7 +16,6 @@ src/main/resources/application-local.yml
 
 # 백엔드 이미지에 불필요
 docs/
-mock-fastapi/
 docker-compose.yml
 README.md
 DEPLOY.md
