@@ -25,6 +25,7 @@ import com.jarvis.seller.dto.AccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
 import com.jarvis.seller.dto.SellerOrderEventsResponse;
+import com.jarvis.seller.dto.SellerProductChangesResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,7 +35,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** I-7 퍼널 + I-8 IP 집계·마스킹 + I-13 검증 + I-14 어뷰징 판정 + I-16 이탈 (04 §10, 노션 명세) */
+/** I-7 퍼널 + I-8 IP 집계·마스킹 + I-13 검증 + I-14 어뷰징 판정 + I-15 변경 이력 + I-16 이탈 (04 §10, 노션 명세) */
 @ExtendWith(MockitoExtension.class)
 class SellerAnalyticsServiceTest {
 
@@ -204,6 +205,80 @@ class SellerAnalyticsServiceTest {
         assertThat(rows.get(1).isSuspicious()).isTrue(); // 시간당 주문 초과
         assertThat(rows.get(1).maxOrdersPerHour()).isEqualTo(12L);
         assertThat(rows.get(2).isSuspicious()).isFalse();
+    }
+
+    private static ProductChangeLogRepository.ChangeRow changeRow(long productId, String name,
+                                                                  String type, String oldValue,
+                                                                  String newValue,
+                                                                  LocalDateTime createdAt) {
+        return new ProductChangeLogRepository.ChangeRow() {
+            public Long getProductId() { return productId; }
+            public String getProductName() { return name; }
+            public String getChangeType() { return type; }
+            public String getOldValue() { return oldValue; }
+            public String getNewValue() { return newValue; }
+            public LocalDateTime getCreatedAt() { return createdAt; }
+        };
+    }
+
+    @Test
+    @DisplayName("I-15 — changeType·productId 필터, [당일 00:00, 익일 00:00) 기간, limit 상한 500, rows 매핑·KST·total (노션 I-15)")
+    void productChangesFiltersMappingAndLimitClamp() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        LocalDateTime fromDt = LocalDateTime.of(2026, 6, 1, 0, 0);
+        LocalDateTime toDt = LocalDateTime.of(2026, 7, 1, 0, 0);
+        when(productChangeLogRepository.findSellerProductChanges(
+                eq(BRAND_ID), eq("STOCK"), eq(37L), eq(fromDt), eq(toDt), eq(500)))
+                .thenReturn(List.of(changeRow(37L, "무선 이어폰", "STOCK", "5", "0",
+                        LocalDateTime.of(2026, 6, 15, 12, 0))));
+        when(productChangeLogRepository.countSellerProductChanges(
+                eq(BRAND_ID), eq("STOCK"), eq(37L), eq(fromDt), eq(toDt)))
+                .thenReturn(42L);
+
+        SellerProductChangesResponse response =
+                service.productChanges(BRAND_ID, "STOCK", 37L, PERIOD, 1000);
+
+        assertThat(response.brandId()).isEqualTo(BRAND_ID);
+        assertThat(response.from()).isEqualTo(PERIOD.from());
+        assertThat(response.to()).isEqualTo(PERIOD.to());
+        assertThat(response.total()).isEqualTo(42L); // LIMIT 미적용 전체 건수
+        assertThat(response.rows()).hasSize(1);
+        SellerProductChangesResponse.Row row = response.rows().get(0);
+        assertThat(row.productId()).isEqualTo(37L);
+        assertThat(row.productName()).isEqualTo("무선 이어폰");
+        assertThat(row.changeType()).isEqualTo("STOCK");
+        assertThat(row.oldValue()).isEqualTo("5");
+        assertThat(row.newValue()).isEqualTo("0"); // 품절 신호 = STOCK newValue "0" (04 §10)
+        assertThat(row.createdAt().getOffset().getId()).isEqualTo("+09:00");
+    }
+
+    @Test
+    @DisplayName("I-15 — changeType이 PRICE·STOCK·STATUS 외 값이면 VALIDATION_ERROR (노션 I-15)")
+    void productChangesRejectsUnknownChangeType() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.productChanges(BRAND_ID, "bogus", null, PERIOD, 100))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    @DisplayName("I-15 — 기간 내 변경 이력이 없으면 rows 빈 배열·total 0")
+    void productChangesEmptyResult() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(productChangeLogRepository.findSellerProductChanges(
+                eq(BRAND_ID), any(), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(productChangeLogRepository.countSellerProductChanges(
+                eq(BRAND_ID), any(), any(), any(), any()))
+                .thenReturn(0L);
+
+        SellerProductChangesResponse response =
+                service.productChanges(BRAND_ID, null, null, PERIOD, 100);
+
+        assertThat(response.rows()).isEmpty();
+        assertThat(response.total()).isZero();
     }
 
     private static BehaviorEventRepository.LastActivityRow lastActivity(long memberId,

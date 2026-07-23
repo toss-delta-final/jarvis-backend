@@ -78,6 +78,54 @@ class ChatSessionServiceTest {
     }
 
     @Test
+    @DisplayName("S-4 — SELLER 세션 발급: brandId는 세션 값에 보관, SELLER 티켓 + /seller/chat 주소")
+    void issueSellerSession() {
+        when(valueOperations.get("chat:owner:member:7")).thenReturn(null);
+        when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket");
+
+        ChatSessionResponse response = service.issueSellerSession(ChatIdentity.member(7L), 3L);
+
+        assertThat(response.sessionId()).isNotBlank();
+        assertThat(response.streamTicket()).isEqualTo("seller-ticket");
+        assertThat(response.ttlSeconds()).isEqualTo(600L);
+        assertThat(response.ticketTtlSeconds()).isEqualTo(60L);
+        assertThat(response.llmSseUrl()).isEqualTo("http://localhost:8000/seller/chat");
+        verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
+                eq("member|7|SELLER|3"), eq(Duration.ofMinutes(10)));
+        verify(valueOperations).set(eq("chat:owner:member:7"),
+                eq(response.sessionId()), eq(Duration.ofMinutes(10)));
+        verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), eq(3L));
+        verify(ticketProvider, never()).createTicket(any());
+    }
+
+    @Test
+    @DisplayName("S-4 — 같은 판매자의 기존 세션은 새 대화로 정리 + I-20 NEW_CONVERSATION")
+    void issueSellerSessionEndsPrevious() {
+        when(valueOperations.get("chat:owner:member:7")).thenReturn("old-seller-session");
+        when(ticketProvider.createSellerTicket(any(), anyLong())).thenReturn("seller-ticket");
+
+        service.issueSellerSession(ChatIdentity.member(7L), 3L);
+
+        verify(redisTemplate).delete("chat:session:old-seller-session");
+        verify(llmNotifyClient).notifySessionEnd("old-seller-session", 7L, SessionEndReason.NEW_CONVERSATION);
+    }
+
+    @Test
+    @DisplayName("S-4/CH-1b — SELLER 세션 티켓 재발급도 세션 값의 brandId로 SELLER 티켓 유지")
+    void reissueTicketKeepsSellerScope() {
+        when(valueOperations.get("chat:session:s-seller")).thenReturn("member|7|SELLER|3");
+        when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket-2");
+
+        ChatSessionResponse response = service.reissueTicket(ChatIdentity.member(7L), "s-seller");
+
+        assertThat(response.streamTicket()).isEqualTo("seller-ticket-2");
+        assertThat(response.llmSseUrl()).isEqualTo("http://localhost:8000/seller/chat");
+        verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), eq(3L));
+        verify(ticketProvider, never()).createTicket(any());
+        verify(redisTemplate).expire(eq("chat:session:s-seller"), eq(Duration.ofMinutes(10)));
+    }
+
+    @Test
     @DisplayName("CH-1b — 세션 유지, TTL sliding 연장 후 티켓 재발급")
     void reissueTicket() {
         when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|CS");
