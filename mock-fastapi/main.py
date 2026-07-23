@@ -6,7 +6,7 @@
   3. I-21 콜백으로 Spring에 목록 저장 → 성공 후에만 SSE products.ready{listId} 발행 (05 §1-2-1)
   4. I-20 세션 종료 통지 수신(서비스 토큰 검증·멱등 202)
 
-실행: uvicorn main:app --port 8000  (환경변수: SPRING_BASE_URL, INTERNAL_TOKEN)
+실행: uvicorn main:app --port 8000  (환경변수: SPRING_BASE_URL, INTERNAL_API_TOKEN)
 """
 
 import json
@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from jwt import PyJWKClient
 
 SPRING_BASE = os.getenv("SPRING_BASE_URL", "http://localhost:8080")
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")  # backend application-local.yml의 app.internal.token과 동일하게 설정
+INTERNAL_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")  # backend application-local.yml의 app.internal.token과 동일하게 설정
 ISSUER = "jarvis-spring-auth"
 AUDIENCE = "jarvis-fastapi-ai"
 
