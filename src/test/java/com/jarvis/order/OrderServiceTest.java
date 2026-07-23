@@ -22,12 +22,15 @@ import com.jarvis.member.MemberRepository;
 import com.jarvis.order.PaymentService.PaymentResult;
 import com.jarvis.order.dto.OrderCreateRequest;
 import com.jarvis.order.dto.OrderCreateResponse;
+import com.jarvis.order.dto.OrderDetailResponse;
+import com.jarvis.order.dto.OrderListResponse;
 import com.jarvis.order.dto.RetryPaymentRequest;
 import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +42,8 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -285,5 +290,144 @@ class OrderServiceTest {
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_ERROR);
         verify(paymentService, never()).pay(anyString(), anyInt());
+    }
+
+    // ---- O-3 · O-4 조회 ----
+
+    private Order savedOrder(Long memberId, Long orderId, OrderStatus status) {
+        Order order = Order.create(memberId, "MOCK_CARD", 24000,
+                "김자비", "010-1234-5678", "06236", "서울시 강남구", "101동", "문앞에 놔주세요");
+        ReflectionTestUtils.setField(order, "id", orderId);
+        ReflectionTestUtils.setField(order, "createdAt", LocalDateTime.of(2026, 7, 17, 12, 0));
+        ReflectionTestUtils.setField(order, "status", status);
+        return order;
+    }
+
+    private OrderItem item(Long id, Long orderId, Long productId, String productName, String optionName,
+                           int price, int originalPrice, int quantity, OrderItemStatus status) {
+        OrderItem item = OrderItem.pending(orderId, productId, productName, optionName,
+                price, originalPrice, quantity, LocalDateTime.of(2026, 7, 17, 12, 0));
+        ReflectionTestUtils.setField(item, "id", id);
+        ReflectionTestUtils.setField(item, "status", status);
+        return item;
+    }
+
+    @Test
+    @DisplayName("O-3 — 페이징 파라미터 전달·메타데이터, orderNo 파생, 대표 상태·아이템 요약 매핑")
+    void listMapsPagingAndItems() {
+        Order order = savedOrder(1L, 7L, OrderStatus.PAID);
+        OrderItem line = item(100L, 7L, 10L, "상품10", "옵션A", 12000, 15000, 2, OrderItemStatus.ORDERED);
+        when(orderRepository.findAllByMemberIdOrderByIdDesc(1L, PageRequest.of(0, 10)))
+                .thenReturn(new PageImpl<>(List.of(order), PageRequest.of(0, 10), 11));
+        when(orderItemRepository.findAllByOrderIdIn(List.of(7L))).thenReturn(List.of(line));
+        when(product.getImageUrl()).thenReturn("http://img/10.jpg");
+        when(productRepository.findAllById(List.of(10L))).thenReturn(List.of(product));
+
+        OrderListResponse response = orderService.list(1L, 0, 10);
+
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(10);
+        assertThat(response.totalElements()).isEqualTo(11);
+        assertThat(response.totalPages()).isEqualTo(2);
+        OrderListResponse.Summary summary = response.content().get(0);
+        assertThat(summary.orderId()).isEqualTo(7L);
+        assertThat(summary.orderNo()).isEqualTo("ORD-20260717-7");
+        assertThat(summary.representativeStatus()).isEqualTo("ORDERED");
+        assertThat(summary.totalAmount()).isEqualTo(24000);
+        assertThat(summary.orderedAt()).isEqualTo(
+                LocalDateTime.of(2026, 7, 17, 12, 0).atZone(ZoneId.of("Asia/Seoul")).toOffsetDateTime());
+        assertThat(summary.items()).hasSize(1);
+        OrderListResponse.ItemSummary itemSummary = summary.items().get(0);
+        assertThat(itemSummary.orderItemId()).isEqualTo(100L);
+        assertThat(itemSummary.productId()).isEqualTo(10L);
+        assertThat(itemSummary.productName()).isEqualTo("상품10");
+        assertThat(itemSummary.optionName()).isEqualTo("옵션A");
+        assertThat(itemSummary.price()).isEqualTo(12000);
+        assertThat(itemSummary.quantity()).isEqualTo(2);
+        assertThat(itemSummary.status()).isEqualTo("ORDERED");
+        assertThat(itemSummary.imageUrl()).isEqualTo("http://img/10.jpg");
+    }
+
+    @Test
+    @DisplayName("O-3 — 주문 없으면 빈 content, 아이템 일괄 조회 미실행")
+    void listEmptyPage() {
+        when(orderRepository.findAllByMemberIdOrderByIdDesc(1L, PageRequest.of(0, 10)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
+
+        OrderListResponse response = orderService.list(1L, 0, 10);
+
+        assertThat(response.content()).isEmpty();
+        assertThat(response.totalElements()).isZero();
+        assertThat(response.totalPages()).isZero();
+        verify(orderItemRepository, never()).findAllByOrderIdIn(anyList());
+    }
+
+    @Test
+    @DisplayName("O-4 — 배송지 스냅샷·paidAt·아이템별 가능 액션 매핑, 리뷰 작성분은 canReview=false")
+    void detailMapsActionsAndSnapshot() {
+        Order order = savedOrder(1L, 7L, OrderStatus.PAID);
+        ReflectionTestUtils.setField(order, "paidAt", LocalDateTime.of(2026, 7, 17, 12, 1));
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
+        OrderItem delivered = item(100L, 7L, 10L, "상품10", "옵션A", 12000, 15000, 2, OrderItemStatus.DELIVERED);
+        OrderItem confirmed = item(200L, 7L, 20L, "상품20", null, 5000, 5000, 1, OrderItemStatus.CONFIRMED);
+        when(orderItemRepository.findAllByOrderId(7L)).thenReturn(List.of(delivered, confirmed));
+        when(reviewRepository.findOrderItemIdsIn(List.of(100L, 200L))).thenReturn(List.of(200L));
+        com.jarvis.product.Product second = product(20L, 5000, 5000);
+        when(product.getImageUrl()).thenReturn("http://img/10.jpg");
+        when(second.getImageUrl()).thenReturn("http://img/20.jpg");
+        when(productRepository.findAllById(List.of(10L, 20L))).thenReturn(List.of(product, second));
+
+        OrderDetailResponse response = orderService.detail(1L, 7L);
+
+        assertThat(response.orderId()).isEqualTo(7L);
+        assertThat(response.orderNo()).isEqualTo("ORD-20260717-7");
+        assertThat(response.status()).isEqualTo("PAID");
+        assertThat(response.representativeStatus()).isEqualTo("DELIVERED");
+        assertThat(response.paymentMethod()).isEqualTo("MOCK_CARD");
+        assertThat(response.totalAmount()).isEqualTo(24000);
+        assertThat(response.paidAt()).isEqualTo(
+                LocalDateTime.of(2026, 7, 17, 12, 1).atZone(ZoneId.of("Asia/Seoul")).toOffsetDateTime());
+        assertThat(response.address().recipient()).isEqualTo("김자비");
+        assertThat(response.address().zipCode()).isEqualTo("06236");
+        assertThat(response.address().address1()).isEqualTo("서울시 강남구");
+        assertThat(response.address().address2()).isEqualTo("101동");
+        assertThat(response.deliveryRequest()).isEqualTo("문앞에 놔주세요");
+
+        assertThat(response.items()).hasSize(2);
+        OrderDetailResponse.Item first = response.items().get(0);
+        assertThat(first.orderItemId()).isEqualTo(100L);
+        assertThat(first.originalPrice()).isEqualTo(15000);
+        assertThat(first.imageUrl()).isEqualTo("http://img/10.jpg");
+        assertThat(first.canCancel()).isFalse();
+        assertThat(first.canReturn()).isTrue();
+        assertThat(first.canReview()).isTrue(); // DELIVERED + 리뷰 미작성
+        OrderDetailResponse.Item secondItem = response.items().get(1);
+        assertThat(secondItem.canCancel()).isFalse();
+        assertThat(secondItem.canReturn()).isFalse();
+        assertThat(secondItem.canReview()).isFalse(); // CONFIRMED이지만 리뷰 기작성
+    }
+
+    @Test
+    @DisplayName("O-4 — 존재하지 않는 주문은 ORDER_NOT_FOUND")
+    void detailNotFound() {
+        when(orderRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> orderService.detail(1L, 99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.ORDER_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("O-4 — 다른 사용자의 주문은 존재 노출 없이 ORDER_NOT_FOUND")
+    void detailRejectsForeignOrder() {
+        Order foreign = savedOrder(2L, 7L, OrderStatus.PAID);
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(foreign));
+
+        assertThatThrownBy(() -> orderService.detail(1L, 7L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.ORDER_NOT_FOUND);
+        verify(orderItemRepository, never()).findAllByOrderId(anyLong());
     }
 }
