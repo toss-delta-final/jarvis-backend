@@ -78,11 +78,11 @@ else
 fi
 
 # ── 4) 시드 적용 (전부 재실행 무해: INSERT IGNORE / NOT EXISTS) ──
-for f in scripts/seed-phase1.sql scripts/seed-phase2.sql scripts/seed-phase6.sql; do
+for f in scripts/seed-accounts.sql scripts/seed-catalog.sql scripts/seed-commerce-demo.sql scripts/seed-analytics-demo.sql; do
   say "시드 적용: $f"
   MDB -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$f"
 done
-say "(선택) seed-phase4.sql은 user@jarvis.shop 가입 후 수동 적용 — 파일 헤더 참조"
+say "문의 데모는 seed-commerce-demo.sql에 포함 — user@jarvis.shop 가입 후 재실행하면 채워짐(없으면 skip)"
 
 # ── 5) Redis: 실행 확인 → 없으면 winget 설치 (Windows 서비스로 등록됨) ──
 if port_in_use 6379; then

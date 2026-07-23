@@ -64,11 +64,11 @@ openssl rand -hex 32
 JPA는 `ddl-auto: validate` — **스키마를 만들지도 바꾸지도 않는다.** 배포 DB에 먼저 적용:
 
 1. [docs/backend/schema.sql](docs/backend/schema.sql) — 스키마
-2. [scripts/](scripts/) 시드 — `seed-phase1.sql` → `seed-phase2.sql` → `seed-phase6.sql` 순 (재실행 무해)
+2. [scripts/](scripts/) 시드 — `seed-accounts.sql` → `seed-catalog.sql` → `seed-commerce-demo.sql` → `seed-analytics-demo.sql` 순 (재실행 무해)
 
 ```bash
 mariadb -h <host> -u <user> -p<pw> <db> < docs/backend/schema.sql
-mariadb -h <host> -u <user> -p<pw> <db> < scripts/seed-phase1.sql   # 이후 phase2, phase6
+mariadb -h <host> -u <user> -p<pw> <db> < scripts/seed-accounts.sql   # 이후 catalog, commerce-demo, analytics-demo 순
 ```
 
 ## 5. 헬스체크
