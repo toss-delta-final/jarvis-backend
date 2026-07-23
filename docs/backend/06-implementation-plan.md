@@ -6,7 +6,7 @@
 
 - **명세가 원본**: 01~05 문서와 코드가 어긋나면 문서를 먼저 고치는 PR을 낸다(코드에 몰래 맞추지 않는다).
 - **세로로 얇게**: 도메인 하나를 Controller→Service→Repository→테스트까지 관통해서 끝내고 다음 도메인으로. 전 도메인의 엔티티만 먼저 깔아두는 식(가로 슬라이스) 금지 — 통합 검증이 늦어짐.
-- **완료 조건은 실행 가능해야 함**: "코드 작성함"이 아니라 "curl/Swagger로 이런 응답 확인".
+- **완료 조건은 실행 가능해야 함**: "코드 작성함"이 아니라 "curl로 이런 응답 확인".
 
 ## Phase 0. 스캐폴딩 (0.5일)
 
@@ -16,7 +16,7 @@ Spring Boot 3.5 + Gradle 프로젝트 생성(`backend/`), docker-compose(MariaDB
 ## Phase 1. 인증 + 회원 (1일)
 
 member/guest/refresh_token 테이블, 일반 가입/로그인/로그아웃/refresh/me(A-1~A-5), JWT 필터, Role 가드, 게스트 쿠키 발급. (OAuth는 MVP 제외 — 2026-07-07 팀 결정)
-- **완료**: 가입→로그인→AT로 /me→만료 후 refresh→로그아웃 시나리오가 Swagger로 통과. SELLER 시드 계정으로 USER 전용 API 403 확인.
+- **완료**: 가입→로그인→AT로 /me→만료 후 refresh→로그아웃 시나리오가 curl로 통과. SELLER 시드 계정으로 USER 전용 API 403 확인.
 
 ## Phase 2. 카탈로그 (1일)
 

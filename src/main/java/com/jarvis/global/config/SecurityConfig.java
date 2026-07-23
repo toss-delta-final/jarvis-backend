@@ -66,7 +66,6 @@ public class SecurityConfig {
                         // /internal은 시큐리티가 아니라 InternalTokenFilter가 지킨다 (03 D4 — 3중 방어의 앱 층)
                         .requestMatchers("/internal/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
-                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         // 역할 가드
                         .requestMatchers("/api/seller/**", "/api/chat/seller/**").hasRole("SELLER")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")

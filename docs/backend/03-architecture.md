@@ -245,7 +245,7 @@ com.jarvis
 | Redis | spring-data-redis (채팅 세션 TTL 전용) | |
 | 분산 락 | ShedLock (Redis 기반) — 스케줄러 틱당 1대만 실행 (01 §6, D-분산5) | 단일 인스턴스에서도 무해 |
 | 인증 | spring-security + jjwt (OAuth 제외로 oauth2-client 미도입) | |
-| 문서화 | springdoc-openapi (Swagger UI) — 04 문서와 이중화 방지 위해 코드 어노테이션은 최소, 04 문서가 원본 | |
+| 문서화 | API 명세는 04 문서(노션)가 원본 — springdoc/Swagger 미도입 (팀 전원 미사용 + 운영 노출 회피, 2026-07-23 결정) | |
 
 ## 5. 설정/환경변수 규약
 
