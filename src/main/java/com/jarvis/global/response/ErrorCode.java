@@ -64,6 +64,8 @@ public enum ErrorCode {
     // internal (03 D4 — Phase 5)
     INTERNAL_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "서비스 토큰이 유효하지 않습니다."),
     NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "아직 제공하지 않는 기능입니다."),
+    // I-17 상품 동기화 커서 — 해석 불가/변조 시 AI는 since="0" 전체 재구축으로 폴백 (노션 I-17)
+    INVALID_CURSOR(HttpStatus.BAD_REQUEST, "커서가 유효하지 않습니다."),
     CART_QUERY_INVALID(HttpStatus.BAD_REQUEST, "userId 또는 guestId 중 하나만 지정해야 합니다."),
     ORDER_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
 
