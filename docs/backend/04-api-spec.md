@@ -180,7 +180,7 @@
 | I-17 | GET | /internal/products/changes | 상품 정보 배치 pull(AI 벡터DB 동기화) — since 커서+limit, items[].status ACTIVE\|DELISTED, 초기 전체 구축은 since="0". 커서 방식·attributes 스키마·리뷰 포함 여부 **OPEN(LLM 협의 중)** |
 | I-18 | GET | /internal/cart | 챗봇 장바구니 조회 — userId/guestId 메아리(게스트 허용), 응답 item에 productName·optionName 필수, 빈 장바구니도 200 |
 | I-19 | GET | /internal/members/{id}/orders | 구매 이력 목록(CS 챗봇 "내 주문 어때?") — status 단일 필터(어휘: ORDERED\|SHIPPING\|DELIVERED\|CONFIRMED\|CANCELLED\|RETURNED), 응답 camelCase·숫자 id, 아이템에 `categoryName`(소분류명 — 노션 I-19), shippingFee 항상 0(배송비 없음 확정). I-4(요약)와 역할 분담 |
-| I-20 | POST | {LLM_BASE_URL}/events/session-end | **방향 예외: Spring→FastAPI(아웃바운드)** 세션 종료 통지 — 트리거 로그아웃/30분 유휴/새 대화, reason enum LOGOUT\|IDLE_TIMEOUT\|NEW_CONVERSATION\|TAB_CLOSE, **멱등**(없는 세션도 200 + cleared:false). sessionId는 **UUID 그대로 수신(2026-07-17 LLM 합의 — 구 S- 형식 폐기)**. 상세는 05 §2-1(아웃바운드 관례) |
+| I-20 | POST | {LLM_BASE_URL}/events/session-end | **방향 예외: Spring→FastAPI(아웃바운드)** 세션 종료 통지 — 트리거 로그아웃/새 대화(회원만), reason enum LOGOUT\|NEW_CONVERSATION, **멱등**(응답 202 {status: accepted\|duplicate}). sessionId는 **UUID 그대로 수신(2026-07-17 LLM 합의 — 구 S- 형식 폐기)**. 상세는 05 §2-1(아웃바운드 관례) |
 | I-21 | POST | /internal/recommendations | **추천 목록 콜백 (확정 2026-07-18)** — FastAPI가 리랭킹 확정 Top5를 저장: `{sessionId(UUID), listId(FastAPI 생성 문자열 — 영숫자·`-`·`_` ≤64), productIds[](≤20, 순서 유지), reasons[{productId, reason}]?}` → Redis TTL 10분. reasons는 **추천 카드용 이유**(SSE의 채팅용 이유와 이원화) — CH-5 카드에 echo. **products.ready 발행 전 호출, 콜백 실패 시 products.ready 발행 금지**(05 §1-2-1). CH-5와 쌍 |
 
 - 번호 체계는 노션 「API 현재」 DB 기준(2026-07-17)으로 확정 — 구 로컬 I-6(`…/stats`)·I-7(판매자 상품 상세)은 각각 I-6(sales)·I-9(목록)로 대체/흡수.
