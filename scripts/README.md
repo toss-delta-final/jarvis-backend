@@ -8,7 +8,6 @@
 |---|---|
 | `setup-frontend-dev.sh` | **원샷 셋업 (Docker 불필요)** — MariaDB·Redis 네이티브 확인(없으면 winget 자동 설치) → DB/계정 생성 → 스키마+시드(phase1·2·6) 적용 → `application-local.yml`+시크릿 자동 생성. 재실행 무해. 다른 포트의 기존 DB를 쓰려면 `DB_PORT=3307 bash ...` |
 | `start-backend.sh` | 백엔드 실행 — JAVA_HOME(JDK 21) 자동 탐지 후 `gradlew bootRun`. 확인: http://localhost:8080/actuator/health |
-| `start-mock-fastapi.sh` | (선택) mock LLM 서버 실행 — 채팅/추천 화면 확인 시에만. venv 자동 생성, internal token은 local yml에서 자동 추출. 백엔드 먼저 기동 필요 |
 | `setup-local.sh` | (기존, 백엔드 팀용) 컨테이너 기동 + 설정 파일 복사만 — 시크릿/스키마/시드는 수동 |
 
 ## 시드 데이터

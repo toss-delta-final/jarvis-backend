@@ -135,7 +135,7 @@ app:
   internal:
     token: ${INTERNAL_TOKEN}
   llm:
-    base-url: http://localhost:8000 # mock-fastapi 미기동이어도 무해 (통지 실패는 warn 로그만)
+    base-url: http://localhost:8000 # 로컬 FastAPI 미기동이어도 무해 (통지 실패는 warn 로그만)
     sse-url: http://localhost:8000  # CH-1 응답 llmSseUrl — FE가 직결할 SSE URL
 EOF
   say "application-local.yml 생성 (JWT/스트림키/내부토큰 자동 생성)"
