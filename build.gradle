@@ -36,9 +36,6 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
 
-    // Swagger UI (03 §4 — 04 문서가 원본, 어노테이션 최소)
-    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
-
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
