@@ -259,7 +259,7 @@ com.jarvis
 | `STREAM_TICKET_PRIVATE_KEY` / `..._KID` | 스트림 티켓 **RS256** 서명 private key + 현재 키 ID(`kid`) — **Spring만 보관·회전**, public key는 JWKS(`/.well-known/jwks.json`)로 노출(D5) |
 | `LLM_BASE_URL` | FastAPI 주소 — **Spring→FastAPI 호출용**(P-5 추천·세션 정리 통지). 채팅 SSE는 FE 직결이라 무관 |
 | `NEXT_PUBLIC_LLM_SSE_URL` (FE) | 채팅 SSE 직결용 FastAPI 공개 URL — **FE 브라우저가 티켓 들고 직접 연결**(FE 팀 공유 필요, D5) |
-| `INTERNAL_TOKEN` | internal API 서비스 토큰 (FastAPI와 공유) |
+| `INTERNAL_API_TOKEN` | internal API 서비스 토큰 (FastAPI와 동일 이름·값 org 공유) |
 | `app.mock.shipping-minutes` 등 | mock 전이 간격 (환경변수 아님, yml 기본값 shipping/delivery/confirm/claim-approve = 5/5/10/5분 — 01 §6) |
 
 `.gitignore`에 `application-local.yml`, `.env` 포함 확인. 어떤 시크릿도 커밋 금지.

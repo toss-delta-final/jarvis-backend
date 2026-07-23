@@ -9,10 +9,10 @@ LLM 팀 FastAPI가 없을 때 **FE 직결 흐름**(티켓 → JWKS 검증 → I-
 cd mock-fastapi
 pip install -r requirements.txt
 # Spring(8080)이 떠 있어야 JWKS 조회가 된다
-INTERNAL_TOKEN=<backend의 app.internal.token 값> uvicorn main:app --port 8000
+INTERNAL_API_TOKEN=<backend의 app.internal.token 값> uvicorn main:app --port 8000
 ```
 
-환경변수: `SPRING_BASE_URL`(기본 http://localhost:8080), `INTERNAL_TOKEN`(**필수** — backend application-local.yml의 app.internal.token과 동일해야 I-21 콜백이 통과).
+환경변수: `SPRING_BASE_URL`(기본 http://localhost:8080), `INTERNAL_API_TOKEN`(**필수** — backend application-local.yml의 app.internal.token과 동일해야 I-21 콜백이 통과).
 
 ## 흐름 확인 (05 §1-2-1)
 

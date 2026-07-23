@@ -61,7 +61,7 @@ app:
     ttl-seconds: 60
   # internal 서비스 토큰 (03 D4 — FastAPI와 .env로 공유)
   internal:
-    token: ${INTERNAL_TOKEN} # 로컬=application-local.yml, 배포=환경변수 주입(커밋 금지). FastAPI INTERNAL_API_TOKEN과 동일 값, 미주입 시 기동 실패(fail-fast)
+    token: ${INTERNAL_API_TOKEN} # 로컬=application-local.yml, 배포=환경변수 주입(커밋 금지). FastAPI와 동일 이름·값의 org 공유 시크릿, 미주입 시 기동 실패(fail-fast)
   # Spring→FastAPI 아웃바운드 (03 §5) — base-url 빈 값이면 통지 skip(FastAPI 미기동 로컬)
   llm:
     base-url: ${LLM_BASE_URL:}

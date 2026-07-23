@@ -23,4 +23,4 @@ TOKEN=$(grep -A2 'internal:' "$LOCAL_YML" | grep 'token:' | head -1 | sed 's/.*t
 [ -n "$TOKEN" ] || { echo "[mock][오류] application-local.yml에서 internal token을 찾지 못함" >&2; exit 1; }
 
 echo "[mock] uvicorn 기동 — http://localhost:8000"
-INTERNAL_TOKEN="$TOKEN" SPRING_BASE_URL=http://localhost:8080 exec python -m uvicorn main:app --port 8000
+INTERNAL_API_TOKEN="$TOKEN" SPRING_BASE_URL=http://localhost:8080 exec python -m uvicorn main:app --port 8000
