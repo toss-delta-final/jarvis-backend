@@ -33,7 +33,7 @@ docker run -p 8080:8080 --env-file deploy.env jarvis-backend:dev
 | `STREAM_TICKET_PRIVATE_KEY` / `STREAM_TICKET_KID` | 스트림 티켓 RS256 private key(base64 PKCS#8 DER) + 키 ID |
 | `INTERNAL_API_TOKEN` | `/internal/**` 서비스 토큰 — **LLM(FastAPI)팀과 동일 값** (org 공유 시크릿) |
 
-**선택 (기본값 있음):** `APP_COOKIE_SECURE`(기본 `true`), `LLM_BASE_URL`(빈 값이면 FastAPI 통지 skip), `LLM_SSE_URL`.
+**선택 (기본값 있음):** `APP_COOKIE_SECURE`(기본 `true`), `FASTAPI_BASE_URL`(FastAPI 공개주소 — base-url·sse-url 공용, 빈 값이면 통지 skip·채팅 degrade).
 
 전체 목록·용도는 [.env.example](.env.example).
 
@@ -56,7 +56,7 @@ openssl rand -hex 32
 
 - `DB_*` / `REDIS_*`: 배포 인프라(RDS/ElastiCache 등) 접속값.
 - `INTERNAL_API_TOKEN`: **LLM(FastAPI)팀과 같은 값으로 합의** (양쪽이 달라지면 `/internal` 콜백이 막힘). org 공유 시크릿으로 두면 한 곳만 관리.
-- `LLM_BASE_URL`: LLM팀에게 실제 FastAPI 주소를 받아 설정(없으면 빈 값 = 세션종료 통지 skip, 부팅엔 지장 없음).
+- `FASTAPI_BASE_URL`: LLM팀에게 실제 FastAPI 공개 주소를 받아 설정(base-url·sse-url 공용). 없으면 빈 값 = 통지 skip·채팅 degrade, 부팅엔 지장 없음.
 - 생성한 값은 repo 밖 안전 채널로만 공유(단톡·평문 금지). 배포 환경에선 GitHub Environment/Actions Secrets 등 시크릿 저장소 사용 권장.
 
 ## 4. DB 준비 (필수)
