@@ -64,5 +64,5 @@ app:
     token: ${INTERNAL_API_TOKEN} # 로컬=application-local.yml, 배포=환경변수 주입(커밋 금지). FastAPI와 동일 이름·값의 org 공유 시크릿, 미주입 시 기동 실패(fail-fast)
   # Spring→FastAPI 아웃바운드 (03 §5) — base-url 빈 값이면 통지 skip(FastAPI 미기동 로컬)
   llm:
-    base-url: ${LLM_BASE_URL:}
-    sse-url: ${LLM_SSE_URL:http://localhost:8000} # FastAPI 공개 base URL — llmSseUrl은 여기에 /chat(구매자)·/seller/chat(판매자)을 붙여 내려감
+    base-url: ${FASTAPI_BASE_URL:}
+    sse-url: ${FASTAPI_BASE_URL:} # FastAPI 공개 base URL(base-url과 동일) — llmSseUrl은 여기에 /chat(구매자)·/seller/chat(판매자)을 붙여 내려감. 미설정 시 빈 값(채팅 degrade)
