@@ -1,78 +1,115 @@
-name: Deploy to EC2 with CI/CD
+name: Jarvis Backend CI/CD
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:   # Actions 탭에서 수동 실행 가능
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}   # ghcr.io/toss-delta-final/jarvis-backend
 
 jobs:
-  # 1단계: 기능 테스트 (CI)
+  # 1단계: 기능 테스트 (CI) — PR과 push 모두에서 실행
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: 소스코드 가져오기
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: JDK 21 설치
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
-          
+          cache: gradle   # 의존성 캐시로 테스트 가속
+
       - name: Gradle 권한 부여
         run: chmod +x ./gradlew
 
       - name: 테스트 실행
         run: ./gradlew test
 
-  # 2단계: 자동 배포 (CD)
-  deploy:
-    needs: test
-    if: github.event_name == 'push'
+  # 2단계: 이미지 빌드 (CI) — EC2 대신 러너에서 빌드해 OOM 원천 차단
+  build:
+    needs: test   # 테스트 통과해야만 진행
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'   # PR에서는 빌드 생략
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # GHCR 푸시에 필요
     steps:
-      - name: EC2 원격 접속 및 배포
-        uses: appleboy/ssh-action@master
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
         with:
-          host: ${{ secrets.EC2_HOST }}, ${{ secrets.EC2_HOST_2 }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # 자동 발급 토큰, 별도 등록 불필요
+
+      - name: 이미지 빌드 및 푸시
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}   # 커밋 해시 태그 — 롤백 시 사용
+          cache-from: type=gha
+          cache-to: type=gha,mode=max   # 레이어 캐시로 빌드 가속
+
+  # 3단계: 자동 배포 (CD) — 1호기 완료 후 2호기 순차 진행
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1   # 동시 배포 금지 — 최소 1대는 항상 살아있게
+      fail-fast: true   # 1호기 실패 시 2호기 중단
+      matrix:
+        server: [EC2_HOST, EC2_HOST_2]
+    steps:
+      - name: EC2 무중단 배포
+        uses: appleboy/ssh-action@v1.0.3   # 버전 고정 — @master는 예고 없이 깨짐
+        with:
+          host: ${{ secrets[matrix.server] }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 30m
+          timeout: 10m
+          command_timeout: 10m
+          script_stop: true   # 스크립트 중 실패 시 즉시 중단
           script: |
-            cd ~/jarvis-backend
-            git pull
-            
-            # 1. 서버 내부에 자동으로 .env 파일 생성 (JWT_SECRET 환경변수 안전 주입)
-            cat << 'EOF' > .env
+            set -e   # 명령 하나라도 실패하면 뒤 단계 실행 안 함
+
+            # 1. 시크릿을 env 파일로 기록 (umask 077로 소유자만 읽기 가능)
+            umask 077
+            cat << 'ENVEOF' > /home/ubuntu/jarvis-backend.env
             DB_URL=${{ secrets.MARIADB_URL }}
-            DB_USERNAME=admin
+            DB_USERNAME=${{ secrets.MARIADB_USERNAME }}
             DB_PASSWORD=${{ secrets.MARIADB_PASSWORD }}
-            REDIS_HOST=localhost
+            REDIS_HOST=${{ secrets.REDIS_HOST }}
             REDIS_PORT=6379
             INTERNAL_API_TOKEN=${{ secrets.INTERNAL_API_TOKEN }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
             STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
-            EOF
-            
-            # 2. 레디스 컨테이너 자동 다운로드 및 강제 삭제 후 실행
-            docker stop jarvis-redis || true
-            docker rm -f jarvis-redis || true
-            docker run -d --name jarvis-redis --network host redis:7-alpine
-            
-            # [자동 청소 ①] 새 이미지 빌드 중 공간 부족 에러를 방지하기 위해 기존 좀비 이미지 선제 소거
-            docker image prune -f
-            
-            # 3. [순서 최적화] 기존 컨테이너를 유지한 상태에서 새 이미지 선-빌드 (다운타임 최소화)
-            docker build -t jarvis-backend .
-            
-            # 4. [충돌 원천 차단] 실행 직전 기존 백엔드 컨테이너 중지 및 강제 완전히 삭제
+            ENVEOF
+
+            # 2. [무중단 최적화] 기존 컨테이너 유지한 채 새 이미지 먼저 받아 대기
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.IMAGE }}:${{ github.sha }}
+
+            # 3. [충돌 원천 차단] 실행 직전 기존 컨테이너 중지 및 강제 삭제
             docker stop jarvis-backend || true
             docker rm -f jarvis-backend || true
-            
-            # 5. 완벽하게 구워진 .env 파일 주입하여 최종 실행
-            docker run -d --name jarvis-backend --network host --env-file .env jarvis-backend
-            
-            # [자동 청소 ②] 방금 새 컨테이너로 교체되면서 참조가 완전히 풀린 직전 구형 이미지를 즉시 영구 삭제
+
+            # 4. 새 컨테이너 가동 (Redis는 ElastiCache 사용 — 컨테이너 생성 없음)
+            docker run -d \
+              --name jarvis-backend \
+              --restart always \
+              --network host \
+              --env-file /home/ubuntu/jarvis-backend.env \
+              ${{ env.IMAGE }}:${{ github.sha }}
+
+            # 5. 참조 풀린 구형 이미지 정리 (t3.micro 디스크 절약)
             docker image prune -f
