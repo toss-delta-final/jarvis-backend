@@ -9,8 +9,12 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.mariadb.jdbc.Driver
     hikari:
-      maximum-pool-size: 20    # 기본 10 — 인증 몰림 + async 이벤트 로깅 동시 수요 여유분
+      maximum-pool-size: 10    # 서버 2대 기준 총 20 — db.t3.micro 한도(약 34) 내 유지
+      minimum-idle: 2          # 유휴 시 커넥션 반납해 슬롯 확보
       connection-timeout: 5000 # 기본 30s — 풀 고갈 시 30초 매달리는 대신 5초 fail-fast
+      idle-timeout: 300000     # 5분 유휴 시 커넥션 정리
+      max-lifetime: 900000     # 15분마다 커넥션 재생성 — 좀비 커넥션 누적 방지
+      keepalive-time: 300000   # 5분마다 커넥션 생존 확인
   jpa:
     hibernate:
       ddl-auto: validate  # 스키마 원본은 docs/backend/schema.sql — JPA는 만들지도 바꾸지도 않음 (03 §3-1)
