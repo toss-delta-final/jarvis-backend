@@ -64,6 +64,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      packages: read   # EC2에서 GHCR pull 시 필요
     strategy:
       max-parallel: 1   # 동시 배포 금지 — 최소 1대는 항상 살아있게
       fail-fast: true   # 1호기 실패 시 2호기 중단
@@ -78,7 +80,6 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 10m
           command_timeout: 10m
-          script_stop: true   # 스크립트 중 실패 시 즉시 중단
           script: |
             set -e   # 명령 하나라도 실패하면 뒤 단계 실행 안 함
 
@@ -91,6 +92,8 @@ jobs:
             REDIS_HOST=${{ secrets.REDIS_HOST }}
             REDIS_PORT=6379
             INTERNAL_API_TOKEN=${{ secrets.INTERNAL_API_TOKEN }}
+            LLM_BASE_URL=${{ vars.FASTAPI_BASE_URL }}
+            LLM_SSE_URL=${{ vars.FASTAPI_BASE_URL }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
             STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
