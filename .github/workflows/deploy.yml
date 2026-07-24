@@ -48,6 +48,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}   # 자동 발급 토큰, 별도 등록 불필요
 
+      # latest + 커밋 해시 태그 (해시 태그는 롤백 시 사용)
       - name: 이미지 빌드 및 푸시
         uses: docker/build-push-action@v5
         with:
@@ -55,7 +56,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}   # 커밋 해시 태그 — 롤백 시 사용
+            ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max   # 레이어 캐시로 빌드 가속
 
