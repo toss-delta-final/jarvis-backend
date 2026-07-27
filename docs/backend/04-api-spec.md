@@ -161,7 +161,7 @@
 
 | # | Method | 경로 | 설명 |
 |---|---|---|---|
-| I-1 | GET | /internal/products/search | 추천 1왕복 후보 조회 — 정형조건 필터, **리랭킹용 최소필드**만 반환(표시 데이터 없음, 라운드1 LIMIT). 05 §I-1 |
+| I-1 | GET | /internal/products/search | 추천 1왕복 후보 조회 — 정형조건 필터. 리랭킹 계산 입력(`price`·`rating`·`reviewCount`) 포함, 카드 표시 필드는 없음. **후보 수 상한 없음**(2026-07-27). 05 §I-1 |
 | I-2 | POST | /internal/cart/items | 챗봇 장바구니 담기 |
 | I-3 | GET | /internal/products/popular | 인기 상품 (무관 질문 시 카드 유지용) |
 | I-4 | GET | /internal/members/{id}/orders/status | 주문 상태 요약 (문의 챗봇용) — I-19(목록)와 역할 분담 |

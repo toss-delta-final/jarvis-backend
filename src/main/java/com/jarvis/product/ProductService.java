@@ -6,6 +6,7 @@ import com.jarvis.brand.BrandService;
 import com.jarvis.category.CategoryService;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
+import com.jarvis.product.dto.CandidateRow;
 import com.jarvis.product.dto.ProductCandidateResponse;
 import com.jarvis.product.dto.ProductCardPageResponse;
 import com.jarvis.product.dto.ProductCardResponse;
@@ -19,6 +20,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +39,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductService {
 
     private static final int POPULAR_DAYS = 7;
-    private static final int CANDIDATE_MAX_SIZE = 200; // I-1 라운드1 LIMIT 최대 (05 §I-1)
     private static final int CARDS_MAX_IDS = 20; // P-7 ids 상한 (04 §2)
     private static final int SYNC_DEFAULT_LIMIT = 500; // I-17 기본 페이지 크기 (05 §I-17)
     private static final int SYNC_MAX_LIMIT = 500; // I-17 페이지 상한 (05 §I-17)
@@ -68,19 +69,29 @@ public class ProductService {
         return toCards(findByIdsPreservingOrder(popularIds(size)));
     }
 
-    /** I-3 — 인기 상품을 리랭킹용 최소필드로 (05 §I-3 — 응답 형식 I-1과 동일) */
+    /**
+     * I-3 — 인기 상품을 후보 형식으로 (05 §I-3 — 응답 형식 I-1과 동일). 상위 N건 고정이라
+     * 평점은 배치 집계로 충분하다 — I-1과 달리 후보 수가 유한하다.
+     */
     public List<ProductCandidateResponse> getPopularCandidates(int size) {
-        return toCandidates(findByIdsPreservingOrder(popularIds(size)));
+        List<Product> products = findByIdsPreservingOrder(popularIds(size));
+        Map<Long, RatingStats> stats = reviewService.getStats(
+                products.stream().map(Product::getId).toList());
+        return toCandidates(products.stream().map(p -> {
+            RatingStats s = stats.getOrDefault(p.getId(), RatingStats.EMPTY);
+            return new CandidateRow(p, s.count(), s.average());
+        }).toList());
     }
 
     /**
-     * I-1 라운드1 후보 조회 (05 §I-1) — 정형조건만 SQL 적용, 표시 데이터는 안 준다.
-     * 미존재 카테고리명/브랜드명은 후보 0건(잘못된 축으로 전체가 매칭되는 것 방지).
+     * I-1 라운드1 후보 조회 (05 §I-1) — 정형조건만 SQL 적용. 2026-07-27 개정: 후보 수 상한 폐지,
+     * `brandName`은 리스트(하나라도 일치하면 후보). 미존재 카테고리명, 그리고 브랜드명이 전부
+     * 미존재면 후보 0건(잘못된 축으로 전체가 매칭되는 것 방지) — 일부만 미존재면 나머지로 검색해
+     * 브랜드 하나 잘못 넣었다고 추천 전체가 죽지 않게 한다.
      */
     public List<ProductCandidateResponse> searchCandidates(String keyword, String categoryName,
                                                            Integer minPrice, Integer maxPrice,
-                                                           String brandName, String color, int size) {
-        int limit = Math.min(Math.max(size, 1), CANDIDATE_MAX_SIZE);
+                                                           List<String> brandNames, String color) {
         List<Long> categoryIds = null;
         if (hasText(categoryName)) {
             categoryIds = categoryService.resolveIdsByName(categoryName.trim()).orElse(List.of());
@@ -88,17 +99,21 @@ public class ProductService {
                 return List.of();
             }
         }
-        Long brandId = null;
-        if (hasText(brandName)) {
-            brandId = brandService.findIdByName(brandName.trim()).orElse(null);
-            if (brandId == null) {
+        List<String> names = brandNames == null ? List.of()
+                : brandNames.stream().filter(ProductService::hasText).map(String::trim).distinct().toList();
+        List<Long> brandIds = null;
+        if (!names.isEmpty()) {
+            brandIds = names.stream().map(brandService::findIdByName)
+                    .flatMap(Optional::stream).distinct().toList();
+            if (brandIds.isEmpty()) {
                 return List.of();
             }
         }
-        List<Product> products = productRepository.searchCandidates(
-                trimToNull(keyword), categoryIds != null, categoryIds != null ? categoryIds : List.of(-1L),
-                brandId, minPrice, maxPrice, trimToNull(color), PageRequest.of(0, limit));
-        return toCandidates(products);
+        return toCandidates(productRepository.searchCandidates(
+                trimToNull(keyword),
+                categoryIds != null, categoryIds != null ? categoryIds : List.of(-1L),
+                brandIds != null, brandIds != null ? brandIds : List.of(-1L),
+                minPrice, maxPrice, trimToNull(color)));
     }
 
     /**
@@ -213,14 +228,20 @@ public class ProductService {
         return ids.stream().map(products::get).filter(java.util.Objects::nonNull).toList();
     }
 
-    private List<ProductCandidateResponse> toCandidates(List<Product> products) {
+    /** 카테고리·브랜드명은 배치 lookup으로 N+1 회피 — 평점은 행에 이미 실려 온다 */
+    private List<ProductCandidateResponse> toCandidates(List<CandidateRow> rows) {
+        List<Product> products = rows.stream().map(CandidateRow::product).toList();
         Map<Long, String> categoryNames = categoryService.getNames(
                 products.stream().map(Product::getCategoryId).collect(Collectors.toSet()));
         Map<Long, String> brandNames = brandService.getNames(
                 products.stream().map(Product::getBrandId).collect(Collectors.toSet()));
-        return products.stream()
-                .map(p -> ProductCandidateResponse.from(p, parseJson(p.getAttributes()),
-                        categoryNames.get(p.getCategoryId()), brandNames.get(p.getBrandId())))
+        return rows.stream()
+                .map(row -> {
+                    Product p = row.product();
+                    return ProductCandidateResponse.from(p, parseJson(p.getAttributes()),
+                            categoryNames.get(p.getCategoryId()), brandNames.get(p.getBrandId()),
+                            RatingStats.of(row.reviewCount(), row.ratingAverage()));
+                })
                 .toList();
     }
 

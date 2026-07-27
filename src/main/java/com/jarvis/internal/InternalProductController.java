@@ -19,18 +19,20 @@ public class InternalProductController {
 
     private final ProductService productService;
 
-    /** I-1 — 추천 라운드1 후보 조회 (05 §I-1). size 기본 50/최대 200 */
+    /**
+     * I-1 — 추천 라운드1 후보 조회 (05 §I-1). 2026-07-27 개정: 후보 수 상한 없음(정형조건 일치
+     * 전체 반환), `brandName`은 반복 파라미터로 복수 지정 가능.
+     */
     @GetMapping("/search")
     public ApiResponse<List<ProductCandidateResponse>> search(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String categoryName,
             @RequestParam(required = false) Integer minPrice,
             @RequestParam(required = false) Integer maxPrice,
-            @RequestParam(required = false) String brandName,
-            @RequestParam(required = false) String color,
-            @RequestParam(defaultValue = "50") int size) {
+            @RequestParam(required = false) List<String> brandName,
+            @RequestParam(required = false) String color) {
         return ApiResponse.success(productService.searchCandidates(
-                keyword, categoryName, minPrice, maxPrice, brandName, color, size));
+                keyword, categoryName, minPrice, maxPrice, brandName, color));
     }
 
     /** I-3 — 인기 상품(무관 질문 시 카드 유지용), 응답 형식 I-1과 동일 (05 §I-3) */

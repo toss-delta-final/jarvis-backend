@@ -119,7 +119,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 
 - **콜백 실패 시 products.ready 발행 금지** — FE가 존재하지 않는 listId를 조회하는 경로를 만들지 않는다. I-21 body·CH-5 응답 스키마는 **OPEN(LLM 협의 중)**.
 
-- **비용 상한 2개**: (a) **라운드1 LIMIT** — 정형조건이 느슨(대분류만)하면 후보가 폭발하므로 I-1이 최대 N개만(기본/최대 §I-1). (b) **top-K 캡** — 벡터 리랭킹 후 LLM에 태우는 후보를 20~30개로 제한(토큰은 벡터검색이 아니라 LLM이 후보를 읽을 때 든다).
+- **비용 상한**: ~~(a) 라운드1 LIMIT~~ — **2026-07-27 폐기**(§I-1). 판매량순 컷이 의미 리랭킹과 직교해 정답 후보를 잘라냈다. 후보 수 상한 대신 응답 압축(gzip)과 정형 필터 강화로 비용을 다룬다. (b) **top-K 캡** — 벡터 리랭킹 후 LLM에 태우는 후보를 20~30개로 제한(토큰은 벡터검색이 아니라 LLM이 후보를 읽을 때 든다). 실제 토큰 비용은 여기서 걸리므로 (a) 폐기가 LLM 비용을 늘리지 않는다.
 - **Top5 넉넉히 선정**: 카드 부착(CH-5)에서 HIDDEN·품절이 드롭될 수 있으니 FastAPI는 5개보다 넉넉히(예 7~8) 골라 순서를 준다 — 드롭 후에도 5개 유지.
 - **정합성 경계**: 벡터DB attributes는 **배치 동기화**(§1-2-2)라 낡아도 무방 — 정형 진실(가격·재고·상태)은 3(라운드1)·7(CH-5) 모두 Spring이 확정하므로 거짓 가격·품절이 카드에 안 뜬다.
 
@@ -149,9 +149,12 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 
 ### I-1. 상품 검색 (추천 1왕복 · 후보 조회) `GET /internal/products/search`
 - **역할**: 추천 2왕복 중 **라운드1** — 정형조건으로 MariaDB 후보를 좁혀 **리랭킹용 최소필드**만 반환(1-2-1). 표시 데이터는 안 준다(CH-5 카드 부착 담당).
-- query: `keyword?`(상품명+summary+attributes LIKE), `categoryName?`, `minPrice?`, `maxPrice?`, `brandName?`, `color?`/기타 정형 속성?, `size`(**라운드1 LIMIT — 기본 50 / 최대 200**, 후보 폭발 방지). **정형 진실(가격 범위·재고·판매상태 필터)은 Spring SQL에서 적용** — 살 수 없는 상품은 후보에서 제외.
+- query: `keyword?`(상품명+summary+attributes LIKE), `categoryName?`, `minPrice?`, `maxPrice?`, `brandName?`(**리스트 — 반복 파라미터, 하나라도 일치하면 후보**), `color?`/기타 정형 속성?. **정형 진실(가격 범위·재고·판매상태 필터)은 Spring SQL에서 적용** — 살 수 없는 상품은 후보에서 제외.
+- **2026-07-27 개정 — `size` 삭제 + 후보 수 상한 폐지**: 정형조건에 일치하는 상품을 **전부** 반환한다(§1-2-1 비용상한 (a) 폐기). 판매량순 컷이 의미 리랭킹과 직교해 정답 후보를 잘라내던 문제 때문 — 후보 선별은 정형조건이, 순위는 FastAPI 리랭킹이 담당한다. **응답 순서는 보장하지 않는다**(정렬 제거 — 매칭 전체에 filesort를 거는 비용만 남고, 순서를 남기면 LLM이 순위 신호로 오해할 여지가 생긴다). 정형조건이 하나도 없는 요청은 **LLM 단에서 차단**하므로 BE는 별도 가드를 두지 않는다.
+- **`brandName` 부분 매칭**: 존재하지 않는 브랜드명은 무시하고 나머지로 검색, **전부 미존재일 때만 0건** — 브랜드 하나 잘못 넣었다고 추천 전체가 죽지 않게 한다. (`categoryName`은 여전히 단건.)
 - `categoryName` 해석(02 D20 — 2단 계층): **대분류명이면 하위 소분류 전체를 포함해 검색**, 소분류명이면 해당 소분류만. 메인 해시태그가 대분류(#패션)라 LLM이 대분류명을 보내는 게 기본 경로 — 대분류 지정이 0건이 되는 일이 없어야 한다
-- 응답 item (**리랭킹용 최소**): `productId, name, summary, attributes(JSON), categoryName, brandName`. ⚠️ **display 필드(`price·originalPrice·imageUrl·rating·reviewCount·options`)는 제거 — 카드 조회(CH-5 — 스키마 확정 전까지 P-7 유지)로 이동.** FastAPI는 여기서 받은 `productId`로 자기 벡터DB의 embedding을 찾아 의미 리랭킹한다.
+- 응답 item: `productId, name, summary, attributes(JSON), categoryName, brandName, price, rating, reviewCount`. **`price`·`rating`·`reviewCount`는 리랭킹 계산 입력**이라 포함한다(2026-07-27 합의 — "5만원 이내", "평점 몇 점 이상" 조건의 top-k 계산). ⚠️ 나머지 display 필드(`originalPrice`·`imageUrl`·`options`)는 계속 제거 — 카드 조회(CH-5 — 스키마 확정 전까지 P-7 유지)로 이동. FastAPI는 여기서 받은 `productId`로 자기 벡터DB의 embedding을 찾아 의미 리랭킹한다.
+- `rating`·`reviewCount`는 review 집계값(02 D9 — 컬럼으로 저장하지 않음). **리뷰 0건이면 `rating: 0.0`, `reviewCount: 0`**(§I-17과 동일 규약). 상한이 없어 id `IN` 배치 집계를 쓸 수 없으므로 **검색 쿼리에서 `left join review` + `group by`로 함께 집계**한다 — `AVG()`는 0행에서 NULL을 반환하므로 0으로 나누는 경로는 만들지 않는다.
 - attributes까지 반환하는 이유: LLM이 "린넨 소재만" 같은 세밀 조건을 후처리 필터링할 수 있게(서버는 후보만 좁힘 — 02 D7). 카테고리별 속성 축의 정의는 `category.attribute_schema`(02 D11) — 시드 데이터·벡터DB attributes·LLM 프롬프트가 같은 축을 공유한다.
 
 ### I-2. 장바구니 담기 `POST /internal/cart/items`

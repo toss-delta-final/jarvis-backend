@@ -32,6 +32,11 @@ spring:
 
 server:
   port: 8080
+  # I-1은 후보 수 상한이 없어(05 §I-1) 응답이 커질 수 있다 — JSON은 압축률이 높아 전송 시간이 콜백 타임아웃(3s)을 먹는 걸 막는다
+  compression:
+    enabled: true
+    mime-types: application/json
+    min-response-size: 2KB
 
 management:
   endpoints:

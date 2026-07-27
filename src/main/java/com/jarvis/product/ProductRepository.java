@@ -1,5 +1,6 @@
 package com.jarvis.product;
 
+import com.jarvis.product.dto.CandidateRow;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -149,15 +150,21 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     /**
      * I-1 라운드1 후보 조회 (05 §I-1) — 정형 진실(가격·재고·판매상태)은 여기서 확정,
-     * 살 수 없는 상품은 후보에서 제외. LIMIT은 Pageable(라운드1 상한 — 후보 폭발 방지).
-     * applyCategory=false면 categoryIds는 센티널(빈 IN 방지) — excluded()와 같은 관성.
+     * 살 수 없는 상품은 후보에서 제외. 2026-07-27 개정: 후보 수 상한 폐지 — 일치하는 행을 전부 반환한다.
+     * 평점은 같은 쿼리에서 집계(02 D9) — 후보 수가 무제한이라 id IN 배치 집계를 쓸 수 없다.
+     * 정렬을 걸지 않는 것도 같은 이유(응답 순서 무보장, 05 §I-1) — 순위는 FastAPI 리랭킹 소관이라
+     * 매칭 전체에 filesort를 거는 비용만 남는다.
+     * applyCategory/applyBrand=false면 ids는 센티널(빈 IN 방지) — excluded()와 같은 관성.
      */
     @Query("""
-            select p from Product p
+            select new com.jarvis.product.dto.CandidateRow(p, count(r), avg(r.rating))
+            from Product p
+              left join Review r on r.productId = p.id
+                and r.status = com.jarvis.review.ReviewStatus.VISIBLE
             where p.status = com.jarvis.product.ProductStatus.ON_SALE
               and p.stockQuantity > 0
               and (:applyCategory = false or p.categoryId in :categoryIds)
-              and (:brandId is null or p.brandId = :brandId)
+              and (:applyBrand = false or p.brandId in :brandIds)
               and (:minPrice is null or p.price >= :minPrice)
               and (:maxPrice is null or p.price <= :maxPrice)
               and (:keyword is null
@@ -165,16 +172,16 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                    or lower(p.summary) like lower(concat('%', :keyword, '%'))
                    or lower(p.attributes) like lower(concat('%', :keyword, '%')))
               and (:color is null or lower(p.attributes) like lower(concat('%', :color, '%')))
-            order by p.baseSalesCount desc, p.id desc
+            group by p
             """)
-    List<Product> searchCandidates(@Param("keyword") String keyword,
-                                   @Param("applyCategory") boolean applyCategory,
-                                   @Param("categoryIds") List<Long> categoryIds,
-                                   @Param("brandId") Long brandId,
-                                   @Param("minPrice") Integer minPrice,
-                                   @Param("maxPrice") Integer maxPrice,
-                                   @Param("color") String color,
-                                   Pageable pageable);
+    List<CandidateRow> searchCandidates(@Param("keyword") String keyword,
+                                        @Param("applyCategory") boolean applyCategory,
+                                        @Param("categoryIds") List<Long> categoryIds,
+                                        @Param("applyBrand") boolean applyBrand,
+                                        @Param("brandIds") List<Long> brandIds,
+                                        @Param("minPrice") Integer minPrice,
+                                        @Param("maxPrice") Integer maxPrice,
+                                        @Param("color") String color);
 
     /**
      * S-3/I-9 자사 상품 목록 (04 §7·§10) — HIDDEN도 노출(본인 화면), 정렬은 Pageable
