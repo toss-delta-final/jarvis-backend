@@ -45,9 +45,6 @@ JARVIS 최종 프로젝트의 **백엔드 단독 repo** (Spring Boot). 프론트
 ## Token economy (how Claude should work here)
 
 - 파일 전체를 무작정 읽지 말 것 — Read는 offset/limit, 또는 Grep/Glob으로 먼저 좁힌다.
-- 방금 편집한 파일을 확인용으로 다시 읽지 말 것(Edit은 실패 시 에러남).
-- 넓은 탐색은 Explore/Agent에 위임하고 결론만 취한다.
-- 확정된 결정을 재설명/재論의하지 말 것. 정보가 충분하면 실행.
 - 간결하게: 여러 옵션 나열 대신 하나 추천, 명령 출력 그대로 반복 금지.
 
 ## Run / build
