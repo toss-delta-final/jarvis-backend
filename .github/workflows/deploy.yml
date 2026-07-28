@@ -16,16 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: gradle   # 의존성 캐시로 테스트 가속
-
       - name: Gradle 권한 부여
         run: chmod +x ./gradlew
-
       - name: 테스트 실행
         run: ./gradlew test
 
@@ -39,15 +36,12 @@ jobs:
       packages: write   # GHCR 푸시에 필요
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}   # 자동 발급 토큰, 별도 등록 불필요
-
       # latest + 커밋 해시 태그 (해시 태그는 롤백 시 사용)
       - name: 이미지 빌드 및 푸시
         uses: docker/build-push-action@v5
@@ -72,20 +66,29 @@ jobs:
       matrix:
         server: [EC2_HOST, EC2_HOST_2]
     steps:
-      - name: EC2 무중단 배포
+      - name: EC2 배포 및 기동 검증
         uses: appleboy/ssh-action@v1.0.3   # 버전 고정 — @master는 예고 없이 깨짐
         with:
           host: ${{ secrets[matrix.server] }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 10m
-          command_timeout: 10m
+          timeout: 15m
+          command_timeout: 15m
           script: |
             set -e   # 명령 하나라도 실패하면 뒤 단계 실행 안 함
 
-            # 1. 시크릿을 env 파일로 기록 (umask 077로 소유자만 읽기 가능)
+            ENV_FILE=/home/ubuntu/jarvis-backend.env
+            ENV_PREV=/home/ubuntu/jarvis-backend.env.prev
+            LAST_GOOD=/home/ubuntu/jarvis-backend.last-good
+
+            # 1. 기존 env 파일 백업 후 새 시크릿 기록
+            #    백업하는 이유: 배포 실패 원인이 잘못된 시크릿 값일 수 있으므로
+            #    이미지만 되돌리면 옛 이미지도 깨진 env 를 물려받아 똑같이 죽음
             umask 077
-            cat << 'ENVEOF' > /home/ubuntu/jarvis-backend.env
+            if [ -f "$ENV_FILE" ]; then
+              cp "$ENV_FILE" "$ENV_PREV"
+            fi
+            cat << 'ENVEOF' > "$ENV_FILE"
             DB_URL=${{ secrets.MARIADB_URL }}
             DB_USERNAME=${{ secrets.MARIADB_USERNAME }}
             DB_PASSWORD=${{ secrets.MARIADB_PASSWORD }}
@@ -100,21 +103,83 @@ jobs:
             STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
             ENVEOF
 
-            # 2. [무중단 최적화] 기존 컨테이너 유지한 채 새 이미지 먼저 받아 대기
+            # 2. 롤백 대상 확보 — 교체 전에 현재 실행 중인 이미지를 기억
+            PREV_IMAGE=$(docker inspect -f '{{.Config.Image}}' jarvis-backend 2>/dev/null || true)
+
+            # 3. 기존 컨테이너 유지한 채 새 이미지 먼저 받아 대기
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ${{ env.IMAGE }}:${{ github.sha }}
 
-            # 3. [충돌 원천 차단] 실행 직전 기존 컨테이너 중지 및 강제 삭제
+            # 4. 교체 — host 네트워크 + 8080 단일 포트라 동시 실행 불가
+            #    (t3.micro RAM 1GB 에서 JVM 2개 동시 기동도 불가)
             docker stop jarvis-backend || true
             docker rm -f jarvis-backend || true
-
-            # 4. 새 컨테이너 가동 (Redis는 ElastiCache 사용 — 컨테이너 생성 없음)
             docker run -d \
               --name jarvis-backend \
               --restart always \
               --network host \
-              --env-file /home/ubuntu/jarvis-backend.env \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              --env-file "$ENV_FILE" \
               ${{ env.IMAGE }}:${{ github.sha }}
 
-            # 5. 참조 풀린 구형 이미지 정리 (t3.micro 디스크 절약)
-            docker image prune -f
+            # 5. 기동 확인 — 2초 간격 최대 60회(약 2분)
+            OK=0
+            for i in $(seq 1 60); do
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health || true)
+              if [ "$CODE" = "200" ]; then OK=1; break; fi
+              sleep 2
+            done
+
+            # 6. 실패 시 롤백 — 이미지와 env 파일을 함께 되돌리고, 복구 여부까지 검증
+            if [ "$OK" != "1" ]; then
+              docker logs --tail 100 jarvis-backend || true
+              docker rm -f jarvis-backend || true
+
+              # 롤백 대상 결정: 직전 실행 이미지 → 없으면 마지막 정상 기동 이미지
+              ROLLBACK_IMAGE="$PREV_IMAGE"
+              if [ -z "$ROLLBACK_IMAGE" ] && [ -f "$LAST_GOOD" ]; then
+                ROLLBACK_IMAGE=$(cat "$LAST_GOOD")
+              fi
+
+              # 되돌릴 대상이 아예 없는 경우 — 수동 개입 필요
+              if [ -z "$ROLLBACK_IMAGE" ]; then
+                docker images ${{ env.IMAGE }} --format '{{.Tag}} {{.CreatedSince}}' | head -10
+                exit 1
+              fi
+
+              # env 파일도 함께 원복
+              if [ -f "$ENV_PREV" ]; then
+                cp "$ENV_PREV" "$ENV_FILE"
+              fi
+
+              docker run -d \
+                --name jarvis-backend \
+                --restart always \
+                --network host \
+                --log-opt max-size=10m \
+                --log-opt max-file=3 \
+                --env-file "$ENV_FILE" \
+                "$ROLLBACK_IMAGE"
+
+              # 롤백이 실제로 살아났는지 검증 — 최대 90초
+              RB=0
+              for i in $(seq 1 45); do
+                CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health || true)
+                if [ "$CODE" = "200" ]; then RB=1; break; fi
+                sleep 2
+              done
+
+              # 롤백까지 실패한 경우에만 두 번째 로그 블록이 찍힘 — 즉시 수동 개입 신호
+              if [ "$RB" != "1" ]; then
+                docker ps -a --filter 'name=jarvis-backend' --format '{{.Names}} {{.Status}}'
+                docker logs --tail 50 jarvis-backend || true
+              fi
+              exit 1
+            fi
+
+            # 7. 정상 기동 확인됨 — 이 이미지를 '마지막 정상'으로 기록
+            docker inspect -f '{{.Config.Image}}' jarvis-backend > "$LAST_GOOD"
+
+            # 8. 48시간 이상 지난 미사용 이미지 정리 (sha 태그 누적 방지)
+            docker image prune -af --filter "until=48h"
