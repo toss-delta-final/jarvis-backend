@@ -3,6 +3,7 @@
 > 기준: 「기능 정의 - 이소희」의 페이지별 기능에서 역산. 응답은 전부 03 문서의 envelope(`{success, data|error}`), 인증 규약도 03을 따른다.
 > 표기: 🔓 인증 불필요 / 🔑 로그인 필요 / 🏪 SELLER / 🛡 ADMIN / ⚙ internal(서비스 토큰). `{}`는 path variable.
 > LLM 콜백(⚙ `/internal/*`)과 채팅 직결(SSE·티켓)의 상세 스키마는 [05 LLM 연동 계약](05-llm-contract.md)이 원본이고 여기서는 목록만 둔다.
+> **2026-07-28 P-4 품절 제외 + 카드 `purchasable` 제거(노션 📡 API 명세서 P-4 댓글 확정)**: 인기 상품은 **품절(`stock_quantity = 0`)을 집계 3단계 전부에서 제외**한다 — 메인에 노출되는 상품은 살 수 있어야 한다. 살 수 없는 상품이 애초에 목록에 없으므로 응답 카드에서 **`purchasable`을 뺀다**(값이 항상 true라 의미 없음, P-5는 이미 없던 필드). P-4 전용 `PopularCardResponse`를 두고 공용 `ProductCardResponse`(P-6·M-4·M-7·CH-5)는 그대로 — 그쪽은 HIDDEN·품절을 목록에 유지하거나(개인 목록) 재고와 무관하게 표시하므로 필드가 계속 필요하다. `popularIds()`를 공유하는 **I-3(내부 인기 후보)도 같이 품절 제외** — I-1이 이미 `stockQuantity > 0`로 거르므로 오히려 정합해진다.
 > **2026-07-28 P-7 폐기(팀 결정)**: 추천 카드 하이드레이션 **P-7 `GET /api/products/cards?ids=`는 폐지** — CH-5(`GET /api/chat/lists/{listId}`) 확정·구현으로 대체 완료, FE 전환도 끝나 실사용처가 없다(노션 「📡 API 명세서」에서도 행 삭제됨). "범용 다건 카드 조회로 유지" 문구도 함께 폐기 — 필요해지면 새 번호로 다시 정의한다. 구현 제거: `ProductController.cards`·`ProductService.getPublicCards`. 카드 조립 공용 로직(`getCardsByIds`)은 P-4·P-6·M-4·M-7·CH-5가 계속 사용.
 > **2026-07-21 S-5 폐기(팀 결정)**: 판매자 상품 **직접 수정(S-5 `PATCH /api/seller/products/{id}`)은 미채택** — 상품 수정은 챗봇 경로(I-11, HITL confirm)만. 판매자 직접 경로는 조회(S-1 대시보드·S-2 주문·S-3 상품목록)만 남긴다(백엔드→프론트 정보 표시). 이전 "S-5·I-11 병존 확정(07-17)"은 이 결정으로 폐기. 아래 표·05 §1-3의 병존 문구도 정정.
 
@@ -37,8 +38,8 @@
 | P-1 | GET | /api/categories | 🔓 | 카테고리 트리(대분류+소분류, 02 D20). 메인 해시태그는 대분류만 사용. 카테고리 아이콘은 **FE 정적 매핑**(BE 미제공 — 07-17 확정) |
 | P-2 | GET | /api/products/{id} | 🔓 | 상품 상세: 대표 이미지(단일 — 02 D14), 옵션 목록, 정가/판매가, summary/attributes/description, 브랜드 요약, 평점 통계(평균·개수) — 조회 이벤트는 서버 적재 없음(FE가 E-1 `product_view`로 배치 전송, §8 — 이중 집계 방지). **HIDDEN도 404가 아니라 응답**(`purchasable=false`) — 장바구니가 HIDDEN 아이템을 유지(C-1)하므로 상세 링크가 죽으면 안 됨(07-17 구현 확정). 목록(P-4/P-6/CH-5)에서는 제외 |
 | P-3 | GET | /api/products/{id}/reviews | 🔓 | 후기 목록. query: page, size, sort(latest\|rating) — status=VISIBLE만. **page=0 응답에만 `distribution{5..1}`(별점 분포) 포함**(리뷰 0개면 0값 채운 객체), page≥1은 생략 — FE가 0페이지 값 재사용 (07-17 FE) |
-| P-4 | GET | /api/products/popular | 🔓 | 인기 상품 N개(기본 12): 최근 7일 판매수(order_item×PAID 주문 집계, 02 §4) → 부족하면 behavior_events `product_view` 수 → 그래도 부족하면 최신순으로 채움 (비로그인 메인·신규 회원 fallback 공용) |
-| P-5 | GET | /api/products/recommended | 🔑 | "OO님을 위한 추천". LLM 프로필 기반 — 내부적으로 FastAPI 추천 API 호출(05 문서). **타임아웃 연결 2s/응답 3s**(채팅용과 별도 — 메인 렌더 블로킹 방지), 실패·타임아웃·프로필 없음 시 P-4로 fallback. FastAPI가 상품 ID 목록을 주면 BE가 카드 조립(P-4·CH-5 카드와 동형) |
+| P-4 | GET | /api/products/popular | 🔓 | 인기 상품 N개(기본 12): 최근 7일 판매수(order_item×PAID 주문 집계, 02 §4) → 부족하면 behavior_events `product_view` 수 → 그래도 부족하면 최신순으로 채움 (비로그인 메인·신규 회원 fallback 공용). **세 단계 모두 HIDDEN과 품절(재고 0)을 제외**하므로 카드에 `purchasable`이 없다(2026-07-28 — 상단 결정 노트) |
+| P-5 | GET | /api/products/recommended | 🔑 | "OO님을 위한 추천". LLM 프로필 기반 — 내부적으로 FastAPI 추천 API 호출(05 문서). **타임아웃 연결 2s/응답 3s**(채팅용과 별도 — 메인 렌더 블로킹 방지), 실패·타임아웃·프로필 없음 시 P-4로 fallback. FastAPI가 상품 ID 목록을 주면 BE가 카드 조립(**P-4와 동형** — `purchasable` 없음. CH-5는 `purchasable`+`reason`이 있어 다르다) |
 | P-6 | GET | /api/brands/{id} | 🔓 | 브랜드 소개 + 상품 목록. query: category?, sort(popular\|latest\|price_asc\|price_desc), page, size. 응답에 **`categories`(해당 브랜드 판매 중 상품의 소분류 목록)** 포함 — 브랜드홈 필터 축(02 D20)을 FE가 페이지 목록만으로는 못 만들어서(07-17 구현 확정). popular 정렬 = 표시 판매량(base_sales_count + order_item×PAID 집계 — 02 D18) |
 | ~~P-7~~ | ~~GET~~ | ~~/api/products/cards?ids=1,2,3~~ | — | **폐기(2026-07-28)** — 추천 카드 하이드레이션은 CH-5(`GET /api/chat/lists/{listId}`)로 완전 대체. 상세는 상단 결정 노트 참조. |
 
@@ -86,7 +87,7 @@
 | M-1 | POST | /api/reviews | 🔑 | 후기 작성. body: orderItemId, rating(1~5), content — 자격 상태(DELIVERED/CONFIRMED — 교환 제거 확정, 01 §3) 위반 400 `REVIEW_NOT_ALLOWED`, 이미 작성한 아이템은 409 `REVIEW_ALREADY_EXISTS`(다른 *_ALREADY_*와 동일하게 CONFLICT로 분리 — Phase 4 구현 확정), 남의 아이템 404 |
 | M-2 | GET | /api/reviews/me | 🔑 | 내가 쓴 후기 목록 — **MVP 제외**(FE 화면 없음, 07-17. 스펙은 유지·구현 보류) |
 | M-3 | POST | /api/reviews/{id}/reports | 🔑 | 후기 신고. body: reason — 중복 신고 409 `REVIEW_REPORT_DUPLICATE`, 자기 후기 신고 400 `REVIEW_SELF_REPORT`(02 D29), 없는 후기 404 `REVIEW_NOT_FOUND` |
-| M-4 | GET | /api/wishlist | 🔑 | 찜 목록 — 카드 공통 모양(P-4 동형), 최근 찜 순. HIDDEN도 유지(`purchasable=false`) — 개인 목록은 장바구니(C-1)와 동일 원칙(Phase 4 구현 확정) |
+| M-4 | GET | /api/wishlist | 🔑 | 찜 목록 — 카드 공통 모양(P-6·M-7 동형 — P-4는 `purchasable`이 빠져 다르다), 최근 찜 순. HIDDEN도 유지(`purchasable=false`) — 개인 목록은 장바구니(C-1)와 동일 원칙(Phase 4 구현 확정) |
 | M-5 | POST | /api/wishlist | 🔑 | 찜 추가. body: productId — 중복 409 `WISHLIST_DUPLICATE` (찜 이벤트 적재 없음 — E-1 8종에 미포함) |
 | M-6 | DELETE | /api/wishlist/{productId} | 🔑 | 찜 해제 — 찜하지 않은 상품 404 `WISHLIST_NOT_FOUND` |
 | M-7 | GET | /api/products/recent | 🔑 | 최근 본 상품 (behavior_events `product_view` 기반, 중복 제거 최신 20개) — 카드 공통 모양, HIDDEN 유지(M-4와 동일 원칙) |

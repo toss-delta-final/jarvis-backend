@@ -16,9 +16,10 @@ import static org.mockito.Mockito.withSettings;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.brand.BrandService;
 import com.jarvis.category.CategoryService;
+import com.jarvis.product.dto.PopularCardResponse;
 import com.jarvis.product.dto.ProductCandidateResponse;
-import com.jarvis.product.dto.ProductCardResponse;
 import com.jarvis.review.ReviewService;
+import com.jarvis.review.dto.RatingStats;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,9 +68,9 @@ class ProductPopularServiceTest {
         when(productRepository.findPopularIdsBySales(any(), eq(3))).thenReturn(List.of(30L, 10L, 20L));
         when(productRepository.findAllById(List.of(30L, 10L, 20L))).thenReturn(shuffled);
 
-        List<ProductCardResponse> cards = productService.getPopular(3);
+        List<PopularCardResponse> cards = productService.getPopular(3);
 
-        assertThat(cards).extracting(ProductCardResponse::productId).containsExactly(30L, 10L, 20L);
+        assertThat(cards).extracting(PopularCardResponse::productId).containsExactly(30L, 10L, 20L);
         verify(productRepository, never()).findPopularIdsByViews(any(), anyList(), anyInt());
         verify(productRepository, never()).findLatestIds(anyList(), anyInt());
     }
@@ -84,9 +85,9 @@ class ProductPopularServiceTest {
         when(productRepository.findLatestIds(eq(List.of(1L, 2L)), eq(2))).thenReturn(List.of(3L, 4L));
         when(productRepository.findAllById(List.of(1L, 2L, 3L, 4L))).thenReturn(products);
 
-        List<ProductCardResponse> cards = productService.getPopular(4);
+        List<PopularCardResponse> cards = productService.getPopular(4);
 
-        assertThat(cards).extracting(ProductCardResponse::productId)
+        assertThat(cards).extracting(PopularCardResponse::productId)
                 .containsExactly(1L, 2L, 3L, 4L);
     }
 
@@ -100,9 +101,9 @@ class ProductPopularServiceTest {
         when(productRepository.findLatestIds(eq(List.of(-1L)), eq(2))).thenReturn(List.of(5L, 6L));
         when(productRepository.findAllById(List.of(5L, 6L))).thenReturn(products);
 
-        List<ProductCardResponse> cards = productService.getPopular(2);
+        List<PopularCardResponse> cards = productService.getPopular(2);
 
-        assertThat(cards).extracting(ProductCardResponse::productId).containsExactly(5L, 6L);
+        assertThat(cards).extracting(PopularCardResponse::productId).containsExactly(5L, 6L);
     }
 
     @Test
@@ -112,9 +113,26 @@ class ProductPopularServiceTest {
         when(productRepository.findPopularIdsBySales(any(), eq(3))).thenReturn(List.of(1L, 2L, 3L));
         when(productRepository.findAllById(List.of(1L, 2L, 3L))).thenReturn(products);
 
-        List<ProductCardResponse> cards = productService.getPopular(3);
+        List<PopularCardResponse> cards = productService.getPopular(3);
 
-        assertThat(cards).extracting(ProductCardResponse::productId).containsExactly(1L, 3L);
+        assertThat(cards).extracting(PopularCardResponse::productId).containsExactly(1L, 3L);
+    }
+
+    @Test
+    @DisplayName("P-4 — 카드는 공통 카드에서 purchasable만 뺀 동형 (노션 P-4 2026-07-28)")
+    void popularCardMapsCommonFieldsWithoutPurchasable() {
+        Product product = product(7L);
+        when(product.getPrice()).thenReturn(29900);
+        when(product.getOriginalPrice()).thenReturn(39000);
+        when(product.getImageUrl()).thenReturn("https://cdn/7.jpg");
+        when(productRepository.findPopularIdsBySales(any(), eq(1))).thenReturn(List.of(7L));
+        when(productRepository.findAllById(List.of(7L))).thenReturn(List.of(product));
+        when(reviewService.getStats(List.of(7L))).thenReturn(Map.of(7L, new RatingStats(2847, 4.8)));
+
+        PopularCardResponse card = productService.getPopular(1).get(0);
+
+        assertThat(card).isEqualTo(new PopularCardResponse(7L, "상품7", "브랜드",
+                29900, 39000, "https://cdn/7.jpg", 4.8, 2847));
     }
 
     @Test

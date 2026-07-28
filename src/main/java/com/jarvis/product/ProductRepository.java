@@ -112,21 +112,21 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                                      @Param("categoryId") Long categoryId,
                                                      Pageable pageable);
 
-    /** P-4 1순위 — 최근 7일 판매수 상위 (04 §2) */
+    /** P-4 1순위 — 최근 7일 판매수 상위 (04 §2). 품절(재고 0)은 제외 — 메인 노출 상품은 살 수 있어야 한다(노션 P-4 2026-07-28) */
     @Query(value = """
             SELECT oi.product_id FROM order_item oi
             JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID' AND o.paid_at >= :since
-            JOIN product p ON p.id = oi.product_id AND p.status = 'ON_SALE'
+            JOIN product p ON p.id = oi.product_id AND p.status = 'ON_SALE' AND p.stock_quantity > 0
             GROUP BY oi.product_id
             ORDER BY SUM(oi.quantity) DESC, oi.product_id DESC
             LIMIT :limit
             """, nativeQuery = true)
     List<Long> findPopularIdsBySales(@Param("since") LocalDateTime since, @Param("limit") int limit);
 
-    /** P-4 2순위 — behavior_events product_view 수 (04 §2) */
+    /** P-4 2순위 — behavior_events product_view 수 (04 §2). 1순위와 같은 이유로 품절 제외 */
     @Query(value = """
             SELECT be.product_id FROM behavior_events be
-            JOIN product p ON p.id = be.product_id AND p.status = 'ON_SALE'
+            JOIN product p ON p.id = be.product_id AND p.status = 'ON_SALE' AND p.stock_quantity > 0
             WHERE be.event_type = 'product_view' AND be.created_at >= :since
               AND be.product_id NOT IN (:excludedIds)
             GROUP BY be.product_id
@@ -198,10 +198,10 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                      @Param("q") String q,
                                      Pageable pageable);
 
-    /** P-4 3순위 — 최신순 채움 (04 §2) */
+    /** P-4 3순위 — 최신순 채움 (04 §2). 1순위와 같은 이유로 품절 제외 */
     @Query(value = """
             SELECT p.id FROM product p
-            WHERE p.status = 'ON_SALE' AND p.id NOT IN (:excludedIds)
+            WHERE p.status = 'ON_SALE' AND p.stock_quantity > 0 AND p.id NOT IN (:excludedIds)
             ORDER BY p.id DESC
             LIMIT :limit
             """, nativeQuery = true)
