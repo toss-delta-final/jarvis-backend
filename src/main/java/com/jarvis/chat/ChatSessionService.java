@@ -4,6 +4,7 @@ import com.jarvis.chat.dto.ChatSessionResponse;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -93,6 +94,22 @@ public class ChatSessionService {
             log.warn("채팅 세션 정리 실패 — TTL 소멸에 위임. identity={}:{}, reason={}",
                     identity.subType(), identity.sub(), reason, e);
         }
+    }
+
+    /**
+     * 세션에 기록된 신원 조회 (I-21이 추천 목록에 소유자를 박기 위해 사용 — 노션 CH-5 소유자 검증).
+     * 세션 키 형식을 아는 건 이 클래스뿐이라 파싱도 여기 둔다. 만료·미존재면 empty.
+     */
+    public Optional<ChatIdentity> findIdentity(String sessionId) {
+        if (sessionId == null) {
+            return Optional.empty();
+        }
+        String value = redisTemplate.opsForValue().get(sessionKey(sessionId));
+        if (value == null) {
+            return Optional.empty();
+        }
+        String[] parts = value.split("\\" + DELIMITER);
+        return Optional.of(new ChatIdentity(parts[0], parts[1]));
     }
 
     /** 로그아웃 등 종료 트리거 — 활성 세션이 있으면 삭제 + I-20 통지 (05 §2-1) */

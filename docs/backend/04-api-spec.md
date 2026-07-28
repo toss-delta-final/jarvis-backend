@@ -107,7 +107,7 @@
 | CH-1b | POST | /api/chat/tickets | 🔓(게스트 허용) | **스트림 티켓만 재발급**(세션은 유지). body: sessionId — 매 메시지 전 또는 티켓 만료 401 시 호출. **소유권 검증**: 세션 발급 시 신원(회원 id/guest_id)과 재발급 요청 신원이 다르면 403 `SESSION_FORBIDDEN`(sessionId만 알아도 남의 세션 티켓을 못 받게 — I-20과 동일 규칙, 2026-07-17). 세션 만료·없음이면 404 `SESSION_NOT_FOUND` → FE는 CH-1로 새 세션 발급 |
 | ~~CH-2~~ | ~~POST~~ | ~~/api/chat~~ | — | **폐기(직결)** — 추천 챗봇 메시지·SSE는 FE가 `POST {LLM_SSE_URL}/chat`(`Authorization: Bearer <티켓>`)로 FastAPI에 직접(05 §1-1). Spring 경유 아님. 게스트 무제한·개인화 미적용은 유지 |
 | ~~CH-3~~ | ~~POST~~ | ~~/api/chat/cs~~ | — | **폐기(직결)** — CS 챗봇도 동일 직결(`channel:CS` 티켓). 비로그인은 일반 안내만(주문 질문 시 로그인 유도는 LLM 측). 단, 직결 전환 후 문의 챗봇 자체의 폐지/유지 여부는 **OPEN(LLM 확인 중)** |
-| CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **추천 목록 조회 (확정 2026-07-18)** — FE가 SSE `products.ready(listId)` 수신 후 호출. I-21 콜백으로 저장된 Top5(Redis TTL 10분)에 BE가 카드 완결 필드 + **추천 카드용 `reason`**(I-21 reasons echo, 없으면 null)을 부착해 반환(순서 = 콜백 저장 순서, HIDDEN·품절 드롭). **I-21과 쌍**, P-7 대체 완료(2026-07-28 폐기) |
+| CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **추천 목록 조회 (확정 2026-07-18)** — FE가 SSE `products.ready(listId)` 수신 후 호출. I-21 콜백으로 저장된 Top5(Redis TTL 10분)에 BE가 카드 완결 필드 + **추천 카드용 `reason`**(I-21 reasons echo, 없으면 null)을 부착해 반환(순서 = 콜백 저장 순서, HIDDEN·품절 드롭). **I-21과 쌍**, P-7 대체 완료(2026-07-28 폐기). **소유자 검증**: I-21이 `sessionId`로 세션 신원을 읽어 목록에 owner를 박고, 조회 신원(회원 AT / `guest_id` 쿠키)이 다르면 403이 아니라 **404**로 존재를 은닉한다 — `listId`가 사실상 bearer 키라서(게스트 허용 공개 조회) CH-1b 소유권 규칙을 조회에도 적용. 콜백 시점에 세션이 이미 없으면 owner를 못 남기며 그 목록은 아무도 못 읽는다(fail-closed, I-21은 계약대로 200) |
 
 - 티켓 만료(401) 시 재발급은 **CH-1b**(세션 유지) → 1회 재시도. 세션까지 만료/없음(404 `SESSION_NOT_FOUND`)이면 CH-1로 새 세션. 티켓 발급 앞단에 보조 rate limit 가능(05 §3).
 
