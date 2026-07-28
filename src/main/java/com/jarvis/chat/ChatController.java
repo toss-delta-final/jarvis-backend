@@ -81,10 +81,18 @@ public class ChatController {
         return ApiResponse.success(chatSessionService.reissueTicket(identity, request.sessionId()));
     }
 
-    /** CH-5 — FE가 SSE products.ready{listId} 수신 후 호출 (05 §1-2-1) */
+    /**
+     * CH-5 — FE가 SSE products.ready{listId} 수신 후 호출 (05 §1-2-1).
+     * 신원 해석은 CH-1b와 동일(회원 AT 우선, 없으면 guest_id 쿠키) — listId만으로는 못 읽는다(노션 CH-5)
+     */
     @GetMapping("/lists/{listId}")
-    public ApiResponse<RecommendationListResponse> getList(@PathVariable String listId) {
-        return ApiResponse.success(recommendationListService.getList(listId));
+    public ApiResponse<RecommendationListResponse> getList(@PathVariable String listId,
+                                                           @AuthenticationPrincipal AuthUser authUser,
+                                                           HttpServletRequest httpRequest) {
+        ChatIdentity identity = authUser != null
+                ? ChatIdentity.member(authUser.memberId())
+                : guestCookieManager.resolve(httpRequest).map(ChatIdentity::guest).orElse(null);
+        return ApiResponse.success(recommendationListService.getList(listId, identity));
     }
 
     /** 게스트 신원 — 쿠키·행 없으면 발급이 곧 신원 확정 (03 D3 "발급 = 쿠키 세팅 + 행 INSERT") */

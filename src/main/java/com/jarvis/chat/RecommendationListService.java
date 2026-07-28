@@ -38,8 +38,15 @@ public class RecommendationListService {
     private final ProductService productService;
     private final ChatProperties chatProperties;
     private final ObjectMapper objectMapper;
+    private final ChatSessionService chatSessionService;
 
-    /** I-21 — sessionId는 세션 계약상 UUID, listId는 안전 문자열이면 형식 무관 */
+    /**
+     * I-21 — sessionId는 세션 계약상 UUID, listId는 안전 문자열이면 형식 무관.
+     * 세션에 기록된 신원을 목록에 함께 박아 CH-5 조회 시 소유자를 검증한다(노션 CH-5).
+     * 세션이 이미 사라졌으면 owner를 남기지 못하며, 그 목록은 CH-5가 읽지 못한다(fail-closed).
+     * 그래도 저장·200은 유지 — 여기서 실패시키면 FastAPI가 products.ready를 못 쏘게 되고(05 §1-2-1),
+     * 세션이 없다는 건 정당한 독자도 이미 없다는 뜻이라 목록을 못 읽는 게 손해가 아니다.
+     */
     public void store(String sessionId, String listId, List<Long> productIds,
                       List<RecommendationCallbackRequest.Reason> reasons) {
         requireUuid(sessionId);
@@ -53,18 +60,24 @@ public class RecommendationListService {
                 .filter(r -> r.productId() != null && r.reason() != null)
                 .collect(Collectors.toMap(RecommendationCallbackRequest.Reason::productId,
                         RecommendationCallbackRequest.Reason::reason, (a, b) -> b));
+        String owner = chatSessionService.findIdentity(sessionId).map(RecommendationListService::ownerKey)
+                .orElse(null);
         redisTemplate.opsForValue().set(LIST_KEY_PREFIX + listId,
-                toJson(new StoredList(productIds, reasonById)),
+                toJson(new StoredList(productIds, reasonById, owner)),
                 Duration.ofMinutes(chatProperties.sessionTtlMinutes()));
     }
 
-    /** CH-5 — 저장 순서 보존 + 카드에 reason echo, HIDDEN·품절 드롭 (05 §1-2-1) */
-    public RecommendationListResponse getList(String listId) {
+    /**
+     * CH-5 — 저장 순서 보존 + 카드에 reason echo, HIDDEN·품절 드롭 (05 §1-2-1).
+     * 소유자 불일치는 403이 아니라 404 — listId의 존재 여부를 노출하지 않는다(노션 CH-5).
+     */
+    public RecommendationListResponse getList(String listId, ChatIdentity requester) {
         String value = redisTemplate.opsForValue().get(LIST_KEY_PREFIX + listId);
         if (value == null) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
         StoredList stored = fromJson(value);
+        requireOwner(stored, requester);
         Map<Long, ProductCardResponse> cards = productService.getCardsByIds(stored.productIds())
                 .stream().collect(Collectors.toMap(ProductCardResponse::productId, Function.identity()));
         List<RecommendedCardResponse> items = stored.productIds().stream()
@@ -99,7 +112,22 @@ public class RecommendationListService {
         }
     }
 
-    /** Redis 저장 형식 — ids 순서가 렌더 순서, reasons는 productId 키잉 */
-    record StoredList(List<Long> productIds, Map<Long, String> reasons) {
+    /**
+     * 소유자 검증 — 목록에 owner가 없으면(세션이 이미 사라진 뒤 도착한 콜백) 아무도 못 읽는다.
+     * 불일치·신원 없음도 모두 404로 수렴시켜 listId 존재 여부를 노출하지 않는다.
+     */
+    private static void requireOwner(StoredList stored, ChatIdentity requester) {
+        if (stored.owner() == null || requester == null
+                || !stored.owner().equals(ownerKey(requester))) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+    }
+
+    private static String ownerKey(ChatIdentity identity) {
+        return identity.subType() + ":" + identity.sub();
+    }
+
+    /** Redis 저장 형식 — ids 순서가 렌더 순서, reasons는 productId 키잉, owner는 CH-5 소유자 검증용 */
+    record StoredList(List<Long> productIds, Map<Long, String> reasons, String owner) {
     }
 }
