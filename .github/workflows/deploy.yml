@@ -109,7 +109,16 @@ jobs:
             ENV_PREV=/home/ubuntu/jarvis-backend.env.prev
             LAST_GOOD=/home/ubuntu/jarvis-backend.last-good
 
-            # 1. 기존 env 파일 백업 후 새 시크릿 기록
+            # 1. 롤백 대상 확보 — 교체 전에 현재 실행 중인 이미지를 기억
+            PREV_IMAGE=$(docker inspect -f '{{.Config.Image}}' jarvis-backend 2>/dev/null || true)
+
+            # 2. 기존 컨테이너 유지한 채 새 이미지 먼저 받아 대기
+            #    여기서 실패하면 아래로 진행하지 않으므로 서비스는 그대로 유지됨
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.IMAGE }}:${{ github.sha }}
+
+            # 3. env 파일 백업 후 새 시크릿 기록
+            #    pull 성공 후에 수행 — pull 이 실패했을 때 기존 env 를 건드리지 않기 위함
             #    백업 이유: 실패 원인이 잘못된 시크릿 값일 수 있으므로
             #    이미지만 되돌리면 옛 이미지도 깨진 env 를 물려받아 똑같이 죽음
             umask 077
@@ -131,15 +140,10 @@ jobs:
             STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
             ENVEOF
 
-            # 2. 롤백 대상 확보 — 교체 전에 현재 실행 중인 이미지를 기억
-            PREV_IMAGE=$(docker inspect -f '{{.Config.Image}}' jarvis-backend 2>/dev/null || true)
-
-            # 3. 기존 컨테이너 유지한 채 새 이미지 먼저 받아 대기
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker pull ${{ env.IMAGE }}:${{ github.sha }}
-
             # 4. 교체 — host 네트워크 + 8080 단일 포트라 동시 실행 불가
             #    (t3.micro RAM 1GB 에서 JVM 2개 동시 기동도 불가)
+            #    docker run 뒤의 || true 는 필수: 기동 명령 자체가 실패해도
+            #    스크립트를 중단시키지 않고 아래 롤백 경로로 흘려보내기 위함
             docker stop jarvis-backend || true
             docker rm -f jarvis-backend || true
             docker run -d \
@@ -149,7 +153,7 @@ jobs:
               --log-opt max-size=10m \
               --log-opt max-file=3 \
               --env-file "$ENV_FILE" \
-              ${{ env.IMAGE }}:${{ github.sha }}
+              ${{ env.IMAGE }}:${{ github.sha }} || true
 
             # 5. 기동 확인 — 2초 간격 최대 60회(약 2분)
             OK=0
@@ -186,7 +190,7 @@ jobs:
                 --log-opt max-size=10m \
                 --log-opt max-file=3 \
                 --env-file "$ENV_FILE" \
-                "$ROLLBACK_IMAGE"
+                "$ROLLBACK_IMAGE" || true
 
               # 롤백이 실제로 살아났는지 검증 — 최대 90초
               RB=0
