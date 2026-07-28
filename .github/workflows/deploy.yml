@@ -54,22 +54,50 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max   # 레이어 캐시로 빌드 가속
 
-  # 3단계: 자동 배포 (CD) — 1호기 완료 후 2호기 순차 진행
+  # 3단계: 무중단 배포 (CD)
+  #   대상그룹에서 뺀 뒤 교체하고, 정상 확인 후 다시 넣음
+  #   max-parallel: 1 이라 항상 최소 한 대는 대상그룹에 남아 트래픽을 받음
   deploy:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       packages: read   # EC2에서 GHCR pull 시 필요
     strategy:
-      max-parallel: 1   # 동시 배포 금지 — 최소 1대는 항상 살아있게
+      max-parallel: 1   # 동시 배포 금지 — 두 대가 동시에 빠지면 서비스 중단
       fail-fast: true   # 1호기 실패 시 2호기 중단
       matrix:
-        server: [EC2_HOST, EC2_HOST_2]
+        include:
+          - host: EC2_HOST
+            instance: i-07d7478729bc460da   # jarvis-backend-server
+          - host: EC2_HOST_2
+            instance: i-0605ad8b59fc4b03e   # jarvis-backend-server2
+    env:
+      # 인스턴스를 재생성하면 ID가 바뀌므로 matrix 값도 함께 수정해야 함
+      TG_ARN: arn:aws:elasticloadbalancing:ap-northeast-2:049705857330:targetgroup/jarvis-nginx-tg/d471e3090ff3c8b1
     steps:
+      - name: AWS 자격증명 설정
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2
+
+      # 이 서버로 오는 신규 요청을 끊고, 처리 중이던 요청이 끝날 때까지 대기
+      # 등록 취소 지연 30초 설정에 따라 보통 30~60초 소요
+      - name: 대상그룹에서 등록 취소
+        run: |
+          aws elbv2 deregister-targets \
+            --target-group-arn "$TG_ARN" \
+            --targets Id=${{ matrix.instance }}
+          aws elbv2 wait target-deregistered \
+            --target-group-arn "$TG_ARN" \
+            --targets Id=${{ matrix.instance }}
+
+      # 이 시점부터 이 서버에는 트래픽이 없음 — 마음껏 죽였다 살려도 됨
       - name: EC2 배포 및 기동 검증
         uses: appleboy/ssh-action@v1.0.3   # 버전 고정 — @master는 예고 없이 깨짐
         with:
-          host: ${{ secrets[matrix.server] }}
+          host: ${{ secrets[matrix.host] }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 15m
@@ -82,7 +110,7 @@ jobs:
             LAST_GOOD=/home/ubuntu/jarvis-backend.last-good
 
             # 1. 기존 env 파일 백업 후 새 시크릿 기록
-            #    백업하는 이유: 배포 실패 원인이 잘못된 시크릿 값일 수 있으므로
+            #    백업 이유: 실패 원인이 잘못된 시크릿 값일 수 있으므로
             #    이미지만 되돌리면 옛 이미지도 깨진 env 를 물려받아 똑같이 죽음
             umask 077
             if [ -f "$ENV_FILE" ]; then
@@ -131,12 +159,11 @@ jobs:
               sleep 2
             done
 
-            # 6. 실패 시 롤백 — 이미지와 env 파일을 함께 되돌리고, 복구 여부까지 검증
+            # 6. 실패 시 롤백 — 이미지와 env 파일을 함께 되돌리고 복구 여부까지 검증
             if [ "$OK" != "1" ]; then
               docker logs --tail 100 jarvis-backend || true
               docker rm -f jarvis-backend || true
 
-              # 롤백 대상 결정: 직전 실행 이미지 → 없으면 마지막 정상 기동 이미지
               ROLLBACK_IMAGE="$PREV_IMAGE"
               if [ -z "$ROLLBACK_IMAGE" ] && [ -f "$LAST_GOOD" ]; then
                 ROLLBACK_IMAGE=$(cat "$LAST_GOOD")
@@ -148,7 +175,6 @@ jobs:
                 exit 1
               fi
 
-              # env 파일도 함께 원복
               if [ -f "$ENV_PREV" ]; then
                 cp "$ENV_PREV" "$ENV_FILE"
               fi
@@ -183,3 +209,23 @@ jobs:
 
             # 8. 48시간 이상 지난 미사용 이미지 정리 (sha 태그 누적 방지)
             docker image prune -af --filter "until=48h"
+
+      # 정상 기동이 확인된 뒤에만 트래픽을 다시 받기 시작
+      # 정상 임계값 2 × 간격 10초 = 약 20~30초 소요
+      - name: 대상그룹에 재등록
+        run: |
+          aws elbv2 register-targets \
+            --target-group-arn "$TG_ARN" \
+            --targets Id=${{ matrix.instance }}
+          aws elbv2 wait target-in-service \
+            --target-group-arn "$TG_ARN" \
+            --targets Id=${{ matrix.instance }}
+
+      # 배포 실패 또는 워크플로우 취소 시 인스턴스가 대상그룹 밖에 방치되는 것을 방지
+      # 롤백으로 살아났으면 트래픽을 다시 받고, 죽어있으면 상태검사가 20초 내에 걸러냄
+      - name: 실패·취소 시 재등록 보장
+        if: failure() || cancelled()
+        run: |
+          aws elbv2 register-targets \
+            --target-group-arn "$TG_ARN" \
+            --targets Id=${{ matrix.instance }}
