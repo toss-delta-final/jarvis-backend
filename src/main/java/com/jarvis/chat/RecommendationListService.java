@@ -85,7 +85,10 @@ public class RecommendationListService {
                 .filter(card -> card != null && card.purchasable())
                 .map(card -> RecommendedCardResponse.of(card, stored.reasons().get(card.productId())))
                 .toList();
-        return new RecommendationListResponse(listId, items);
+        // 드롭 = 콜백에 실렸으나 지금은 못 파는 것(품절·HIDDEN) + 그 사이 사라진 상품.
+        // I-1이 후보 단계에서 이미 품절을 걸러내므로, 여기 잡히는 건 추천 이후 재고가 소진된 경우다.
+        return new RecommendationListResponse(listId, items,
+                stored.productIds().size() - items.size());
     }
 
     private String toJson(StoredList stored) {

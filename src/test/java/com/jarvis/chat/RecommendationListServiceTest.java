@@ -107,6 +107,36 @@ class RecommendationListServiceTest {
                 .containsExactly(3L, 2L);
         assertThat(response.items().get(0).reason()).isEqualTo("가성비가 좋아요");
         assertThat(response.items().get(1).reason()).isNull();
+        assertThat(response.itemsDropped()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CH-5 — 전부 품절이어도 404가 아니라 200 + 빈 items + itemsDropped")
+    void getListReportsAllDropped() throws Exception {
+        givenStored(new RecommendationListService.StoredList(
+                List.of(1L, 2L), java.util.Map.of(), OWNER_KEY));
+        when(productService.getCardsByIds(List.of(1L, 2L)))
+                .thenReturn(List.of(card(1L, false), card(2L, false)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, OWNER);
+
+        assertThat(response.items()).isEmpty();
+        assertThat(response.itemsDropped()).isEqualTo(2);
+    }
+
+    // 카드 조회 자체가 못 찾은 상품(삭제 등)도 드롭 수에 포함돼야 한다 — purchasable 필터만 세면 어긋난다
+    @Test
+    @DisplayName("CH-5 — 카드가 조회되지 않은 상품도 itemsDropped에 포함")
+    void getListCountsMissingCardsAsDropped() throws Exception {
+        givenStored(new RecommendationListService.StoredList(
+                List.of(1L, 2L), java.util.Map.of(), OWNER_KEY));
+        when(productService.getCardsByIds(List.of(1L, 2L))).thenReturn(List.of(card(1L, true)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, OWNER);
+
+        assertThat(response.items()).extracting(RecommendedCardResponse::productId)
+                .containsExactly(1L);
+        assertThat(response.itemsDropped()).isEqualTo(1);
     }
 
     @Test
