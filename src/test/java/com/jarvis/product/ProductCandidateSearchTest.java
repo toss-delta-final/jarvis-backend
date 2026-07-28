@@ -1,7 +1,6 @@
 package com.jarvis.product;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
@@ -14,8 +13,6 @@ import static org.mockito.Mockito.withSettings;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.brand.BrandService;
 import com.jarvis.category.CategoryService;
-import com.jarvis.global.response.BusinessException;
-import com.jarvis.global.response.ErrorCode;
 import com.jarvis.product.dto.CandidateRow;
 import com.jarvis.product.dto.ProductCandidateResponse;
 import com.jarvis.review.ReviewService;
@@ -31,7 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.quality.Strictness;
 
-/** I-1 후보 조회 + P-7 공개 카드 (05 §I-1, 04 §2) */
+/** I-1 후보 조회 (05 §I-1) */
 @ExtendWith(MockitoExtension.class)
 class ProductCandidateSearchTest {
 
@@ -157,17 +154,5 @@ class ProductCandidateSearchTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).categoryName()).isEqualTo("티셔츠");
         assertThat(result.get(0).brandName()).isEqualTo("브랜드");
-    }
-
-    @Test
-    @DisplayName("P-7 — ids 상한 20 초과·빈 목록은 400")
-    void publicCardsValidatesIds() {
-        assertThatThrownBy(() -> productService.getPublicCards(
-                LongStream.rangeClosed(1, 21).boxed().toList()))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
-        assertThatThrownBy(() -> productService.getPublicCards(List.of()))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
     }
 }

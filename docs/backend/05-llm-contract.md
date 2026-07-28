@@ -153,7 +153,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **2026-07-27 개정 — `size` 삭제 + 후보 수 상한 폐지**: 정형조건에 일치하는 상품을 **전부** 반환한다(§1-2-1 비용상한 (a) 폐기). 판매량순 컷이 의미 리랭킹과 직교해 정답 후보를 잘라내던 문제 때문 — 후보 선별은 정형조건이, 순위는 FastAPI 리랭킹이 담당한다. **응답 순서는 보장하지 않는다**(정렬 제거 — 매칭 전체에 filesort를 거는 비용만 남고, 순서를 남기면 LLM이 순위 신호로 오해할 여지가 생긴다). 정형조건이 하나도 없는 요청은 **LLM 단에서 차단**하므로 BE는 별도 가드를 두지 않는다.
 - **`brandName` 부분 매칭**: 존재하지 않는 브랜드명은 무시하고 나머지로 검색, **전부 미존재일 때만 0건** — 브랜드 하나 잘못 넣었다고 추천 전체가 죽지 않게 한다. (`categoryName`은 여전히 단건.)
 - `categoryName` 해석(02 D20 — 2단 계층): **대분류명이면 하위 소분류 전체를 포함해 검색**, 소분류명이면 해당 소분류만. 메인 해시태그가 대분류(#패션)라 LLM이 대분류명을 보내는 게 기본 경로 — 대분류 지정이 0건이 되는 일이 없어야 한다
-- 응답 item: `productId, name, summary, attributes(JSON), categoryName, brandName, price, rating, reviewCount`. **`price`·`rating`·`reviewCount`는 리랭킹 계산 입력**이라 포함한다(2026-07-27 합의 — "5만원 이내", "평점 몇 점 이상" 조건의 top-k 계산). ⚠️ 나머지 display 필드(`originalPrice`·`imageUrl`·`options`)는 계속 제거 — 카드 조회(CH-5 — 스키마 확정 전까지 P-7 유지)로 이동. FastAPI는 여기서 받은 `productId`로 자기 벡터DB의 embedding을 찾아 의미 리랭킹한다.
+- 응답 item: `productId, name, summary, attributes(JSON), categoryName, brandName, price, rating, reviewCount`. **`price`·`rating`·`reviewCount`는 리랭킹 계산 입력**이라 포함한다(2026-07-27 합의 — "5만원 이내", "평점 몇 점 이상" 조건의 top-k 계산). ⚠️ 나머지 display 필드(`originalPrice`·`imageUrl`·`options`)는 계속 제거 — 카드 조회(CH-5)로 이동. FastAPI는 여기서 받은 `productId`로 자기 벡터DB의 embedding을 찾아 의미 리랭킹한다.
 - `rating`·`reviewCount`는 review 집계값(02 D9 — 컬럼으로 저장하지 않음). **리뷰 0건이면 `rating: 0.0`, `reviewCount: 0`**(§I-17과 동일 규약). 상한이 없어 id `IN` 배치 집계를 쓸 수 없으므로 **검색 쿼리에서 `left join review` + `group by`로 함께 집계**한다 — `AVG()`는 0행에서 NULL을 반환하므로 0으로 나누는 경로는 만들지 않는다.
 - attributes까지 반환하는 이유: LLM이 "린넨 소재만" 같은 세밀 조건을 후처리 필터링할 수 있게(서버는 후보만 좁힘 — 02 D7). 카테고리별 속성 축의 정의는 `category.attribute_schema`(02 D11) — 시드 데이터·벡터DB attributes·LLM 프롬프트가 같은 축을 공유한다.
 
@@ -263,7 +263,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - [ ] **라운드1 LIMIT·top-K 기준치**(§1-2-1): I-1 후보 상한(기본 50/최대 200 제안)과 LLM 투입 top-K(20~30 제안)의 실측 튜닝
 - [ ] **프로필 추출 저장 시점** (세션 만료 시? 매 N턴?) — 기능 정의에도 미확정
 - [ ] 카테고리 진입을 message 관성으로 갈지 전용 필드로 갈지
-- [ ] P-5 개인화 추천(메인) API: `GET {LLM_BASE_URL}/recommendations?userId=` 형태 제안 — 응답이 상품 ID 목록이면 BE가 카드 데이터 조립(P-7과 동형). BE 측 타임아웃 연결 2s/응답 3s(04 P-5, 초과 시 인기 상품 fallback)
+- [ ] P-5 개인화 추천(메인) API: `GET {LLM_BASE_URL}/recommendations?userId=` 형태 제안 — 응답이 상품 ID 목록이면 BE가 카드 데이터 조립(P-4·CH-5 카드와 동형). BE 측 타임아웃 연결 2s/응답 3s(04 P-5, 초과 시 인기 상품 fallback)
 - [ ] 채팅 남용 방어(rate limit) 기준치 — 소유는 FastAPI로 확정(§3, 직결 공개 진입점), 수치만 OPEN
 - [ ] 상세페이지 연관 추천 2종(함께 구매/대체)의 소스: LLM 생성 vs BE 규칙 기반(같은 카테고리 인기순) — MVP는 BE 규칙 기반 제안
 - [ ] **confirm 전송 형식**(§1-3): 전용 필드 `{action:"confirm", draftId}` vs 특수 메시지 — LLM 확정 대기 (draft 이벤트 필드 자체는 §1-3으로 확정)

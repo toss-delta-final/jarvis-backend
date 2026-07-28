@@ -3,6 +3,7 @@
 > 기준: 「기능 정의 - 이소희」의 페이지별 기능에서 역산. 응답은 전부 03 문서의 envelope(`{success, data|error}`), 인증 규약도 03을 따른다.
 > 표기: 🔓 인증 불필요 / 🔑 로그인 필요 / 🏪 SELLER / 🛡 ADMIN / ⚙ internal(서비스 토큰). `{}`는 path variable.
 > LLM 콜백(⚙ `/internal/*`)과 채팅 직결(SSE·티켓)의 상세 스키마는 [05 LLM 연동 계약](05-llm-contract.md)이 원본이고 여기서는 목록만 둔다.
+> **2026-07-28 P-7 폐기(팀 결정)**: 추천 카드 하이드레이션 **P-7 `GET /api/products/cards?ids=`는 폐지** — CH-5(`GET /api/chat/lists/{listId}`) 확정·구현으로 대체 완료, FE 전환도 끝나 실사용처가 없다(노션 「📡 API 명세서」에서도 행 삭제됨). "범용 다건 카드 조회로 유지" 문구도 함께 폐기 — 필요해지면 새 번호로 다시 정의한다. 구현 제거: `ProductController.cards`·`ProductService.getPublicCards`. 카드 조립 공용 로직(`getCardsByIds`)은 P-4·P-6·M-4·M-7·CH-5가 계속 사용.
 > **2026-07-21 S-5 폐기(팀 결정)**: 판매자 상품 **직접 수정(S-5 `PATCH /api/seller/products/{id}`)은 미채택** — 상품 수정은 챗봇 경로(I-11, HITL confirm)만. 판매자 직접 경로는 조회(S-1 대시보드·S-2 주문·S-3 상품목록)만 남긴다(백엔드→프론트 정보 표시). 이전 "S-5·I-11 병존 확정(07-17)"은 이 결정으로 폐기. 아래 표·05 §1-3의 병존 문구도 정정.
 
 > **2026-07-18 응답 스키마 정합화(팀 결정: 노션 「📡 API 명세서」가 응답 예시의 기준)** — FE 파싱을 깨는 차이를 노션에 맞춰 일괄 수정:
@@ -34,14 +35,13 @@
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
 | P-1 | GET | /api/categories | 🔓 | 카테고리 트리(대분류+소분류, 02 D20). 메인 해시태그는 대분류만 사용. 카테고리 아이콘은 **FE 정적 매핑**(BE 미제공 — 07-17 확정) |
-| P-2 | GET | /api/products/{id} | 🔓 | 상품 상세: 대표 이미지(단일 — 02 D14), 옵션 목록, 정가/판매가, summary/attributes/description, 브랜드 요약, 평점 통계(평균·개수) — 조회 이벤트는 서버 적재 없음(FE가 E-1 `product_view`로 배치 전송, §8 — 이중 집계 방지). **HIDDEN도 404가 아니라 응답**(`purchasable=false`) — 장바구니가 HIDDEN 아이템을 유지(C-1)하므로 상세 링크가 죽으면 안 됨(07-17 구현 확정). 목록(P-4/P-6/P-7)에서는 제외 |
+| P-2 | GET | /api/products/{id} | 🔓 | 상품 상세: 대표 이미지(단일 — 02 D14), 옵션 목록, 정가/판매가, summary/attributes/description, 브랜드 요약, 평점 통계(평균·개수) — 조회 이벤트는 서버 적재 없음(FE가 E-1 `product_view`로 배치 전송, §8 — 이중 집계 방지). **HIDDEN도 404가 아니라 응답**(`purchasable=false`) — 장바구니가 HIDDEN 아이템을 유지(C-1)하므로 상세 링크가 죽으면 안 됨(07-17 구현 확정). 목록(P-4/P-6/CH-5)에서는 제외 |
 | P-3 | GET | /api/products/{id}/reviews | 🔓 | 후기 목록. query: page, size, sort(latest\|rating) — status=VISIBLE만. **page=0 응답에만 `distribution{5..1}`(별점 분포) 포함**(리뷰 0개면 0값 채운 객체), page≥1은 생략 — FE가 0페이지 값 재사용 (07-17 FE) |
 | P-4 | GET | /api/products/popular | 🔓 | 인기 상품 N개(기본 12): 최근 7일 판매수(order_item×PAID 주문 집계, 02 §4) → 부족하면 behavior_events `product_view` 수 → 그래도 부족하면 최신순으로 채움 (비로그인 메인·신규 회원 fallback 공용) |
-| P-5 | GET | /api/products/recommended | 🔑 | "OO님을 위한 추천". LLM 프로필 기반 — 내부적으로 FastAPI 추천 API 호출(05 문서). **타임아웃 연결 2s/응답 3s**(채팅용과 별도 — 메인 렌더 블로킹 방지), 실패·타임아웃·프로필 없음 시 P-4로 fallback. FastAPI가 상품 ID 목록을 주면 BE가 카드 조립(P-7과 동형) |
+| P-5 | GET | /api/products/recommended | 🔑 | "OO님을 위한 추천". LLM 프로필 기반 — 내부적으로 FastAPI 추천 API 호출(05 문서). **타임아웃 연결 2s/응답 3s**(채팅용과 별도 — 메인 렌더 블로킹 방지), 실패·타임아웃·프로필 없음 시 P-4로 fallback. FastAPI가 상품 ID 목록을 주면 BE가 카드 조립(P-4·CH-5 카드와 동형) |
 | P-6 | GET | /api/brands/{id} | 🔓 | 브랜드 소개 + 상품 목록. query: category?, sort(popular\|latest\|price_asc\|price_desc), page, size. 응답에 **`categories`(해당 브랜드 판매 중 상품의 소분류 목록)** 포함 — 브랜드홈 필터 축(02 D20)을 FE가 페이지 목록만으로는 못 만들어서(07-17 구현 확정). popular 정렬 = 표시 판매량(base_sales_count + order_item×PAID 집계 — 02 D18) |
-| P-7 | GET | /api/products/cards?ids=1,2,3 | 🔓(게스트 허용) | **추천 카드 하이드레이션 — CH-5(추천 목록 조회)로 대체 예정(폐지 예고)**: SSE `products` 이벤트가 `products.ready(listId)`로 바뀌며 추천 카드 조회는 CH-5로 이동(05 §1-2-1) — CH-5 스키마 확정(OPEN) 전까지, 그리고 범용 다건 카드 조회 용도로 유지. 응답 item: `productId, name, brandName, price, originalPrice, imageUrl, rating, reviewCount, purchasable`. **HIDDEN·품절은 드롭**(응답에서 제외 — Top5가 <5로 줄 수 있음, FastAPI가 넉넉히 골라 대비). ids 상한 20(다건 `id IN`, INT 검증). reason은 SSE 소유라 응답에 없음 — FE가 productId로 조인 |
+| ~~P-7~~ | ~~GET~~ | ~~/api/products/cards?ids=1,2,3~~ | — | **폐기(2026-07-28)** — 추천 카드 하이드레이션은 CH-5(`GET /api/chat/lists/{listId}`)로 완전 대체. 상세는 상단 결정 노트 참조. |
 
-- P-7은 **표시 데이터 전용**(주문·결제의 진실 아님 — 결제 금액 재계산은 O-1). 추천 외 범용 다건 카드 조회로도 재사용 가능.
 - P-2의 평점 통계는 review 테이블 실시간 집계(파생값 저장 금지).
 - 연관 추천 2종(함께 구매/대체 상품)은 상세 화면 요소지만 추천 로직이 LLM 소관이라 05 문서의 FastAPI 호출로 정의(BE는 프록시 GET `/api/products/{id}/related`).
 
@@ -86,7 +86,7 @@
 | M-1 | POST | /api/reviews | 🔑 | 후기 작성. body: orderItemId, rating(1~5), content — 자격 상태(DELIVERED/CONFIRMED — 교환 제거 확정, 01 §3) 위반 400 `REVIEW_NOT_ALLOWED`, 이미 작성한 아이템은 409 `REVIEW_ALREADY_EXISTS`(다른 *_ALREADY_*와 동일하게 CONFLICT로 분리 — Phase 4 구현 확정), 남의 아이템 404 |
 | M-2 | GET | /api/reviews/me | 🔑 | 내가 쓴 후기 목록 — **MVP 제외**(FE 화면 없음, 07-17. 스펙은 유지·구현 보류) |
 | M-3 | POST | /api/reviews/{id}/reports | 🔑 | 후기 신고. body: reason — 중복 신고 409 `REVIEW_REPORT_DUPLICATE`, 자기 후기 신고 400 `REVIEW_SELF_REPORT`(02 D29), 없는 후기 404 `REVIEW_NOT_FOUND` |
-| M-4 | GET | /api/wishlist | 🔑 | 찜 목록 — 카드 공통 모양(P-7 동형), 최근 찜 순. HIDDEN도 유지(`purchasable=false`) — 개인 목록은 장바구니(C-1)와 동일 원칙(Phase 4 구현 확정) |
+| M-4 | GET | /api/wishlist | 🔑 | 찜 목록 — 카드 공통 모양(P-4 동형), 최근 찜 순. HIDDEN도 유지(`purchasable=false`) — 개인 목록은 장바구니(C-1)와 동일 원칙(Phase 4 구현 확정) |
 | M-5 | POST | /api/wishlist | 🔑 | 찜 추가. body: productId — 중복 409 `WISHLIST_DUPLICATE` (찜 이벤트 적재 없음 — E-1 8종에 미포함) |
 | M-6 | DELETE | /api/wishlist/{productId} | 🔑 | 찜 해제 — 찜하지 않은 상품 404 `WISHLIST_NOT_FOUND` |
 | M-7 | GET | /api/products/recent | 🔑 | 최근 본 상품 (behavior_events `product_view` 기반, 중복 제거 최신 20개) — 카드 공통 모양, HIDDEN 유지(M-4와 동일 원칙) |
@@ -107,7 +107,7 @@
 | CH-1b | POST | /api/chat/tickets | 🔓(게스트 허용) | **스트림 티켓만 재발급**(세션은 유지). body: sessionId — 매 메시지 전 또는 티켓 만료 401 시 호출. **소유권 검증**: 세션 발급 시 신원(회원 id/guest_id)과 재발급 요청 신원이 다르면 403 `SESSION_FORBIDDEN`(sessionId만 알아도 남의 세션 티켓을 못 받게 — I-20과 동일 규칙, 2026-07-17). 세션 만료·없음이면 404 `SESSION_NOT_FOUND` → FE는 CH-1로 새 세션 발급 |
 | ~~CH-2~~ | ~~POST~~ | ~~/api/chat~~ | — | **폐기(직결)** — 추천 챗봇 메시지·SSE는 FE가 `POST {LLM_SSE_URL}/chat`(`Authorization: Bearer <티켓>`)로 FastAPI에 직접(05 §1-1). Spring 경유 아님. 게스트 무제한·개인화 미적용은 유지 |
 | ~~CH-3~~ | ~~POST~~ | ~~/api/chat/cs~~ | — | **폐기(직결)** — CS 챗봇도 동일 직결(`channel:CS` 티켓). 비로그인은 일반 안내만(주문 질문 시 로그인 유도는 LLM 측). 단, 직결 전환 후 문의 챗봇 자체의 폐지/유지 여부는 **OPEN(LLM 확인 중)** |
-| CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **추천 목록 조회 (확정 2026-07-18)** — FE가 SSE `products.ready(listId)` 수신 후 호출. I-21 콜백으로 저장된 Top5(Redis TTL 10분)에 BE가 카드 완결 필드 + **추천 카드용 `reason`**(I-21 reasons echo, 없으면 null)을 부착해 반환(순서 = 콜백 저장 순서, HIDDEN·품절 드롭). **I-21과 쌍**, P-7 대체 예정 |
+| CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **추천 목록 조회 (확정 2026-07-18)** — FE가 SSE `products.ready(listId)` 수신 후 호출. I-21 콜백으로 저장된 Top5(Redis TTL 10분)에 BE가 카드 완결 필드 + **추천 카드용 `reason`**(I-21 reasons echo, 없으면 null)을 부착해 반환(순서 = 콜백 저장 순서, HIDDEN·품절 드롭). **I-21과 쌍**, P-7 대체 완료(2026-07-28 폐기) |
 
 - 티켓 만료(401) 시 재발급은 **CH-1b**(세션 유지) → 1회 재시도. 세션까지 만료/없음(404 `SESSION_NOT_FOUND`)이면 CH-1로 새 세션. 티켓 발급 앞단에 보조 rate limit 가능(05 §3).
 
@@ -193,10 +193,10 @@
 ## 12. 미결(OPEN) — 구현 전 확정 필요
 
 - [x] ~~채팅 SSE 방식~~ — **FE↔FastAPI 직결 + RS256/JWKS 단명 티켓 확정(2026-07-16, 03 D5)**. CH-1이 세션+티켓 발급, CH-2/CH-3/구 S-4 SSE 프록시 폐기. 추천 카드는 P-7로 FE가 하이드레이션 *(2026-07-17: I-21 콜백 + CH-5 목록 조회로 대체 예정 — 아래 OPEN)*
-- [ ] P-5 개인화 추천의 응답 형태 — **상품 ID 목록 + BE 카드 조립(P-7 동형)으로 제안 확정 방향**(05 §4), FastAPI 응답 스키마만 LLM 팀 확정 대기
+- [ ] P-5 개인화 추천의 응답 형태 — **상품 ID 목록 + BE 카드 조립(P-4·CH-5 카드와 동형)으로 제안 확정 방향**(05 §4), FastAPI 응답 스키마만 LLM 팀 확정 대기
 - [x] ~~상품 상세 "바로 구매" 지원 여부~~ — **있음 확인(2026-07-10)**. O-1 body에 items[] 경로 추가로 반영(§4), 스키마 변경 없음
 - [x] ~~최근 본 상품 "개별 삭제(X)" 여부~~ — 기능 없음 확인(2026-07-10, 02 D29 종결)
-- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7 폐지는 FE 전환 후
+- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7은 FE 전환 완료로 폐지(2026-07-28 — 상단 결정 노트)
 - [ ] CH-3(CS 챗봇) 직결 전환 후 폐지/유지 — **OPEN(LLM 확인 중)**
 - [x] ~~I-13(행동 이벤트 조회/집계) 본문 명세~~ — **노션 재작성 확인·구현 완료(2026-07-18)**
 - [x] ~~I-17(벡터DB 동기화 배치 pull) 커서 방식·리뷰 포함 여부~~ — **확정(2026-07-23)**: 커서=Base64URL `(updatedAt,id)` keyset, status `ON_SALE|HIDDEN`, ON_SALE에 `rating`·`reviewCount`(조회 집계)·`attributes`(JSON object) 포함

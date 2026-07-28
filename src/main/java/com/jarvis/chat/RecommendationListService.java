@@ -30,7 +30,7 @@ import org.springframework.stereotype.Service;
 public class RecommendationListService {
 
     private static final String LIST_KEY_PREFIX = "chat:list:";
-    private static final int MAX_PRODUCT_IDS = 20; // P-7 ids 상한과 동일 (04 §2)
+    private static final int MAX_PRODUCT_IDS = 20; // 카드 다건 조회 상한 (04 §2)
     // listId는 FastAPI 생성 문자열(예: "list-4471") — Redis 키가 되므로 안전 문자만 허용(키 인젝션 차단)
     private static final Pattern LIST_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
 
@@ -58,7 +58,7 @@ public class RecommendationListService {
                 Duration.ofMinutes(chatProperties.sessionTtlMinutes()));
     }
 
-    /** CH-5 — 저장 순서 보존 + 카드에 reason echo, HIDDEN·품절 드롭(P-7과 동일 — 05 §1-2-1) */
+    /** CH-5 — 저장 순서 보존 + 카드에 reason echo, HIDDEN·품절 드롭 (05 §1-2-1) */
     public RecommendationListResponse getList(String listId) {
         String value = redisTemplate.opsForValue().get(LIST_KEY_PREFIX + listId);
         if (value == null) {

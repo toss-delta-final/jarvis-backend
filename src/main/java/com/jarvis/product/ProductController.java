@@ -3,11 +3,9 @@ package com.jarvis.product;
 import com.jarvis.global.auth.AuthUser;
 import com.jarvis.global.response.ApiResponse;
 import com.jarvis.product.dto.ProductCardListResponse;
-import com.jarvis.product.dto.ProductCardResponse;
 import com.jarvis.product.dto.ProductDetailResponse;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
@@ -17,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** P-2·P-4 (04 §2). P-5(추천)는 Phase 5, P-7(카드 하이드레이션)은 Phase 5 */
+/** P-2·P-4·M-7 (04 §2). P-5(추천)는 Phase 5 */
 @RestController
 @RequestMapping("/api/products")
 @RequiredArgsConstructor
@@ -34,15 +32,6 @@ public class ProductController {
     public ApiResponse<ProductCardListResponse> popular(
             @RequestParam(defaultValue = "12") @Min(1) @Max(50) int size) {
         return ApiResponse.success(new ProductCardListResponse(productService.getPopular(size)));
-    }
-
-    /**
-     * P-7 — 추천 카드 하이드레이션 (04 §2, CH-5 확정 시 폐지 예고 + 범용 다건 카드 조회로 유지).
-     * ids 상한 20, HIDDEN·품절 드롭. 표시 데이터 전용 — 결제 금액의 진실은 O-1 재계산.
-     */
-    @GetMapping("/cards")
-    public ApiResponse<List<ProductCardResponse>> cards(@RequestParam List<Long> ids) {
-        return ApiResponse.success(productService.getPublicCards(ids));
     }
 
     /** M-7 — 🔑 USER 가드 (SecurityConfig의 /api/products/recent 선행 매칭) */

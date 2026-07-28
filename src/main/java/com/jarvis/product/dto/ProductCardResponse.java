@@ -3,7 +3,7 @@ package com.jarvis.product.dto;
 import com.jarvis.product.Product;
 import com.jarvis.review.dto.RatingStats;
 
-/** 상품 카드 공통 모양 — P-4·P-6, P-7(Phase 5)과 동형 (04 §2) */
+/** 상품 카드 공통 모양 — P-4·P-6·M-4·M-7, CH-5와 동형 (04 §2) */
 public record ProductCardResponse(Long productId, String name, String brandName,
                                   int price, int originalPrice, String imageUrl,
                                   double rating, long reviewCount, boolean purchasable) {
