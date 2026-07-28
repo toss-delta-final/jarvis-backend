@@ -39,7 +39,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductService {
 
     private static final int POPULAR_DAYS = 7;
-    private static final int CARDS_MAX_IDS = 20; // P-7 ids 상한 (04 §2)
     private static final int SYNC_DEFAULT_LIMIT = 500; // I-17 기본 페이지 크기 (05 §I-17)
     private static final int SYNC_MAX_LIMIT = 500; // I-17 페이지 상한 (05 §I-17)
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul"); // 응답 타임스탬프 관례 (I-19와 동일)
@@ -53,7 +52,7 @@ public class ProductService {
 
     /**
      * P-2 — HIDDEN도 응답한다(purchasable=false): 장바구니가 HIDDEN 아이템을 유지(C-1)하므로
-     * 상세 링크가 404가 되면 안 됨. 목록(P-4/P-6/P-7)에서는 제외.
+     * 상세 링크가 404가 되면 안 됨. 목록(P-4/P-6/CH-5)에서는 제외.
      */
     public ProductDetailResponse getDetail(Long id) {
         Product product = getProduct(id);
@@ -182,7 +181,7 @@ public class ProductService {
 
     /**
      * 카드 다건 조회 — 입력 id 순서 보존. HIDDEN도 유지(purchasable=false) —
-     * 찜·최근 본 상품은 개인 목록이라 장바구니(C-1)와 같은 원칙, 공개 목록(P-4/P-6/P-7)과 다름.
+     * 찜·최근 본 상품은 개인 목록이라 장바구니(C-1)와 같은 원칙, 공개 목록(P-4/P-6/CH-5)과 다름.
      */
     public List<ProductCardResponse> getCardsByIds(List<Long> ids) {
         if (ids.isEmpty()) {
@@ -191,17 +190,6 @@ public class ProductService {
         Map<Long, Product> products = productRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(Product::getId, Function.identity()));
         return toCards(ids.stream().map(products::get).filter(java.util.Objects::nonNull).toList());
-    }
-
-    /**
-     * P-7 — 공개 카드 다건 조회: HIDDEN·품절 드롭(공개 목록 원칙 — 개인 목록용 getCardsByIds와 다름).
-     * ids 상한 20 (04 §2).
-     */
-    public List<ProductCardResponse> getPublicCards(List<Long> ids) {
-        if (ids == null || ids.isEmpty() || ids.size() > CARDS_MAX_IDS) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
-        }
-        return getCardsByIds(ids).stream().filter(ProductCardResponse::purchasable).toList();
     }
 
     /** P-6 브랜드홈 필터 축 — 해당 브랜드 판매 중 상품의 소분류 (02 D20) */
