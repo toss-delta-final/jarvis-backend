@@ -15,16 +15,21 @@ JARVIS 최종 프로젝트의 **백엔드 단독 repo** (Spring Boot). 프론트
 - 노션에서 뭔가 찾을 땐 **🏁 최종 프로젝트** 페이지에서 시작: https://app.notion.com/p/be45ca79037b821aa87401726b7ac97d
 - 핵심: **📡 API 명세서** (API 구현/변경 전 확인), **🧩 ADR 기록**, **🔧 트러블슈팅**, 기획서, 회의록, 일정.
 
-## Backend spec — read before implementing
+## Contract hierarchy — 무엇이 기준이고 무엇이 따라가는가
+
+1. **불변 기준 (임의 변경 금지)**: 노션 **📡 API 명세서**와 **ERD**(`docs/backend/schema.sql`). 작업 결과 이 둘을 고쳐야 한다는
+   결론이 나오면 **거기서 멈추고 사용자에게 보고**해 결정을 받는다. 먼저 고치고 통보하지 않는다.
+2. **정렬 대상**: repo 내부 문서(`docs/backend/` 01–06)는 위 기준에 맞춘다 — 어긋나면 **내부 문서를 고친다**.
+3. **코드**: 내부 스펙을 따른다. 코드가 스펙을 벗어나야 하면 스펙을 먼저 갱신(decision-log 방식)하고 코드를 고친다.
 
 - 백엔드 작업(구현/리뷰) 전에 `docs/backend/README.md`와 그것이 인덱싱하는 스펙 01–06을 읽는다.
-  스펙이 소스 오브 트루스: 코드가 벗어나야 하면 스펙을 먼저 갱신(decision-log 방식)하고 코드를 고친다.
 
 ## Git workflow — run automatically (details live in Skills)
 
-- **Starting** a new feature/fix → **`feature-workflow`** 스킬 실행(main 동기화 + 브랜치 생성)을 코드 작성 *전에*. main에 직접 커밋 금지.
+- **Starting** a new feature/fix → **`feature-workflow`** 스킬 실행. 코드 작성 *전에* **작업 계획 + 영향 범위(연쇄 영향 포함) 리스트업**을 먼저 내놓는다. main에 직접 커밋 금지.
 - **Finishing** a unit of work → **`ship-it`** 스킬 실행(pre-commit 체크 → commit → push → main으로 PR).
-- Commit/push/PR은 사전 승인됨 — 물어보지 말고 진행. 단 **force-push, 브랜치 삭제, main 직접 조작**은 먼저 확인.
+- **머지 완료 신호를 받으면**("머지했어" 등) → main 동기화 + 해당 작업 브랜치 **로컬·원격 모두 삭제**. 이 repo 한정, 사전 승인 — 물어보지 말고 진행.
+- Commit/push/PR도 사전 승인됨. 단 **force-push, main 직접 조작, 머지-후 정리가 아닌 브랜치 삭제**는 먼저 확인.
 
 ## Coding rules
 
