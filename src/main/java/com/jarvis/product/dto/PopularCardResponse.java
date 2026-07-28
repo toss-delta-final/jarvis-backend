@@ -1,0 +1,16 @@
+package com.jarvis.product.dto;
+
+/**
+ * P-4 인기 상품 카드 — 공통 카드에서 `purchasable`만 뺀 모양(노션 P-4 2026-07-28 결정).
+ * 품절을 목록에서 아예 제외하므로 값이 항상 true라 의미가 없다. P-5도 같은 모양이다.
+ */
+public record PopularCardResponse(Long productId, String name, String brandName,
+                                  int price, int originalPrice, String imageUrl,
+                                  double rating, long reviewCount) {
+
+    public static PopularCardResponse of(ProductCardResponse card) {
+        return new PopularCardResponse(card.productId(), card.name(), card.brandName(),
+                card.price(), card.originalPrice(), card.imageUrl(),
+                card.rating(), card.reviewCount());
+    }
+}

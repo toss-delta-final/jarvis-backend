@@ -7,6 +7,7 @@ import com.jarvis.category.CategoryService;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.product.dto.CandidateRow;
+import com.jarvis.product.dto.PopularCardResponse;
 import com.jarvis.product.dto.ProductCandidateResponse;
 import com.jarvis.product.dto.ProductCardPageResponse;
 import com.jarvis.product.dto.ProductCardResponse;
@@ -63,9 +64,11 @@ public class ProductService {
                 reviewService.getStats(id));
     }
 
-    /** P-4 — 7일 판매수 → product_view 수 → 최신순 순으로 채움 (04 §2) */
-    public List<ProductCardResponse> getPopular(int size) {
-        return toCards(findByIdsPreservingOrder(popularIds(size)));
+    /** P-4 — 7일 판매수 → product_view 수 → 최신순 순으로 채움 (04 §2). 품절은 집계 단계에서 이미 빠진다 */
+    public List<PopularCardResponse> getPopular(int size) {
+        return toCards(findByIdsPreservingOrder(popularIds(size))).stream()
+                .map(PopularCardResponse::of)
+                .toList();
     }
 
     /**

@@ -166,6 +166,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 
 ### I-3. 인기 상품 `GET /internal/products/popular?size=12`
 - 무관 질문 시 카드 영역 유지용. 응답 형식 I-1과 동일.
+- 인기 집계는 P-4와 같은 로직을 공유하므로 **품절(재고 0)은 후보에서 빠진다**(04 2026-07-28 결정) — I-1의 `stockQuantity > 0` 필터와 같은 기준이다.
 
 ### I-4. 주문 상태 `GET /internal/members/{userId}/orders/status?recent=3`
 - 응답: 주문별 `{ orderId, orderedAt, representativeStatus, items: [{ productName, status, statusText }] }` — `statusText`·`representativeStatus` 모두 **한국어 표시 문자열**("배송중" — 노션 I-4 07-18 재확인, LLM이 그대로 인용; enum 코드는 I-19가 담당).
@@ -263,7 +264,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - [ ] **라운드1 LIMIT·top-K 기준치**(§1-2-1): I-1 후보 상한(기본 50/최대 200 제안)과 LLM 투입 top-K(20~30 제안)의 실측 튜닝
 - [ ] **프로필 추출 저장 시점** (세션 만료 시? 매 N턴?) — 기능 정의에도 미확정
 - [ ] 카테고리 진입을 message 관성으로 갈지 전용 필드로 갈지
-- [ ] P-5 개인화 추천(메인) API: `GET {LLM_BASE_URL}/recommendations?userId=` 형태 제안 — 응답이 상품 ID 목록이면 BE가 카드 데이터 조립(P-4·CH-5 카드와 동형). BE 측 타임아웃 연결 2s/응답 3s(04 P-5, 초과 시 인기 상품 fallback)
+- [ ] P-5 개인화 추천(메인) API: `GET {LLM_BASE_URL}/recommendations?userId=` 형태 제안 — 응답이 상품 ID 목록이면 BE가 카드 데이터 조립(P-4 카드와 동형 — `purchasable` 없음, 04 2026-07-28 결정). BE 측 타임아웃 연결 2s/응답 3s(04 P-5, 초과 시 인기 상품 fallback)
 - [ ] 채팅 남용 방어(rate limit) 기준치 — 소유는 FastAPI로 확정(§3, 직결 공개 진입점), 수치만 OPEN
 - [ ] 상세페이지 연관 추천 2종(함께 구매/대체)의 소스: LLM 생성 vs BE 규칙 기반(같은 카테고리 인기순) — MVP는 BE 규칙 기반 제안
 - [ ] **confirm 전송 형식**(§1-3): 전용 필드 `{action:"confirm", draftId}` vs 특수 메시지 — LLM 확정 대기 (draft 이벤트 필드 자체는 §1-3으로 확정)
