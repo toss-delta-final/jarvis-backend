@@ -1,6 +1,6 @@
 ---
 name: ship-it
-description: Finish a unit of work in jarvis-backend — run pre-commit checks, then commit, push, and open a PR to main. Use when a feature/fix is done and ready to be committed/pushed/PR'd. Commit/push/PR are pre-authorized; force-push/branch-deletion/main changes need explicit confirmation first.
+description: Finish a unit of work in jarvis-backend — run pre-commit checks, then commit, push, and open a PR to main; and clean up the branch once the user says it's merged. Use when a feature/fix is ready to be committed/pushed/PR'd, or when the user signals a merge landed ("머지했어"/"merged"). Commit/push/PR and post-merge branch deletion (local + remote) are pre-authorized; force-push, main changes, and branch deletion outside the post-merge flow need explicit confirmation first.
 ---
 
 # Ship it (commit → push → PR)
@@ -27,6 +27,23 @@ gh pr create --base main --fill
 ```
 The user decides whether to merge — do not merge automatically.
 
+## 5. 머지 완료 신호를 받으면 — 브랜치 정리 (묻지 말고 실행)
+
+사용자가 머지를 알리면("머지했어", "머지 완료", "merged" 등) 확인 절차 없이 바로 정리한다.
+**jarvis-backend repo 한정** 규칙 — 다른 repo에는 적용하지 않는다.
+
+```
+git checkout main
+git pull origin main
+git branch -d <branch>              # -D 아님: 머지 안 됐으면 실패하게 두고 사용자에게 보고
+git push origin --delete <branch>   # GitHub 자동 삭제로 이미 없으면 그냥 넘어감
+```
+
+- `-d`가 "not fully merged"로 거절하면 **강제 삭제하지 말고** 상황을 보고한다(머지 신호가 틀렸을 수 있음).
+- 원격 삭제가 "remote ref does not exist"면 이미 정리된 것 — 무해하니 그대로 진행.
+- 정리 후 `git branch` 결과로 삭제를 확인하고 한 줄로 보고한다.
+
 ## Guardrail
-Steps 1–4 are pre-authorized. **Confirm first** before force-push, branch deletion,
-or any direct manipulation of `main`.
+Steps 1–5 are pre-authorized — 머지 후 브랜치 정리(5단계)도 포함. **Confirm first** before
+force-push, any direct manipulation of `main`, or deleting a branch **outside** the step-5 flow
+(머지 신호 없이, 또는 `-D` 강제 삭제).
