@@ -289,7 +289,7 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **기준**: `listId`는 CH-5가 게스트 허용 공개 조회라 **사실상 bearer 키**다 — (A)는 노출 창을 늘려 보안과 맞바꾼다. (C)는 FE가 보낸 문맥을 믿는 것이라 **CTR 조작이 가능**하다.
 - **선택**: (B). `recommendation_list` + `recommendation_list_item` 신설(§3). **Redis는 CH-5 조회 전용 10분 캐시로 남기고 DB가 정본** — DB에 있어도 CH-5는 만료 후 404를 낸다(노출 창은 10분 유지, 조회 경로와 분석 경로를 분리). `behavior_events`에는 `occurred_at` + 추천 귀속 4종(`recommendation_request_id`·`list_id`·`surface`·`position`)을 추가하고, **귀속 값은 FE가 보낸 걸 쓰지 않고 서버가 `list_id`로 목록을 조회해 도출**한다(E-1 ③.5). 귀속 유효기간은 `created_at` 기준 **24시간**.
 - **왜 컬럼인가**: 추천 귀속 4종을 `properties` JSON에 넣으면 CTR 집계가 이 값들로 GROUP BY·JOIN하는데 **인덱스를 못 탄다**. 상품 목록을 JSON 배열이 아니라 행으로 펼친 것도 같은 이유 — E-1이 이벤트 1건마다 목록 포함 여부와 순위를 묻는다.
-- **트레이드오프**: `behavior_events` 인덱스가 6개→8개로 늘어 append-only 대량 INSERT의 쓰기 비용이 증가한다. 실측 후 `(list_id, event_type)`만 남기고 조정할 수 있다. `occurred_at`·`client_event_id`의 **NOT NULL 전환은 E-1 확장과 같은 작업에서** 한다 — 엔티티가 `occurred_at`을 쓰지 않는 상태에서 조이면 이벤트 적재와 시드가 통째로 실패한다.
+- **트레이드오프**: `behavior_events` 인덱스가 6개→8개로 늘어 append-only 대량 INSERT의 쓰기 비용이 증가한다. 실측 후 `(list_id, event_type)`만 남기고 조정할 수 있다. `occurred_at`·`client_event_id`의 **NOT NULL 전환은 E-1 확장 직후 완료**(2026-07-30) — 앱이 `occurred_at`을 채우기 시작한 뒤에야 조일 수 있어 별도 마이그레이션(`scripts/migrate-2026-07-31-...`)으로 분리했고, 기존 행은 삭제 대신 백필했다(배포 DB에 테스트 실데이터가 있다). 서버 적재분의 `client_event_id`는 D40.
 
 ### D39. 서버 적재 이벤트의 `session_key`는 채팅 세션 id로 채운다 (2026-07-30)
 
@@ -298,6 +298,15 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **기준**: (C)는 ERD 변경이라 **불변 기준을 건드린다**(CLAUDE.md) — 이 정도 사유로 열 수 없다. (B)는 모든 서버 행이 한 키를 공유해 *"session_key는 세션 하나를 가리킨다"* 는 의미를 깨고, 세션 단위 조회가 서버 행 전체를 한 덩어리로 본다.
 - **선택**: (A). 추천이 일어난 실제 대화 세션을 가리키므로 의미가 가장 가깝다. **추천 퍼널의 조인 키는 `list_id`·`recommendation_request_id`이므로 분석에 지장은 없다** — `session_key`는 이 행에서 문맥 표시용이다.
 - **트레이드오프**: FE SDK 세션 키와 **ID 공간이 다르다** — `COUNT(DISTINCT session_key)`로 세션 수를 세면 채팅 세션이 별도 세션으로 잡혀 부풀려진다. **세션 단위 집계는 `event_type`으로 FE 12종만 걸러야 한다.** 홈 추천(I-22·P-5)은 세션이 없어 이 방법을 쓸 수 없으므로, 그 경로를 구현할 때 다시 정한다.
+
+### D40. 서버 적재 이벤트의 `client_event_id`는 대상 키로 만든 결정적 UUID (2026-07-30)
+
+- **문제**: `client_event_id`를 `NOT NULL`로 조이자(D38) **FE가 보내지 않는 서버 적재 이벤트**(`recommendation_generated`)가 넣을 값이 없어졌다. 노션 E-1의 해당 상세 표도 이 컬럼을 규정하지 않는다.
+- **선택지**: (A) 목록 키로 만든 **결정적** UUID (B) 행마다 무작위 UUID (C) 이 컬럼만 NULL 허용 유지
+- **기준**: (C)는 NOT NULL로 조인 이유를 스스로 무너뜨린다 — **MariaDB UNIQUE는 NULL끼리를 중복으로 보지 않아** 서버 행에는 중복 방어가 사라진다. (B)는 값은 채우지만 제약이 아무것도 막지 못하는 순수 채움값이다.
+- **선택**: (A). `UUID.nameUUIDFromBytes("recommendation_generated:" + listId)` — 목록 하나당 이 이벤트는 정확히 1행이므로, 결정적 값을 쓰면 **`uk_behavior_client_event`가 그대로 재적재 방어선**이 된다. 애플리케이션의 중복 필터(재전송·경합 제외)가 뚫려도 DB가 막는다.
+- **트레이드오프**: 같은 `listId`로 의도적으로 다시 적재하는 건 불가능해진다 — 이 이벤트의 정의가 "목록 1개당 1행"이라 그게 맞는 동작이다. 홈 추천(I-22·P-5)을 붙일 때도 `listId`가 키라 같은 방식이 그대로 쓰인다.
+- **과거 행**: 백필은 무작위 `UUID()`를 쓴다(`scripts/migrate-2026-07-31-...`) — 이미 적재가 끝난 행에는 "무엇의 중복인지" 판별할 원본 키가 없고, 재전송될 일도 없다.
 
 > **피그마 검토로 "디자인 수정" 확정된 항목 (스키마 무변경, 2026-07-09)**: 옵션 2축(컬러×사이즈) UI → 단일 옵션 선택으로 수정(D2 유지) · 이미지 썸네일 갤러리 → 단일 이미지(D14 유지) · 리뷰 "도움이 됐어요" 제거 · 배송비 표기 제거(배송비 미모델링 — 전 주문 무료, D36으로 명문화) · 모의 결제 "테스트: 결제 실패" 트리거 UI 추가 예정(01 D7). 문의 챗봇·판매자 페이지 등 미디자인 화면은 디자인 백로그.
 
@@ -726,11 +735,11 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 | member_id | BIGINT | NULL, **FK 미설정** | 로그인 시 JWT에서 서버 주입(body 신원 무시), 비로그인 NULL |
 | guest_id | CHAR(36) | FK(guest), NULL | 게스트 쿠키에서 서버 주입 — 승계용 (D5 패턴 유지) |
 | session_key | VARCHAR(64) | NOT NULL | FE SDK 생성, 30분 무활동 시 재발급 |
-| client_event_id | CHAR(36) | UNIQUE, NULL | FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35). **E-1 확장 시 NOT NULL로 조인다**(D38) |
+| client_event_id | CHAR(36) | UNIQUE, **NOT NULL** | 중복 방지 키 (D35·D38). FE 경로는 body `id`(필수), 서버 적재는 대상 키로 만든 결정적 UUID (D40). NULL이면 UNIQUE가 아무 일도 하지 않는다 |
 | event_type | VARCHAR(30) | NOT NULL | **FE 12종 + 서버 적재 1종**(`recommendation_generated`) — 그 외는 수집 API가 버림(경고 로그). VARCHAR인 이유: 선택 이벤트(page_leave 등) 추가 시 무DDL 확장 |
 | product_id | BIGINT | NULL | FK 미설정 — 로그 적재 경량화(구 user_event와 동일 이유). `recommendation_generated`는 목록 단위라 NULL |
 | properties | JSON | NULL | 타입별 부가정보(§4). session_start의 ipHash는 서버가 주입. `schemaVersion`·`_incomplete`·`_timeShifted`도 여기 (D38) |
-| occurred_at | DATETIME(6) | NULL | **FE 발생 시각** (D38). E-1 확장 시 NOT NULL로 조인다 |
+| occurred_at | DATETIME(6) | **NOT NULL** | **FE 발생 시각** (D38). 이상치(미래·3일 초과 과거)·누락은 서버가 `created_at`으로 대체하고 `properties._timeShifted`를 남긴다 |
 | recommendation_request_id | CHAR(36) | NULL | ↓ **추천 귀속 4종** — 추천에서 비롯된 이벤트에만 채워진다 (D38) |
 | list_id | VARCHAR(64) | NULL | FE가 보낸 값을 믿지 않고 서버가 `recommendation_list`를 조회해 검증·도출 (E-1 ③.5) |
 | surface | VARCHAR(10) | NULL | `CHAT` / `HOME` — `recommendation_list.surface` 복사 |

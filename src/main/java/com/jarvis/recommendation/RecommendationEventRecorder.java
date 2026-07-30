@@ -3,9 +3,11 @@ package com.jarvis.recommendation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.global.event.BehaviorEvent;
 import com.jarvis.global.event.BehaviorEventAppender;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -39,7 +41,7 @@ public class RecommendationEventRecorder {
         try {
             LocalDateTime now = LocalDateTime.now();
             List<BehaviorEvent> events = lists.stream()
-                    .map(list -> BehaviorEvent.serverGenerated(EVENT_TYPE,
+                    .map(list -> BehaviorEvent.serverGenerated(EVENT_TYPE, clientEventId(list),
                             list.getMemberId(), list.getGuestId(), sessionKeyOf(list),
                             list.getRecommendationRequestId(), list.getListId(),
                             list.getSurface().name(), properties(list), now))
@@ -56,6 +58,16 @@ public class RecommendationEventRecorder {
      */
     private static String sessionKeyOf(RecommendationList list) {
         return list.getSessionId();
+    }
+
+    /**
+     * client_event_id도 NOT NULL인데 FE가 보내지 않는다 — listId로 **결정적** UUID를 만든다(02 D40).
+     * 목록 하나당 이 이벤트는 정확히 1행이므로, 무작위 대신 결정적 값을 쓰면 UNIQUE 제약이
+     * 그대로 재적재 방어선이 된다(호출자의 중복 필터가 뚫려도 DB가 막는다).
+     */
+    private static String clientEventId(RecommendationList list) {
+        return UUID.nameUUIDFromBytes((EVENT_TYPE + ':' + list.getListId())
+                .getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private String properties(RecommendationList list) {

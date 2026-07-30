@@ -319,11 +319,11 @@ CREATE TABLE behavior_events (
     member_id       BIGINT      NULL,                      -- 로그인 시 JWT에서 서버 주입(body 신원 무시), 비로그인 NULL. 의도적으로 FK 없음 (D31)
     guest_id        CHAR(36)    NULL,                      -- 게스트 쿠키에서 서버 주입 — 승계용 (D5 패턴 유지)
     session_key     VARCHAR(64) NOT NULL,                  -- FE SDK 생성, 30분 무활동 시 재발급
-    client_event_id CHAR(36)    NULL,                      -- FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35). E-1 확장 시 NOT NULL로 조인다 (D38)
+    client_event_id CHAR(36)    NOT NULL,                  -- FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35). NULL이면 UNIQUE가 아무 일도 안 해 재전송이 그대로 쌓인다 (D38)
     event_type      VARCHAR(30) NOT NULL,                  -- FE 12종 + 서버 적재 1종(recommendation_generated) — 그 외는 수집 API가 버림. VARCHAR인 이유: 선택 이벤트 추가 시 무DDL 확장
     product_id      BIGINT      NULL,                      -- 의도적으로 FK 없음(로그 적재 경량화). recommendation_generated는 목록 단위라 NULL
     properties      JSON        NULL,                      -- 타입별 부가정보. session_start의 ipHash는 서버 주입. schemaVersion·_incomplete·_timeShifted도 여기 (D38)
-    occurred_at     DATETIME(6) NULL,                      -- FE 발생 시각 (D38). created_at만으로는 브라우저 이벤트가 SDK 버퍼(10건/5초)만큼 밀려 서버 직접 적재 로그와 순서가 뒤집힌다
+    occurred_at     DATETIME(6) NOT NULL,                  -- FE 발생 시각 (D38). created_at만으로는 브라우저 이벤트가 SDK 버퍼(10건/5초)만큼 밀려 서버 직접 적재 로그와 순서가 뒤집힌다. 이상치·누락은 서버가 created_at으로 대체하고 properties._timeShifted를 남긴다
     recommendation_request_id CHAR(36)    NULL,             -- ↓ 추천 귀속 4종: 추천에서 비롯된 이벤트에만 채워진다 (D38)
     list_id         VARCHAR(64) NULL,                      --   FE가 보낸 값을 믿지 않고 서버가 recommendation_list를 조회해 검증·도출한다 (E-1 ③.5)
     surface         VARCHAR(10) NULL,                      --   CHAT / HOME — recommendation_list.surface 복사
@@ -343,8 +343,9 @@ CREATE TABLE behavior_events (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- 적재는 FE의 POST /api/events (배치, 인증 선택) + recommendation_generated만 서버 내부 insert (D31·D38)
 -- client_event_id 중복은 INSERT 전 검증 후 무시 — INSERT IGNORE로 퉁치면 중복 외 오류까지 삼키므로 주의 (D35)
--- occurred_at·client_event_id를 NOT NULL로 조이는 건 E-1 확장과 같은 작업에서 한다 (D38) —
---   엔티티가 occurred_at을 쓰지 않는 지금 NOT NULL로 두면 이벤트 적재와 시드가 통째로 실패한다.
+-- occurred_at·client_event_id는 E-1 확장과 함께 NOT NULL로 조였다 (2026-07-30, D38·D40) —
+--   기존 행은 scripts/migrate-2026-07-31-behavior-events-not-null.sql이 백필한 뒤 조인다.
+--   서버 적재 이벤트도 client_event_id를 채운다(listId 기반 결정적 UUID — D40).
 
 -- ------------------------------------------------------------
 -- BE 직접 로그 3종 (분석 에이전트 입력 — D32)

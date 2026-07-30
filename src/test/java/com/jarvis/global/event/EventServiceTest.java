@@ -165,23 +165,21 @@ class EventServiceTest {
                 .contains("visibleRatio").contains("visibleMs");
     }
 
+    // id는 @NotBlank라 누락은 컨트롤러 검증에서 400으로 걸린다 — 서비스는 중복만 본다 (02 D35)
     @Test
-    @DisplayName("E-1 — 배치 내 중복 client_event_id는 1건만 적재, id=null은 중복 검사 제외 (02 D35)")
+    @DisplayName("E-1 — 배치 내 중복 client_event_id는 1건만 적재 (02 D35)")
     void inBatchDuplicatesDropped() {
         EventBatchRequest request = new EventBatchRequest(List.of(
                 item("dup-1", "page_view", null, Map.of("pageType", "home")),
                 item("dup-1", "page_view", null, Map.of("pageType", "home")),
-                item(null, "page_view", null, Map.of("pageType", "home")),
-                item(null, "page_view", null, Map.of("pageType", "home"))));
+                item("uniq-1", "page_view", null, Map.of("pageType", "home"))));
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
         verify(behaviorEventAppender).append(eventsCaptor.capture());
-        // dup-1은 1건, id=null 2건은 모두 유지 → 총 3건
-        assertThat(eventsCaptor.getValue()).hasSize(3);
         assertThat(eventsCaptor.getValue())
                 .extracting(BehaviorEvent::getClientEventId)
-                .containsExactly("dup-1", null, null);
+                .containsExactly("dup-1", "uniq-1");
     }
 
     @Test

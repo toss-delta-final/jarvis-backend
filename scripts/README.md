@@ -16,13 +16,15 @@
 그 뒤 추가된 테이블·컬럼은 여기 마이그레이션으로 반영한다. 규칙:
 
 - 파일명 `migrate-YYYY-MM-DD-<설명>.sql` — 날짜 접두사 오름차순 = 적용 순서
-- **재실행 무해**(`IF NOT EXISTS`)로 작성 — 몇 번을 돌려도 같은 상태로 수렴해야 한다
+- **재실행 무해**하게 작성 — 몇 번을 돌려도 같은 상태로 수렴해야 한다. 신설은 `IF NOT EXISTS`,
+  백필은 `WHERE ... IS NULL`, 제약 변경은 `MODIFY COLUMN`(이미 적용됐으면 무변경)
 - `schema.sql`에도 같은 변경을 반영해 신규 DB·기존 DB의 최종 상태가 동일해야 한다
 - `setup-frontend-dev.sh`가 자동 적용하므로 로컬은 셋업 재실행이면 충분. 배포 DB는 [DEPLOY.md §4-2](../DEPLOY.md)
 
-| 파일 | 내용 |
-|---|---|
-| `migrate-2026-07-30-recommendation-list.sql` | 추천 목록 영구 사본 2개 테이블 신설 + `behavior_events` 컬럼 5개·인덱스 2개 (02 D38) |
+| 파일 | 내용 | 적용 시점 |
+|---|---|---|
+| `migrate-2026-07-30-recommendation-list.sql` | 추천 목록 영구 사본 2개 테이블 신설 + `behavior_events` 컬럼 5개·인덱스 2개 (02 D38) | 앱 배포 **전** |
+| `migrate-2026-07-31-behavior-events-not-null.sql` | `occurred_at`·`client_event_id` 백필 후 `NOT NULL` (02 D38·D40) | 앱 배포 **후** — 앱이 `occurred_at`을 채운 뒤에 조인다 |
 
 ## 시드 데이터
 
