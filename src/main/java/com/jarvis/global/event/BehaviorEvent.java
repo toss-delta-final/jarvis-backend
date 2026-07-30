@@ -73,9 +73,14 @@ public class BehaviorEvent {
     @Column(name = "created_at", nullable = false, columnDefinition = "datetime(6)")
     private LocalDateTime createdAt;
 
+    /**
+     * FE 경로 (E-1). occurredAt은 이상치 보정을 통과한 값이고(호출자 책임), 추천 귀속은
+     * FE가 보낸 값이 아니라 서버가 목록을 조회해 도출한 것이다 (02 D38, 노션 E-1 ③.5).
+     */
     public static BehaviorEvent record(Long memberId, String guestId, String sessionKey,
                                        String clientEventId, String eventType, Long productId,
-                                       String properties, LocalDateTime receivedAt) {
+                                       String properties, LocalDateTime occurredAt,
+                                       EventAttribution attribution, LocalDateTime receivedAt) {
         BehaviorEvent event = new BehaviorEvent();
         event.memberId = memberId;
         event.guestId = guestId;
@@ -84,6 +89,11 @@ public class BehaviorEvent {
         event.eventType = eventType;
         event.productId = productId;
         event.properties = properties;
+        event.occurredAt = occurredAt;
+        event.recommendationRequestId = attribution.recommendationRequestId();
+        event.listId = attribution.listId();
+        event.surface = attribution.surface();
+        event.position = attribution.position();
         event.createdAt = receivedAt;
         return event;
     }

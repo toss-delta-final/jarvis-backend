@@ -804,7 +804,7 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 
 ## 4. behavior_events 이벤트 타입 (퍼널 정의)
 
-FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommendation_generated`) — 그 외는 수집 API가 버린다(경고 로그, D31·D38). 타입별 properties 상세 계약은 노션 E-1이 정본. *(구현 현황: `recommendation_generated` 서버 적재 완료(2026-07-30, D39) — E-1 HTTP로 들어오면 화이트리스트와 무관하게 드롭한다. FE 추천 4종 수용은 E-1 확장 잔여, 06 Phase 5)*
+FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommendation_generated`) — 그 외는 수집 API가 버린다(경고 로그, D31·D38). 타입별 properties 상세 계약은 노션 E-1이 정본. *(2026-07-30 구현 완료 — 12종 수용 · `occurred_at` 저장·이상치 보정 · 추천 귀속 서버 도출 · 필수 키 누락 시 `_incomplete`. `recommendation_generated`는 서버 적재이고 E-1 HTTP로 들어오면 화이트리스트와 무관하게 드롭한다, D39)*
 
 | event_type | 발사 시점 | properties 비고 |
 |---|---|---|
