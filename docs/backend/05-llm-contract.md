@@ -74,7 +74,7 @@ FastAPI       : JWKS로 signature·exp·iss·aud·scope 검증 → 스트리밍
 
 ### 1-2. 응답: SSE 스트림
 
-이벤트 타입 9종. **FastAPI가 FE로 직접 발행**한다(직결 — Spring 패스스루 아님). **프레이밍**: 각 이벤트는 `data:` 한 줄에 **envelope**(`{"type","data"}`)로 실린다 — `event:` 줄은 **없다**(type을 data 안에 넣음). 표준 `EventSource`는 GET·헤더 불가라 FE는 **fetch 스트리밍(ReadableStream)** 으로 `\n\n` 분할 → `data:` 파싱 → `JSON.parse` → `switch(payload.type)`. `products.ready` 이벤트는 **카드 페이로드 없음 — `listId` 상관키만** 싣고, 카드는 FE가 CH-5(`GET /api/chat/lists/{listId}`)로 Spring에서 조회한다(§1-2-1).
+이벤트 타입 9종. **FastAPI가 FE로 직접 발행**한다(직결 — Spring 패스스루 아님). **프레이밍**: 각 이벤트는 `data:` 한 줄에 **envelope**(`{"type","data"}`)로 실린다 — `event:` 줄은 **없다**(type을 data 안에 넣음). 표준 `EventSource`는 GET·헤더 불가라 FE는 **fetch 스트리밍(ReadableStream)** 으로 `\n\n` 분할 → `data:` 파싱 → `JSON.parse` → `switch(payload.type)`. `products.ready` 이벤트는 **카드 페이로드 없음 — `listIds[]` 상관키만** 싣고, 카드는 FE가 목록마다 CH-5(`GET /api/chat/lists/{listId}`)로 Spring에서 조회한다(§1-2-1).
 
 ```plain text
 data: {"type":"token","data":{"text":"유럽여행이라면 "}}                          // 답변 텍스트 조각 (스트리밍)
@@ -82,8 +82,8 @@ data: {"type":"conditions","data":{"chips":[{"field":"priceMax","label":"5만원
                                                                                   // LLM이 발화에서 추출한 조건 칩 — FE가 제거 가능하게 표시
 data: {"type":"suggestions","data":{"chips":[{"label":"6만원대까지 볼까요?","relaxation":{"field":"priceMax","value":65000},"estCount":12}]}}
                                                                                   // 완화/되돌리기 제안 칩 (relaxation 또는 revert 정확히 하나, estCount==0 제외)
-data: {"type":"products.ready","data":{"sessionId":"550e8400-…","listId":"list-4471"}}
-                                                                                  // 추천 목록 준비 완료 — 카드 없음(listId 상관키만). I-21 콜백 성공 후에만 발행
+data: {"type":"products.ready","data":{"sessionId":"550e8400-…","listIds":["3f9a2c1e7b8d4e5fa0c6d1e97b3f8a24"]}}
+                                                                                  // 추천 목록 준비 완료 — 카드 없음(listIds[] 상관키만, 목록 수만큼). I-21 콜백 성공 후에만 발행
 data: {"type":"action","data":{"type":"CART_ADDED","message":"무선 키보드 1개를 장바구니에 담았어요","cartItemId":55}}
 data: {"type":"draft","data":{"draftId":"d-1","op":"update","productId":3,"changes":[{"field":"price","before":"12000","after":"9900"}]}}
                                                                                   // SELLER 전용 — 수정 초안. FE가 diff 카드 + [적용] 버튼 렌더 (§1-3)
@@ -94,7 +94,7 @@ data: {"type":"error","data":{"code":"LLM_TIMEOUT","message":"잠시 후 다시 
 - `conditions`: 디자인 시안의 "조건 칩" UI 지원 — `chips[{field, label, value}]`. **칩 X 제거 시 FE는 후속 메시지로 전달** — `message: "[조건 제거] 우아한"` 형태의 규약 문자열(같은 세션이라 LLM이 맥락 유지, 재추천 후 갱신된 conditions·products.ready 재발행). 별도 API 없음.
 - `suggestions`: 결과가 없거나 적을 때의 **조건 완화/되돌리기 제안 칩** — 각 칩은 `relaxation{field,value}`(완화) **또는** `revert{category}`(되돌리기) 중 **정확히 하나** + `estCount`(예상 결과 수, `0`이면 제외). 칩 클릭 시 FE가 후속 메시지로 전달(조건 제거 칩과 같은 관성).
 - `budget`: **현재 미구현 — post-MVP 예약**. "예산 10만원으로 캠핑 세트" 류 총액 시나리오용(도입 시 `{totalBudget, verifiedSum, withinBudget, droppedItems}` 형태).
-- `products.ready`: 구 `products{productId, reason}` 이벤트를 **대체**(2026-07-17) — 추천 ID·이유·카드를 SSE에 싣지 않는다. FastAPI가 **I-21 콜백으로 Spring에 목록 저장 후** `listId`만 발행하고, FE는 CH-5로 카드 완결 필드(가격·정가·이미지·rating·reviewCount)를 순서 보존으로 받는다. reason은 이원화 확정(2026-07-18): SSE = 채팅 말풍선용, I-21 콜백 `reasons` = 추천 카드용(CH-5 echo — §I-21).
+- `products.ready`: 구 `products{productId, reason}` 이벤트를 **대체**(2026-07-17) — 추천 ID·이유·카드를 SSE에 싣지 않는다. FastAPI가 **I-21 콜백으로 Spring에 목록 저장 후** `listIds[]`(목록 id 배열 — 다중 목록이면 여러 개)만 발행하고, FE는 목록마다 CH-5로 카드 완결 필드(가격·정가·이미지·rating·reviewCount)를 순서 보존으로 받는다. *(전환 노트: jarvis-ai 현행 구현은 단수 `listId` 1건 발행 — 복수 전환 요청 중이며, 목록이 1개면 둘은 동치)* reason은 이원화 확정(2026-07-18): SSE = 채팅 말풍선용, I-21 콜백 `reasons` = 추천 카드용(CH-5 echo — §I-21).
 - **카드 필드의 출처는 BE**: 표시 데이터는 **LLM(SSE)이 아니라 FE가 CH-5로 Spring에서** 받는다. 이유: (a) 가격·재고 같은 **정형 진실은 Spring/MariaDB가 원천**(벡터DB는 배치라 낡을 수 있음), (b) LLM은 "누굴·왜"만 결정하고 표시 데이터는 BE 소유. `productId`는 BE 상품 ID이자 **벡터DB 공유 키** — 카드의 상세 이동은 FE가 `/products/{id}`로. 찜 버튼은 FE가 M-5 직접 호출 — LLM 무관.
 - `action`: 담기 등 부수효과의 결과 통지. 실패 시 `type: "CART_ADD_FAILED"` + `reason` 3종 **`PRODUCT_NOT_FOUND | STOCK_INSUFFICIENT | CART_ERROR`** — 재고 부족은 BE I-2 `400 CART_STOCK_INSUFFICIENT`+`availableStock` 매핑(남은 재고 수 안내, 재고 0=품절도 이 코드로 통합 — 구 `OUT_OF_STOCK` 폐기), 수량 상한(합산>99) 초과는 BE `VALIDATION_ERROR`→`CART_ERROR`. 게스트 담기는 허용이라(I-2, 02 D30) `GUEST_NOT_ALLOWED`는 없다.
 - `done.finishReason`: `stop`(정상 종료) \| `zero_result`(조건 만족 결과 0건 — FE는 suggestions 칩 중심으로 렌더).
@@ -109,10 +109,10 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 2. FastAPI             : 정형조건(가격·카테고리·색상·재고·상태) + 의미조건(원룸 적합…) 추출
 3. FastAPI → Spring    : [1왕복] 정형조건만 → GET /internal/products/search (I-1)
    Spring → FastAPI    :   MariaDB 후보 조회 — 정형 진실 확정, 리랭킹용 최소필드만 반환
-4. FastAPI             : 벡터DB(임베딩)로 의미 리랭킹 → top-K만 LLM 태워 Top5 선정 + 이유·응답 생성
+4. FastAPI             : 벡터DB(임베딩)로 의미 리랭킹 → top-K만 LLM 태워 확정 목록 선정(목록당 ≤9) + 이유·응답 생성
 5. FastAPI → Spring    : [콜백] 확정 목록 저장 → POST /internal/recommendations (I-21)
    Spring              :   {sessionId, recommendationRequestId, listType, lists[{listId, productIds[](순서 유지), reasons?}]}
-                           → Redis(10분, CH-5 조회 전용) + DB(영구, 정본) 양쪽 저장 + recommendation_generated 적재
+                           → Redis(10분, CH-5 조회 전용) + DB(영구, 정본) 양쪽 저장 + recommendation_generated 적재(잔여 구현)
 6. FastAPI → FE(SSE)   : token/conditions/…/products.ready{listIds[]}/done — 콜백(5) 성공 후에만 발행
 7. FE → Spring         : [2왕복] products.ready 수신 트리거 → 목록마다 GET /api/chat/lists/{listId} (CH-5)
    Spring → FE         :   저장 순서대로 카드 완결 필드(가격·정가·이미지·rating·reviewCount) 부착해 반환 → FE 렌더
@@ -222,7 +222,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **추천 이유 이원화(합의)**: SSE는 채팅 말풍선용(Spring 무관), 콜백 `reasons`는 우측 추천 카드용 — CH-5 카드에 `reason`으로 echo(없으면 null).
 - 검증: sessionId UUID / listId 영숫자·`-`·`_` ≤64(그 외 400 — Redis 키 안전) / **productIds 1~9개(목록당)** / **lists 1~10개**. `reasons`도 목록당 9개·`reason` 200자 상한.
 - **저장은 Redis + DB 양쪽**: Redis는 TTL 10분(생성 시점 고정, **CH-5 조회 전용**), DB는 **영구 보존이 정본**(E-1 귀속 검증 + 추천 품질 평가). DB에 남아 있어도 CH-5는 만료 후 404 — `listId`가 인증 없이 조회되는 열쇠라 노출 창을 10분으로 제한한다.
-- CH-5 응답은 `{listId, recommendationRequestId, listType, label?, itemsDropped, items[카드 완결 필드 + reason]}`(순서 보존, HIDDEN·품절 드롭, 만료 404). `BUY_ALL`이면 `totalBudget`·`sum`·`withinBudget`이 추가된다.
+- CH-5 응답은 `{listId, recommendationRequestId, listType, label?, itemsDropped, items[카드 완결 필드 + reason]}`(순서 보존, HIDDEN·품절 드롭, 만료 404). `BUY_ALL`이면 `totalBudget`·`sum`·`withinBudget`이 추가된다. **(구현 현황: 현재 응답은 `listId`·`items`·`itemsDropped`까지 — `recommendationRequestId`·`listType`·`label`·`totalBudget`·`sum`·`withinBudget`은 CH-5 확장 잔여, 06 Phase 5)**
 - **세션 만료 시**: 신원을 해소할 수 없어도 200으로 저장하되 **익명 저장**(`member_id`·`guest_id` 빈 값) — 그 목록은 CH-5에서 조회되지 않고(소유자 미기록 = fail-closed) `recommendation_generated`도 주체 없는 행으로 남는다.
 - **listId 엔트로피(2026-07-18 시큐리티 리뷰)**: CH-5는 게스트 허용 공개 조회라 listId가 사실상 bearer 키다 — FastAPI는 listId를 **UUID급 무작위(≥128bit)**로 생성해야 한다(순번·타임스탬프 등 추측 가능한 형식 금지).
 

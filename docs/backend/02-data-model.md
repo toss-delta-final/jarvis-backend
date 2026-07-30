@@ -796,7 +796,7 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 
 ## 4. behavior_events 이벤트 타입 (퍼널 정의)
 
-FE만 적재하는 **8종 화이트리스트** — 8종 외는 수집 API가 버린다(경고 로그, D31). 타입별 properties 상세 계약은 이벤트 수집 명세(로그/분석 팀) 소관.
+FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommendation_generated`) — 그 외는 수집 API가 버린다(경고 로그, D31·D38). 타입별 properties 상세 계약은 노션 E-1이 정본. *(구현 현황: 코드 화이트리스트는 아직 기존 8종 — 추천 4종 수용과 `recommendation_generated` 적재는 E-1 확장 잔여, 06 Phase 5)*
 
 | event_type | 발사 시점 | properties 비고 |
 |---|---|---|
@@ -808,6 +808,11 @@ FE만 적재하는 **8종 화이트리스트** — 8종 외는 수집 API가 버
 | `checkout_start` | 결제 시작 | `{ "productIds": [...] }` — 판매자 단위 퍼널의 근거 |
 | `purchase_complete` | **주문 완료 페이지** (성공 후 발사) | — |
 | `login` | 로그인 성공 | — |
+| `recommendation_impression` | 추천 영역이 화면에 나타남 (D38) | — |
+| `product_visible` | 개별 카드 실노출 — 50%/1초, 목록당 1회 (D38) | `visibleRatio` · `visibleMs` — CTR 분모 |
+| `product_click` | 추천 카드 클릭 (D38) | `clickTarget`? — CTR 분자 |
+| `recommendation_dismiss` | 추천 닫음 = 명시적 비선호 (D38) | `dismissMethod`? |
+| `recommendation_generated` | **서버(Spring) 내부 insert** — I-21 성공·I-22 저장·P-5 fallback 시. E-1 HTTP로 들어오면 드롭 (D38) | `itemCount` · 홈 fallback이면 `fallbackReason` |
 
 퍼널(4단): `product_view → add_to_cart → checkout_start → purchase_complete`. 판매자 단위 3단(checkout_start까지)은 checkout_start의 `properties.productIds` 배열로 계산 가능하고, **4단 purchase의 정본은 이벤트가 아니라 order_item×product×brand 집계**다 — 이벤트와 정산 데이터의 역할 분리(기존 원칙 유지). 구 타입 `CHAT_QUERY`·`WISHLIST_ADD`·`ORDER_CREATED`는 소멸(D31).
 
