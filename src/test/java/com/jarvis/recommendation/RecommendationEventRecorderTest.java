@@ -1,6 +1,7 @@
 package com.jarvis.recommendation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -58,7 +59,6 @@ class RecommendationEventRecorderTest {
             assertThat(e.getPosition()).isNull();    // 순위도 없다
             assertThat(e.getSurface()).isEqualTo("CHAT");
             assertThat(e.getRecommendationRequestId()).isEqualTo(REQUEST_ID);
-            assertThat(e.getClientEventId()).isNull(); // FE가 보내지 않는다
         });
 
         Map<String, Object> props = objectMapper.readValue(
@@ -112,5 +112,25 @@ class RecommendationEventRecorderTest {
         recorder.recordGenerated(List.of());
 
         verifyNoInteractions(behaviorEventAppender);
+    }
+
+    // client_event_id는 NOT NULL인데 FE가 보내지 않는다 — listId 기반 결정적 UUID (02 D40).
+    // 결정적이라 같은 목록을 두 번 적재하면 UNIQUE가 막아준다(호출자 필터가 뚫려도 DB가 방어선).
+    @Test
+    @DisplayName("적재 — client_event_id는 listId로 만든 결정적 UUID (목록마다 다르고 재현 가능)")
+    void clientEventIdIsDeterministicPerList() {
+        recorder.recordGenerated(List.of(
+                list("list-a", 1, ChatIdentity.member(7L)),
+                list("list-b", 1, ChatIdentity.member(7L))));
+        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        List<BehaviorEvent> first = eventsCaptor.getValue();
+        assertThat(first).extracting(BehaviorEvent::getClientEventId)
+                .doesNotContainNull().doesNotHaveDuplicates();
+
+        // 같은 listId를 다시 적재하면 같은 값이 나온다 → DB UNIQUE가 중복을 막는다
+        recorder.recordGenerated(List.of(list("list-a", 1, ChatIdentity.member(7L))));
+        verify(behaviorEventAppender, times(2)).append(eventsCaptor.capture());
+        assertThat(eventsCaptor.getValue().get(0).getClientEventId())
+                .isEqualTo(first.get(0).getClientEventId());
     }
 }

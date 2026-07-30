@@ -15,7 +15,12 @@ import java.util.Map;
 public record EventBatchRequest(@NotEmpty @Size(max = 100) @Valid List<EventItem> events) {
 
     public record EventItem(
-            @Size(max = 36) String id,          // client_event_id (UUID) — 중복 차단 키 (02 D35)
+            /**
+             * client_event_id (UUID) — 중복 차단 키 (02 D35). **필수**(노션 E-1 2026-07-28 확정):
+             * 비면 DB UNIQUE가 아무 일도 하지 않아 재전송이 그대로 쌓인다. 이 검증이 실패하면
+             * 배치 전체가 400 — SDK는 상한을 지켜 분할 전송해야 한다.
+             */
+            @NotBlank @Size(max = 36) String id,
             @NotBlank @Size(max = 64) String sessionKey,
             @NotBlank @Size(max = 30) String eventType,
             Long productId,

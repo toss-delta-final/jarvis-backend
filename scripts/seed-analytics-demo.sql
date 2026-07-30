@@ -46,10 +46,12 @@ WHERE NOT EXISTS (SELECT 1 FROM account_event_logs WHERE ip_address = '10.77.0.9
 
 -- ── behavior_events 더미 (S-1 조회수·담김수, I-7 퍼널, I-16 preChurnSignals) ──
 -- 스코프: seller2 상품(7종) 중심, 최근 30일 분산. member/guest 혼재(FK 미설정 — 02 D31).
+-- occurred_at은 NOT NULL(02 D38)이라 반드시 채운다 — 더미엔 발생·수신 지연 개념이 없어
+--   created_at과 같은 값을 넣는다(그래서 같은 시각 식이 두 번 나온다).
 
 -- product_view 360건
 INSERT IGNORE INTO behavior_events (member_id, guest_id, session_key, client_event_id, event_type,
-                                    product_id, properties, created_at)
+                                    product_id, properties, created_at, occurred_at)
 SELECT CASE seq MOD 6
            WHEN 0 THEN @buyer1 WHEN 1 THEN @buyer2 WHEN 2 THEN @buyer3
            WHEN 3 THEN @buyer4 WHEN 4 THEN @buyer5 ELSE NULL END,
@@ -59,12 +61,13 @@ SELECT CASE seq MOD 6
        'product_view',
        ELT(1 + (seq MOD 7), 2376177306, 9233450819, 9236338700, 9349985278, 9381716646, 9434825492, 9470646527),
        NULL,
+       NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 23) HOUR,
        NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 23) HOUR
 FROM seq_1_to_360;
 
 -- 이탈 회원 preChurnSignals용 — 마지막 로그인 직전 30일 구간(45~75일 전)의 행동
 INSERT IGNORE INTO behavior_events (member_id, guest_id, session_key, client_event_id, event_type,
-                                    product_id, properties, created_at)
+                                    product_id, properties, created_at, occurred_at)
 SELECT CASE seq MOD 3 WHEN 0 THEN @buyer3 WHEN 1 THEN @buyer4 ELSE @buyer5 END,
        NULL,
        CONCAT('seed-an-churn-s', seq MOD 10),
@@ -73,12 +76,13 @@ SELECT CASE seq MOD 3 WHEN 0 THEN @buyer3 WHEN 1 THEN @buyer4 ELSE @buyer5 END,
        CASE WHEN seq MOD 3 = 2 THEN NULL
             ELSE ELT(1 + (seq MOD 7), 2376177306, 9233450819, 9236338700, 9349985278, 9381716646, 9434825492, 9470646527) END,
        CASE WHEN seq MOD 3 = 2 THEN '{"keyword":"모니터"}' END,
+       NOW() - INTERVAL (46 + (seq MOD 28)) DAY,
        NOW() - INTERVAL (46 + (seq MOD 28)) DAY
 FROM seq_1_to_60;
 
 -- add_to_cart 90건
 INSERT IGNORE INTO behavior_events (member_id, guest_id, session_key, client_event_id, event_type,
-                                    product_id, properties, created_at)
+                                    product_id, properties, created_at, occurred_at)
 SELECT CASE seq MOD 5
            WHEN 0 THEN @buyer1 WHEN 1 THEN @buyer2 WHEN 2 THEN @buyer3
            WHEN 3 THEN @buyer4 ELSE @buyer5 END,
@@ -88,12 +92,13 @@ SELECT CASE seq MOD 5
        'add_to_cart',
        ELT(1 + (seq MOD 7), 2376177306, 9233450819, 9236338700, 9349985278, 9381716646, 9434825492, 9470646527),
        NULL,
+       NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 19) HOUR,
        NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 19) HOUR
 FROM seq_1_to_90;
 
 -- checkout_start 24건 (I-7 3단 — properties.productIds에 seller2 상품 포함)
 INSERT IGNORE INTO behavior_events (member_id, guest_id, session_key, client_event_id, event_type,
-                                    product_id, properties, created_at)
+                                    product_id, properties, created_at, occurred_at)
 SELECT CASE seq MOD 4
            WHEN 0 THEN @buyer1 WHEN 1 THEN @buyer2 WHEN 2 THEN @buyer3 ELSE @buyer4 END,
        NULL,
@@ -102,12 +107,13 @@ SELECT CASE seq MOD 4
        'checkout_start',
        NULL,
        CONCAT('{"productIds":[', ELT(1 + (seq MOD 7), 2376177306, 9233450819, 9236338700, 9349985278, 9381716646, 9434825492, 9470646527), ']}'),
+       NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 13) HOUR,
        NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 13) HOUR
 FROM seq_1_to_24;
 
 -- purchase_complete 8건 (시드 주문과 짝 — 퍼널 4단 정본은 order_item이지만 이벤트도 깔아둠)
 INSERT IGNORE INTO behavior_events (member_id, guest_id, session_key, client_event_id, event_type,
-                                    product_id, properties, created_at)
+                                    product_id, properties, created_at, occurred_at)
 SELECT CASE seq MOD 4
            WHEN 0 THEN @buyer1 WHEN 1 THEN @buyer2 WHEN 2 THEN @buyer3 ELSE @buyer4 END,
        NULL,
@@ -116,12 +122,13 @@ SELECT CASE seq MOD 4
        'purchase_complete',
        NULL,
        CONCAT('{"orderId":', 9000 + seq, ',"amount":', 45000 + seq * 10000, '}'),
+       NOW() - INTERVAL (seq * 4 MOD 30) DAY,
        NOW() - INTERVAL (seq * 4 MOD 30) DAY
 FROM seq_1_to_8;
 
 -- search 30건 (S-1엔 안 쓰이지만 이벤트 분포 현실화)
 INSERT IGNORE INTO behavior_events (member_id, guest_id, session_key, client_event_id, event_type,
-                                    product_id, properties, created_at)
+                                    product_id, properties, created_at, occurred_at)
 SELECT CASE seq MOD 3 WHEN 0 THEN @buyer1 WHEN 1 THEN @buyer2 ELSE NULL END,
        CASE WHEN seq MOD 3 = 2 THEN CONCAT('b0000000-0000-4000-8000-', LPAD(seq, 12, '0')) END,
        CONCAT('seed-an-session-', seq MOD 40),
@@ -129,5 +136,6 @@ SELECT CASE seq MOD 3 WHEN 0 THEN @buyer1 WHEN 1 THEN @buyer2 ELSE NULL END,
        'search',
        NULL,
        '{"keyword":"가전"}',
+       NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 11) HOUR,
        NOW() - INTERVAL (seq MOD 30) DAY - INTERVAL (seq MOD 11) HOUR
 FROM seq_1_to_30;
