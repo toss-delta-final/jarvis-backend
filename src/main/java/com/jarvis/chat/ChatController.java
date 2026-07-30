@@ -82,7 +82,7 @@ public class ChatController {
     }
 
     /**
-     * CH-5 — FE가 SSE products.ready{listId} 수신 후 호출 (05 §1-2-1).
+     * CH-5 — FE가 SSE products.ready{listIds[]} 수신 후 목록마다 호출 (05 §1-2-1).
      * 신원 해석은 CH-1b와 동일(회원 AT 우선, 없으면 guest_id 쿠키) — listId만으로는 못 읽는다(노션 CH-5)
      */
     @GetMapping("/lists/{listId}")
