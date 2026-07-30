@@ -112,9 +112,16 @@ class RecommendationListServiceTest {
     }
 
     @Test
-    @DisplayName("I-21 — 채팅 콜백은 surface=CHAT, source=AI_RECOMMENDED 고정 (인기 fallback은 홈 전용)")
-    void storeStampsChatSurfaceAndAiSource() {
+    @DisplayName("I-21 — 채팅 콜백은 surface=CHAT, source=AI_RECOMMENDED 고정 + 캐시에 응답 확장 필드 동봉")
+    void storeStampsChatSurfaceAndAiSource() throws Exception {
         service.store(request("BUY_ALL", 50000, entry(LIST_ID, "알뜰", List.of(1L))));
+
+        // CH-5는 DB를 읽지 않으므로 listType·label·예산이 캐시에 함께 실려야 응답에 낼 수 있다
+        RecommendationListService.StoredList cached = capturedCache(LIST_ID);
+        assertThat(cached.recommendationRequestId()).isEqualTo(REQUEST_ID);
+        assertThat(cached.listType()).isEqualTo("BUY_ALL");
+        assertThat(cached.label()).isEqualTo("알뜰");
+        assertThat(cached.totalBudget()).isEqualTo(50000);
 
         verify(recommendationListStore).saveAll(listCaptor.capture(), itemCaptor.capture());
         RecommendationList saved = listCaptor.getValue().get(0);
@@ -277,8 +284,7 @@ class RecommendationListServiceTest {
     @Test
     @DisplayName("CH-5 — 저장 순서 보존 + reason echo + HIDDEN·품절 드롭 (05 §1-2-1)")
     void getListDropsUnpurchasableAndEchoesReason() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(3L, 1L, 2L), java.util.Map.of(3L, "가성비가 좋아요"), OWNER_KEY));
+        givenStored(pickOne(List.of(3L, 1L, 2L), java.util.Map.of(3L, "가성비가 좋아요"), OWNER_KEY));
         when(productService.getCardsByIds(List.of(3L, 1L, 2L))).thenReturn(List.of(
                 card(3L, true), card(1L, false), card(2L, true)));
 
@@ -289,13 +295,94 @@ class RecommendationListServiceTest {
         assertThat(response.items().get(0).reason()).isEqualTo("가성비가 좋아요");
         assertThat(response.items().get(1).reason()).isNull();
         assertThat(response.itemsDropped()).isEqualTo(1);
+        assertThat(response.listType()).isEqualTo("PICK_ONE");
+        assertThat(response.recommendationRequestId()).isEqualTo(REQUEST_ID);
+    }
+
+    // "하나 고르기"에는 합계·예산 판정이 무의미 — 키 자체가 내려가면 안 된다(노션 CH-5)
+    @Test
+    @DisplayName("CH-5 — PICK_ONE 응답에는 totalBudget·sum·withinBudget 키가 없다")
+    void getListOmitsBudgetFieldsForPickOne() throws Exception {
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), OWNER_KEY));
+        when(productService.getCardsByIds(List.of(1L))).thenReturn(List.of(card(1L, true)));
+
+        String json = objectMapper.writeValueAsString(service.getList(LIST_ID, OWNER));
+
+        assertThat(json).contains("\"listType\":\"PICK_ONE\"").contains("\"itemsDropped\":0")
+                .doesNotContain("totalBudget").doesNotContain("\"sum\"")
+                .doesNotContain("withinBudget");
+    }
+
+    @Test
+    @DisplayName("CH-5 — BUY_ALL 무드롭이면 sum·withinBudget 판정값 (노션 CH-5 예시 그대로)")
+    void getListComputesBudgetVerdictForBuyAll() throws Exception {
+        givenStored(new RecommendationListService.StoredList(
+                List.of(1L, 2L, 3L), java.util.Map.of(), OWNER_KEY,
+                REQUEST_ID, "BUY_ALL", "알뜰", 50000));
+        when(productService.getCardsByIds(List.of(1L, 2L, 3L))).thenReturn(List.of(
+                card(1L, 29900, true), card(2L, 12000, true), card(3L, 3100, true)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, OWNER);
+
+        assertThat(response.listType()).isEqualTo("BUY_ALL");
+        assertThat(response.label()).isEqualTo("알뜰");
+        assertThat(response.totalBudget()).isEqualTo(50000);
+        assertThat(response.sum()).isEqualTo(45000);
+        assertThat(response.withinBudget()).isEqualTo(Boolean.TRUE);
+        assertThat(response.itemsDropped()).isZero();
+    }
+
+    // 남은 것만으로 "예산 안"이라 단정하면 틀린다 — 드롭 시 판정은 키 생략이 아니라 null 리터럴
+    @Test
+    @DisplayName("CH-5 — BUY_ALL에 드롭이 생기면 sum은 남은 것만 재계산, withinBudget은 null 리터럴")
+    void getListNullsVerdictWhenDropped() throws Exception {
+        givenStored(new RecommendationListService.StoredList(
+                List.of(1L, 2L), java.util.Map.of(), OWNER_KEY,
+                REQUEST_ID, "BUY_ALL", "균형", 50000));
+        when(productService.getCardsByIds(List.of(1L, 2L))).thenReturn(List.of(
+                card(1L, 29900, true), card(2L, 30000, false)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, OWNER);
+
+        assertThat(response.sum()).isEqualTo(29900);
+        assertThat(response.itemsDropped()).isEqualTo(1);
+        String json = objectMapper.writeValueAsString(response);
+        assertThat(json).contains("\"withinBudget\":null").contains("\"totalBudget\":50000");
+    }
+
+    @Test
+    @DisplayName("CH-5 — BUY_ALL인데 예산 미발화면 sum만 내려가고 withinBudget은 null 리터럴")
+    void getListNullsVerdictWithoutBudget() throws Exception {
+        givenStored(new RecommendationListService.StoredList(
+                List.of(1L), java.util.Map.of(), OWNER_KEY, REQUEST_ID, "BUY_ALL", null, null));
+        when(productService.getCardsByIds(List.of(1L))).thenReturn(List.of(card(1L, 9900, true)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, OWNER);
+
+        assertThat(response.sum()).isEqualTo(9900);
+        String json = objectMapper.writeValueAsString(response);
+        assertThat(json).contains("\"withinBudget\":null").doesNotContain("totalBudget");
+    }
+
+    // 확장 배포 직전에 저장된 캐시(TTL 10분 내 소멸)는 새 필드가 없다 — 500 없이 PICK_ONE으로 읽혀야 한다
+    @Test
+    @DisplayName("CH-5 — 구 포맷 캐시도 그대로 읽힌다 (listType은 PICK_ONE 간주)")
+    void getListReadsLegacyCacheFormat() throws Exception {
+        when(valueOperations.get("chat:list:" + LIST_ID)).thenReturn(
+                "{\"productIds\":[1],\"reasons\":{},\"owner\":\"" + OWNER_KEY + "\"}");
+        when(productService.getCardsByIds(List.of(1L))).thenReturn(List.of(card(1L, true)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, OWNER);
+
+        assertThat(response.listType()).isEqualTo("PICK_ONE");
+        assertThat(objectMapper.writeValueAsString(response))
+                .doesNotContain("recommendationRequestId").doesNotContain("withinBudget");
     }
 
     @Test
     @DisplayName("CH-5 — 전부 품절이어도 404가 아니라 200 + 빈 items + itemsDropped")
     void getListReportsAllDropped() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(1L, 2L), java.util.Map.of(), OWNER_KEY));
+        givenStored(pickOne(List.of(1L, 2L), java.util.Map.of(), OWNER_KEY));
         when(productService.getCardsByIds(List.of(1L, 2L)))
                 .thenReturn(List.of(card(1L, false), card(2L, false)));
 
@@ -309,8 +396,7 @@ class RecommendationListServiceTest {
     @Test
     @DisplayName("CH-5 — 카드가 조회되지 않은 상품도 itemsDropped에 포함")
     void getListCountsMissingCardsAsDropped() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(1L, 2L), java.util.Map.of(), OWNER_KEY));
+        givenStored(pickOne(List.of(1L, 2L), java.util.Map.of(), OWNER_KEY));
         when(productService.getCardsByIds(List.of(1L, 2L))).thenReturn(List.of(card(1L, true)));
 
         RecommendationListResponse response = service.getList(LIST_ID, OWNER);
@@ -333,8 +419,7 @@ class RecommendationListServiceTest {
     @Test
     @DisplayName("CH-5 — 남의 listId는 403이 아니라 404 (존재 은닉 — 노션 CH-5)")
     void getListHidesOthersList() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(1L), java.util.Map.of(), OWNER_KEY));
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), OWNER_KEY));
 
         assertThatThrownBy(() -> service.getList(LIST_ID, ChatIdentity.member(99L)))
                 .isInstanceOf(BusinessException.class)
@@ -345,8 +430,7 @@ class RecommendationListServiceTest {
     @Test
     @DisplayName("CH-5 — sub가 같아도 sub_type이 다르면 404")
     void getListDistinguishesSubType() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(1L), java.util.Map.of(), OWNER_KEY));
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), OWNER_KEY));
 
         assertThatThrownBy(() -> service.getList(LIST_ID, ChatIdentity.guest("7")))
                 .isInstanceOf(BusinessException.class)
@@ -356,8 +440,7 @@ class RecommendationListServiceTest {
     @Test
     @DisplayName("CH-5 — 신원 없는 요청(AT·guest_id 둘 다 없음)은 404")
     void getListRejectsAnonymous() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(1L), java.util.Map.of(), OWNER_KEY));
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), OWNER_KEY));
 
         assertThatThrownBy(() -> service.getList(LIST_ID, null))
                 .isInstanceOf(BusinessException.class)
@@ -367,8 +450,7 @@ class RecommendationListServiceTest {
     @Test
     @DisplayName("CH-5 — owner가 기록되지 않은 목록은 아무도 못 읽는다 (fail-closed)")
     void getListRejectsOwnerlessList() throws Exception {
-        givenStored(new RecommendationListService.StoredList(
-                List.of(1L), java.util.Map.of(), null));
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), null));
 
         assertThatThrownBy(() -> service.getList(LIST_ID, OWNER))
                 .isInstanceOf(BusinessException.class)
@@ -401,7 +483,19 @@ class RecommendationListServiceTest {
         when(valueOperations.get("chat:list:" + LIST_ID)).thenReturn(json);
     }
 
+    private static RecommendationListService.StoredList pickOne(List<Long> productIds,
+                                                                java.util.Map<Long, String> reasons,
+                                                                String owner) {
+        return new RecommendationListService.StoredList(productIds, reasons, owner,
+                REQUEST_ID, "PICK_ONE", null, null);
+    }
+
     private static ProductCardResponse card(Long id, boolean purchasable) {
-        return new ProductCardResponse(id, "상품" + id, "브랜드", 1000, 2000, "img", 0.0, 0, purchasable);
+        return card(id, 1000, purchasable);
+    }
+
+    private static ProductCardResponse card(Long id, int price, boolean purchasable) {
+        return new ProductCardResponse(id, "상품" + id, "브랜드", price, price + 1000, "img", 0.0, 0,
+                purchasable);
     }
 }
