@@ -86,7 +86,7 @@ public class RecommendationListService {
         persist(request, entries, listType, requestId, identity);
 
         String owner = identity == null ? null : ownerKey(identity);
-        entries.forEach(entry -> cache(entry, owner));
+        entries.forEach(entry -> cache(entry, owner, requestId, listType, request.totalBudget()));
     }
 
     /**
@@ -128,13 +128,15 @@ public class RecommendationListService {
      *    CH-5는 새 내용을 보여주게 된다. ② 덮어쓰기는 TTL을 다시 시작시켜 "생성 시점 고정"을 깬다.
      * DB만 성공하고 Redis 쓰기가 실패했던 재시도는 키가 없으므로 여전히 채워진다.
      */
-    private void cache(ListEntry entry, String owner) {
+    private void cache(ListEntry entry, String owner, String requestId,
+                       RecommendationListType listType, Integer totalBudget) {
         Map<Long, String> reasonById = entry.reasons() == null ? Map.of() : entry.reasons().stream()
                 .filter(r -> r.productId() != null && r.reason() != null)
                 .collect(Collectors.toMap(RecommendationCallbackRequest.Reason::productId,
                         RecommendationCallbackRequest.Reason::reason, (a, b) -> b));
         redisTemplate.opsForValue().setIfAbsent(LIST_KEY_PREFIX + entry.listId(),
-                toJson(new StoredList(entry.productIds(), reasonById, owner)),
+                toJson(new StoredList(entry.productIds(), reasonById, owner,
+                        requestId, listType.name(), entry.label(), totalBudget)),
                 Duration.ofMinutes(chatProperties.sessionTtlMinutes()));
     }
 
@@ -189,7 +191,7 @@ public class RecommendationListService {
     }
 
     /**
-     * CH-5 — 저장 순서 보존 + 카드에 reason echo, HIDDEN·품절 드롭 (05 §1-2-1).
+     * CH-5 — 저장 순서 보존 + 카드에 reason echo, HIDDEN·품절 드롭 (노션 CH-5 — 2026-07-28 확정).
      * 소유자 불일치는 403이 아니라 404 — listId의 존재 여부를 노출하지 않는다(노션 CH-5).
      */
     public RecommendationListResponse getList(String listId, ChatIdentity requester) {
@@ -208,8 +210,23 @@ public class RecommendationListService {
                 .toList();
         // 드롭 = 콜백에 실렸으나 지금은 못 파는 것(품절·HIDDEN) + 그 사이 사라진 상품.
         // I-1이 후보 단계에서 이미 품절을 걸러내므로, 여기 잡히는 건 추천 이후 재고가 소진된 경우다.
-        return new RecommendationListResponse(listId, items,
-                stored.productIds().size() - items.size());
+        int itemsDropped = stored.productIds().size() - items.size();
+        // 구 포맷 캐시(확장 배포 직전 저장, TTL 10분 내 소멸)는 listType이 없다 — PICK_ONE으로 간주
+        String listType = stored.listType() != null ? stored.listType()
+                : RecommendationListType.PICK_ONE.name();
+        boolean buyAll = RecommendationListType.BUY_ALL.name().equals(listType);
+        // sum은 "남은 상품" 기준 재계산 — 화면 카드들의 합과 항상 일치해야 한다(노션 CH-5).
+        // withinBudget은 드롭이 있거나 예산 미발화면 판정 불가 — 키 생략이 아니라 null 리터럴.
+        Integer sum = buyAll ? items.stream().mapToInt(RecommendedCardResponse::price).sum() : null;
+        Object withinBudget = null;
+        if (buyAll) {
+            withinBudget = itemsDropped == 0 && stored.totalBudget() != null
+                    ? Boolean.valueOf(sum <= stored.totalBudget())
+                    : RecommendationListResponse.VERDICT_UNAVAILABLE;
+        }
+        return new RecommendationListResponse(listId, stored.recommendationRequestId(), listType,
+                stored.label(), buyAll ? stored.totalBudget() : null, sum, withinBudget,
+                itemsDropped, items);
     }
 
     private String toJson(StoredList stored) {
@@ -251,7 +268,14 @@ public class RecommendationListService {
         return identity.subType() + ":" + identity.sub();
     }
 
-    /** Redis 저장 형식 — ids 순서가 렌더 순서, reasons는 productId 키잉, owner는 CH-5 소유자 검증용 */
-    record StoredList(List<Long> productIds, Map<Long, String> reasons, String owner) {
+    /**
+     * Redis 저장 형식 — ids 순서가 렌더 순서, reasons는 productId 키잉, owner는 CH-5 소유자 검증용.
+     * requestId·listType·label·totalBudget은 CH-5 응답 확장분(노션 CH-5 2026-07-28) — CH-5는
+     * DB를 읽지 않으므로 캐시에 함께 담는다. 배포 직전에 저장된 구 포맷 키는 이 필드들이 null로
+     * 역직렬화되며(TTL 10분 내 자연 소멸), getList가 listType null을 PICK_ONE으로 간주한다.
+     */
+    record StoredList(List<Long> productIds, Map<Long, String> reasons, String owner,
+                      String recommendationRequestId, String listType, String label,
+                      Integer totalBudget) {
     }
 }
