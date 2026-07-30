@@ -47,6 +47,28 @@ public class BehaviorEvent {
     @Column(columnDefinition = "json")
     private String properties;
 
+    /**
+     * FE 발생 시각 (02 D38) — 서버 수신(created_at)만으로는 SDK 버퍼(10건/5초)만큼 밀려
+     * 서버 직접 적재 로그와 순서가 뒤집힌다. FE 경로는 아직 채우지 않는다(E-1 확장에서 도입).
+     */
+    @Column(name = "occurred_at", columnDefinition = "datetime(6)")
+    private LocalDateTime occurredAt;
+
+    /** ↓ 추천 귀속 4종 (02 D38) — 추천에서 비롯된 이벤트에만 채워진다 */
+    @Column(name = "recommendation_request_id", columnDefinition = "char(36)")
+    private String recommendationRequestId;
+
+    /** FE가 보낸 값을 믿지 않고 서버가 recommendation_list로 도출한다 (E-1 ③.5) */
+    @Column(name = "list_id", length = 64)
+    private String listId;
+
+    @Column(length = 10)
+    private String surface;
+
+    /** 0-based 순위. recommendation_generated는 목록 단위 이벤트라 NULL */
+    @Column
+    private Integer position;
+
     /** 서버 수신 시각 — 증분 분석 커서 (02 behavior_events) */
     @Column(name = "created_at", nullable = false, columnDefinition = "datetime(6)")
     private LocalDateTime createdAt;
@@ -63,6 +85,30 @@ public class BehaviorEvent {
         event.productId = productId;
         event.properties = properties;
         event.createdAt = receivedAt;
+        return event;
+    }
+
+    /**
+     * 서버 적재 전용 (02 D38·D39, 노션 E-1) — 추천 퍼널의 최상단.
+     * FE가 보내지 않으므로 client_event_id가 없고(UNIQUE는 NULL끼리 중복으로 보지 않아 무해),
+     * occurred_at은 적재 시점 = created_at이다(브라우저 시계가 개입하지 않으니 이상치 보정 불필요).
+     * productId는 목록 단위 이벤트라 NULL — 순위(position)도 없다.
+     */
+    public static BehaviorEvent serverGenerated(String eventType, Long memberId, String guestId,
+                                                String sessionKey, String recommendationRequestId,
+                                                String listId, String surface, String properties,
+                                                LocalDateTime at) {
+        BehaviorEvent event = new BehaviorEvent();
+        event.eventType = eventType;
+        event.memberId = memberId;
+        event.guestId = guestId;
+        event.sessionKey = sessionKey;
+        event.recommendationRequestId = recommendationRequestId;
+        event.listId = listId;
+        event.surface = surface;
+        event.properties = properties;
+        event.occurredAt = at;
+        event.createdAt = at;
         return event;
     }
 }
