@@ -108,7 +108,13 @@ public class RecommendationListService {
             }
         }
         try {
-            recommendationListStore.saveAll(lists, items);
+            List<String> skipped = recommendationListStore.saveAll(lists, items);
+            if (!skipped.isEmpty()) {
+                // 정상 재시도(타임아웃 후 재전송)면 무해. 같은 listId에 다른 내용이 오는 계약 위반은
+                // 어차피 최초 수신본이 이기지만(DB·Redis 동일), 조용히 묻히지 않게 남긴다.
+                log.warn("이미 저장된 listId 재전송 — 최초 수신본 유지 (recommendationRequestId={}, listIds={})",
+                        requestId, skipped);
+            }
         } catch (DataIntegrityViolationException e) {
             // 같은 콜백이 동시에 두 번 도착한 경우 — 다른 쪽이 이미 넣었으므로 멱등하게 통과시킨다.
             // 여기서 500을 내면 FastAPI가 products.ready를 발행하지 못해 FE가 카드를 못 받는다.
@@ -116,13 +122,18 @@ public class RecommendationListService {
         }
     }
 
-    /** Redis는 CH-5 조회 전용 캐시. TTL은 생성 시점 고정이라 세션이 연장돼도 늘어나지 않는다(노션 I-21). */
+    /**
+     * Redis는 CH-5 조회 전용 캐시. setIfAbsent인 이유 두 가지(노션 I-21 멱등·TTL 규약) —
+     * ① 재전송이 덮어쓰면 DB(최초 수신본 유지)와 내용이 갈라진다: E-1 귀속은 DB의 position을 쓰는데
+     *    CH-5는 새 내용을 보여주게 된다. ② 덮어쓰기는 TTL을 다시 시작시켜 "생성 시점 고정"을 깬다.
+     * DB만 성공하고 Redis 쓰기가 실패했던 재시도는 키가 없으므로 여전히 채워진다.
+     */
     private void cache(ListEntry entry, String owner) {
         Map<Long, String> reasonById = entry.reasons() == null ? Map.of() : entry.reasons().stream()
                 .filter(r -> r.productId() != null && r.reason() != null)
                 .collect(Collectors.toMap(RecommendationCallbackRequest.Reason::productId,
                         RecommendationCallbackRequest.Reason::reason, (a, b) -> b));
-        redisTemplate.opsForValue().set(LIST_KEY_PREFIX + entry.listId(),
+        redisTemplate.opsForValue().setIfAbsent(LIST_KEY_PREFIX + entry.listId(),
                 toJson(new StoredList(entry.productIds(), reasonById, owner)),
                 Duration.ofMinutes(chatProperties.sessionTtlMinutes()));
     }
@@ -135,6 +146,11 @@ public class RecommendationListService {
         // contains(null)은 List.of가 NPE를 던지므로 쓰지 않는다
         if (productIds == null || productIds.isEmpty() || productIds.size() > MAX_PRODUCT_IDS
                 || productIds.stream().anyMatch(Objects::isNull)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
+        // 같은 상품이 두 번 실리면 (list_id, position) PK로 position만 다른 2행이 생기고
+        // 카드·이유가 두 번 렌더된다 — 조용히 이상한 데이터를 만들지 말고 거절한다
+        if (productIds.stream().distinct().count() != productIds.size()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         // label은 컬럼이 VARCHAR(50)이라 넘기면 DB에서 터진다 — 500 대신 400으로 돌려준다
