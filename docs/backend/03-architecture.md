@@ -308,8 +308,8 @@ com.jarvis
 **③ 에이전트 조회 추천 (직결 + 2왕복 리랭킹, D5·05 §1)** — FE가 `POST /api/chat/sessions`(CH-1)로 세션과 함께 **스트림 티켓**을 받고(Spring이 신원 검증 후 RS256 서명·발급) → FE가 그 티켓으로 **FastAPI에 직접 SSE 연결** → FastAPI가 발화에서 **정형조건(가격·카테고리·색상·재고·판매상태)** 과 **의미조건(원룸에 적합·공부하기 좋은…)** 을 추출 →
   - **[1왕복 · 후보 조회]** 정형조건만 `GET /internal/products/search` 콜백 → InternalController가 ProductService 재사용해 MariaDB에서 후보 조회. **정형 진실(가격·재고·상태)은 여기서 확정** — 이후 벡터DB가 낡아도 살 수 없는 상품이 안 섞임. 응답은 **리랭킹용 최소필드(productId·name·summary·attributes·tags)**, **라운드1 LIMIT 상한**으로 후보 폭발(느슨한 대분류) 방지.
   - **[리랭킹]** FastAPI가 **자기 소유 벡터DB(productId·attributes·embedding)** 로 의미조건 리랭킹 → **top-K(20~30)만** LLM에 태워 추천 이유·채팅 응답 생성 → **Top5** 선정(하이드레이션에서 재고/HIDDEN 드롭 대비 넉넉히 고름).
-  - **[목록 저장 콜백]** FastAPI가 Top5 확정 후 `POST /internal/recommendations`(I-21 — sessionId·listId·productIds 순서 유지) 콜백 → Spring이 Redis TTL 저장. **콜백 성공 후에만** SSE `products.ready` 발행(실패 시 발행 금지 — FE가 빈 목록을 조회하지 않게). *스키마 OPEN(LLM 협의)*
-  - **[SSE 발행]** `token`(응답 텍스트)·`conditions`(칩)·`suggestions`/`budget`(해당 시)·`products.ready{listId}`(**상관키만**, 카드 필드 없음)·`done`.
+  - **[목록 저장 콜백]** FastAPI가 목록 확정 후 `POST /internal/recommendations`(I-21 — sessionId·recommendationRequestId·listType·lists[{listId, productIds 순서 유지}], **목록당 9개·목록 최대 10개**) 콜백 → Spring이 **Redis(10분, CH-5 조회 전용) + DB(영구, 정본)** 양쪽 저장 + `recommendation_generated` 적재. **콜백 성공 후에만** SSE `products.ready` 발행(실패 시 발행 금지 — FE가 빈 목록을 조회하지 않게). *스키마 확정 2026-07-28~30*
+  - **[SSE 발행]** `token`(응답 텍스트)·`conditions`(칩)·`suggestions`(해당 시)·`products.ready{listIds[]}`(**상관키만**, 카드 필드 없음)·`done`.
   - **[2왕복 · FE pull 하이드레이션]** FE가 `products.ready` 수신을 **트리거**로 `GET /api/chat/lists/{listId}`(CH-5, Spring) 호출 → 카드 필드(가격·정가·썸네일·재고·평점·reviewCount)를 **BE 자기 DB에서** 받아 순서 그대로 우측 패널 렌더. 추천 이유(reason)는 SSE로 직접 옴 — 목록 API에 없음. (구 `products{id,reason}` + P-7 하이드레이션 방식은 이것으로 대체 — P-7은 2026-07-28 폐기(04). SSE는 단방향이라 "결과 준비됨" 신호도 같은 열린 소켓의 이벤트로 전달 — FE는 폴링하지 않음.)
   - 게스트면 티켓 `sub_type:guest`, 개인화 없이 동일 흐름. **SELLER 채널**은 변종(brandId는 서버 유도, I-6 사용).
 

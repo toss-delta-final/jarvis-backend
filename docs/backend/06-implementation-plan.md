@@ -39,7 +39,7 @@ review(M-1·M-3 — **M-2는 MVP 제외**, FE 화면 없음 07-17) + P-3 실데�
 - **완료**: CH-1이 유효 티켓 발급 → (mock)FastAPI가 JWKS로 검증 → I-21 콜백 저장 → SSE `products.ready{listId}` 수신 → FE가 CH-5로 카드 조립. internal API가 토큰 없이 401, FE 경로로 접근 불가.
 - **선행 조건**: 05 계약 v0.3 핵심(직결·티켓·2왕복·목록 콜백)은 합의/제안 상태(2026-07-17). 잔여 OPEN(05 §4)은 스텁으로 진행.
 - **(2026-07-18 구현 결정) 판매자 콜백(I-6~I-16)은 Phase 6으로 이관**: S-1~S-3와 서비스·검증을 공유하도록 명세돼 있어(04 — S-3=I-9 동일 서비스, 상품수정은 I-11이 소관) Phase 5에서 먼저 만들면 중복 후 재통합이 된다. Phase 5의 internal 범위는 소비자·추천 축(I-1~I-5·I-18·I-19·I-20·I-21) + I-17 스텁(501 `NOT_IMPLEMENTED`). I-13도 판매자 그룹과 함께 Phase 6으로 — **당시엔 명세 미확정이라 스텁 예정이었으나, 노션 본문 확정(2026-07-18)으로 Phase 6에서 실구현 완료**.
-- **(2026-07-18 구현 확정)** CH-5는 05 제안 스키마대로 임시 구현(`{listId, items[카드]}` — 순서 보존·HIDDEN/품절 드롭), I-21은 `{sessionId, listId, productIds[]}`(UUID 필수·≤20·Redis TTL 10분). I-20 통지는 로그아웃·새 대화 트리거만 — 30분 유휴는 Redis TTL 자연 소멸이라 통지 없음(FastAPI 자체 TTL이 백스톱, 05 §3).
+- **(2026-07-18 구현 확정)** CH-5는 05 제안 스키마대로 임시 구현(`{listId, items[카드]}` — 순서 보존·HIDDEN/품절 드롭), I-21은 `{sessionId, listId, productIds[]}`(UUID 필수·≤20·Redis TTL 10분). **(2026-07-30 개정 — 미구현)** 노션 정본은 다중 `lists[]`+`listType`+**목록당 9개**·목록 10개 상한이고 저장도 Redis+DB 양쪽이다. CH-5도 `listType`·`itemsDropped`·(`BUY_ALL`이면)`sum`·`withinBudget`이 추가된다 — 05 §I-21 참조. I-20 통지는 로그아웃·새 대화 트리거만 — 30분 유휴는 Redis TTL 자연 소멸이라 통지 없음(FastAPI 자체 TTL이 백스톱, 05 §3).
 
 ## Phase 6. 판매자 + 시드 완성 + 통합 (1일)
 

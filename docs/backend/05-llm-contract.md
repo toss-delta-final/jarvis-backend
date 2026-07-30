@@ -110,17 +110,18 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 3. FastAPI → Spring    : [1왕복] 정형조건만 → GET /internal/products/search (I-1)
    Spring → FastAPI    :   MariaDB 후보 조회 — 정형 진실 확정, 리랭킹용 최소필드만 반환
 4. FastAPI             : 벡터DB(임베딩)로 의미 리랭킹 → top-K만 LLM 태워 Top5 선정 + 이유·응답 생성
-5. FastAPI → Spring    : [콜백] 확정 Top5 목록 저장 → POST /internal/recommendations (I-21)
-   Spring              :   {sessionId, listId, productIds[](순서 유지)} Redis TTL 저장
-6. FastAPI → FE(SSE)   : token/conditions/…/products.ready{listId}/done — 콜백(5) 성공 후에만 발행
-7. FE → Spring         : [2왕복] products.ready 수신 트리거 → GET /api/chat/lists/{listId} (CH-5)
+5. FastAPI → Spring    : [콜백] 확정 목록 저장 → POST /internal/recommendations (I-21)
+   Spring              :   {sessionId, recommendationRequestId, listType, lists[{listId, productIds[](순서 유지), reasons?}]}
+                           → Redis(10분, CH-5 조회 전용) + DB(영구, 정본) 양쪽 저장 + recommendation_generated 적재
+6. FastAPI → FE(SSE)   : token/conditions/…/products.ready{listIds[]}/done — 콜백(5) 성공 후에만 발행
+7. FE → Spring         : [2왕복] products.ready 수신 트리거 → 목록마다 GET /api/chat/lists/{listId} (CH-5)
    Spring → FE         :   저장 순서대로 카드 완결 필드(가격·정가·이미지·rating·reviewCount) 부착해 반환 → FE 렌더
 ```
 
-- **콜백 실패 시 products.ready 발행 금지** — FE가 존재하지 않는 listId를 조회하는 경로를 만들지 않는다. I-21 body·CH-5 응답 스키마는 **OPEN(LLM 협의 중)**.
+- **콜백 실패 시 products.ready 발행 금지** — FE가 존재하지 않는 listId를 조회하는 경로를 만들지 않는다. I-21 body·CH-5 응답 스키마는 **2026-07-28~30 확정**(노션 I-21·CH-5 정본 — 다중 `lists[]`·`listType`·목록당 9개).
 
 - **비용 상한**: ~~(a) 라운드1 LIMIT~~ — **2026-07-27 폐기**(§I-1). 판매량순 컷이 의미 리랭킹과 직교해 정답 후보를 잘라냈다. 후보 수 상한 대신 응답 압축(gzip)과 정형 필터 강화로 비용을 다룬다. (b) **top-K 캡** — 벡터 리랭킹 후 LLM에 태우는 후보를 20~30개로 제한(토큰은 벡터검색이 아니라 LLM이 후보를 읽을 때 든다). 실제 토큰 비용은 여기서 걸리므로 (a) 폐기가 LLM 비용을 늘리지 않는다.
-- **Top5 넉넉히 선정**: 카드 부착(CH-5)에서 HIDDEN·품절이 드롭될 수 있으니 FastAPI는 5개보다 넉넉히(예 7~8) 골라 순서를 준다 — 드롭 후에도 5개 유지.
+- **넉넉히 선정**: 카드 부착(CH-5)에서 HIDDEN·품절이 드롭될 수 있으니 FastAPI는 노출 목표보다 넉넉히 골라 순서를 준다 — 드롭 후에도 목표 개수 유지. **목록당 상한은 9개**(2026-07-30 확정)이므로 그 안에서 여유를 둔다.
 - **정합성 경계**: 벡터DB attributes는 **배치 동기화**(§1-2-2)라 낡아도 무방 — 정형 진실(가격·재고·상태)은 3(라운드1)·7(CH-5) 모두 Spring이 확정하므로 거짓 가격·품절이 카드에 안 뜬다.
 
 ### 1-2-2. 벡터DB 동기화 (LLM 팀 소유)
@@ -215,10 +216,14 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 ### I-19. 구매 이력 목록 `GET /internal/members/{userId}/orders`
 - CS 챗봇 "내 주문 어때?" 용 — `status` 단일 필터(어휘: `ORDERED|SHIPPING|DELIVERED|CONFIRMED|CANCELLED|RETURNED` — 우리 상태명). 응답은 camelCase·숫자 id, 아이템에 `categoryName`(소분류명 — 노션 I-19), `shippingFee` 항상 0(배송비 없음 확정). I-4(요약)와 역할 분담.
 
-### I-21. 추천 목록 콜백 `POST /internal/recommendations` (확정 2026-07-18 — LLM 합의)
-- body: `{ "sessionId": "<uuid>", "listId": "<FastAPI 생성 문자열>", "productIds": [ … ], "reasons": [ { "productId", "reason" } ]? }`(순서 유지) — Spring이 Redis TTL 저장, FE가 CH-5(`GET /api/chat/lists/{listId}`)로 조회. **products.ready 발행 전 호출 — 콜백 실패 시 products.ready 발행 금지**(§1-2-1).
+### I-21. 추천 목록 콜백 `POST /internal/recommendations` (확정 2026-07-18 — LLM 합의 · 2026-07-28~30 다중 목록 개정)
+- body: `{ "sessionId": "<uuid>", "recommendationRequestId": "<uuid|ulid>", "listType": "PICK_ONE|BUY_ALL", "totalBudget"?, "lists": [ { "listId", "label"?, "productIds": [ … ], "reasons"? } ] }`(순서 유지) — **한 요청에 목록이 여러 개** 올 수 있고, FE는 목록마다 CH-5로 조회한다. **products.ready 발행 전 호출 — 콜백 실패 시 products.ready 발행 금지**(§1-2-1).
+- **`listType`**: `PICK_ONE`(목록 안 상품이 서로 대안 — 하나만 산다) / `BUY_ALL`(각자 다른 역할 — 전부 산다). `PICK_ONE`+목록 N개는 **니즈별 추천**("감자탕" → 감자 후보 9개·시래기 후보 9개·뼈 후보 9개), `BUY_ALL`+N개는 **세트 여러 안**. 판단 기준은 예산이 아니다.
 - **추천 이유 이원화(합의)**: SSE는 채팅 말풍선용(Spring 무관), 콜백 `reasons`는 우측 추천 카드용 — CH-5 카드에 `reason`으로 echo(없으면 null).
-- 검증: sessionId UUID / listId 영숫자·`-`·`_` ≤64(그 외 400 — Redis 키 안전) / productIds 1~20개. Redis TTL 10분(세션 TTL과 동일). CH-5 응답은 `{listId, items[카드 완결 필드 + reason]}`(순서 보존, HIDDEN·품절 드롭, 만료 404).
+- 검증: sessionId UUID / listId 영숫자·`-`·`_` ≤64(그 외 400 — Redis 키 안전) / **productIds 1~9개(목록당)** / **lists 1~10개**. `reasons`도 목록당 9개·`reason` 200자 상한.
+- **저장은 Redis + DB 양쪽**: Redis는 TTL 10분(생성 시점 고정, **CH-5 조회 전용**), DB는 **영구 보존이 정본**(E-1 귀속 검증 + 추천 품질 평가). DB에 남아 있어도 CH-5는 만료 후 404 — `listId`가 인증 없이 조회되는 열쇠라 노출 창을 10분으로 제한한다.
+- CH-5 응답은 `{listId, recommendationRequestId, listType, label?, itemsDropped, items[카드 완결 필드 + reason]}`(순서 보존, HIDDEN·품절 드롭, 만료 404). `BUY_ALL`이면 `totalBudget`·`sum`·`withinBudget`이 추가된다.
+- **세션 만료 시**: 신원을 해소할 수 없어도 200으로 저장하되 **익명 저장**(`member_id`·`guest_id` 빈 값) — 그 목록은 CH-5에서 조회되지 않고(소유자 미기록 = fail-closed) `recommendation_generated`도 주체 없는 행으로 남는다.
 - **listId 엔트로피(2026-07-18 시큐리티 리뷰)**: CH-5는 게스트 허용 공개 조회라 listId가 사실상 bearer 키다 — FastAPI는 listId를 **UUID급 무작위(≥128bit)**로 생성해야 한다(순번·타임스탬프 등 추측 가능한 형식 금지).
 
 ## 2-1. 아웃바운드: Spring → FastAPI

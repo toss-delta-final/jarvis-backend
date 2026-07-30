@@ -182,7 +182,7 @@
 | I-18 | GET | /internal/cart | 챗봇 장바구니 조회 — userId/guestId 메아리(게스트 허용), 응답 item에 productName·optionName 필수, 빈 장바구니도 200 |
 | I-19 | GET | /internal/members/{id}/orders | 구매 이력 목록(CS 챗봇 "내 주문 어때?") — status 단일 필터(어휘: ORDERED\|SHIPPING\|DELIVERED\|CONFIRMED\|CANCELLED\|RETURNED), 응답 camelCase·숫자 id, 아이템에 `categoryName`(소분류명 — 노션 I-19), shippingFee 항상 0(배송비 없음 확정). I-4(요약)와 역할 분담 |
 | I-20 | POST | {LLM_BASE_URL}/events/session-end | **방향 예외: Spring→FastAPI(아웃바운드)** 세션 종료 통지 — 트리거 로그아웃/새 대화(회원만), reason enum LOGOUT\|NEW_CONVERSATION, **멱등**(응답 202 {status: accepted\|duplicate}). sessionId는 **UUID 그대로 수신(2026-07-17 LLM 합의 — 구 S- 형식 폐기)**. 상세는 05 §2-1(아웃바운드 관례) |
-| I-21 | POST | /internal/recommendations | **추천 목록 콜백 (확정 2026-07-18)** — FastAPI가 리랭킹 확정 Top5를 저장: `{sessionId(UUID), listId(FastAPI 생성 문자열 — 영숫자·`-`·`_` ≤64), productIds[](≤20, 순서 유지), reasons[{productId, reason}]?}` → Redis TTL 10분. reasons는 **추천 카드용 이유**(SSE의 채팅용 이유와 이원화) — CH-5 카드에 echo. **products.ready 발행 전 호출, 콜백 실패 시 products.ready 발행 금지**(05 §1-2-1). CH-5와 쌍 |
+| I-21 | POST | /internal/recommendations | **추천 목록 콜백 (확정 2026-07-18 · 2026-07-28~30 다중 목록 개정)** — FastAPI가 리랭킹 확정 목록을 저장: `{sessionId(UUID), recommendationRequestId, listType(PICK_ONE\|BUY_ALL), totalBudget?, lists[{listId(FastAPI 생성 — 영숫자·`-`·`_` ≤64, ≥128bit 무작위), label?, productIds[](**≤9, 목록당**, 순서 유지), reasons[{productId, reason}]?}](**≤10**)}` → **Redis(TTL 10분, CH-5 조회 전용) + DB(영구, 정본)** 양쪽 저장 + `recommendation_generated` 적재. reasons는 **추천 카드용 이유**(SSE의 채팅용 이유와 이원화) — CH-5 카드에 echo. **products.ready 발행 전 호출, 콜백 실패 시 products.ready 발행 금지**(05 §1-2-1). 세션 만료 시 익명 저장(CH-5 조회 불가). CH-5와 쌍 |
 
 - 번호 체계는 노션 「API 현재」 DB 기준(2026-07-17)으로 확정 — 구 로컬 I-6(`…/stats`)·I-7(판매자 상품 상세)은 각각 I-6(sales)·I-9(목록)로 대체/흡수.
 - I-20만 호출 방향이 반대(Spring→FastAPI) — 스키마·표기는 05의 아웃바운드 관례(05 §2-1)를 따른다.
@@ -201,7 +201,7 @@
 - [ ] P-5 개인화 추천의 응답 형태 — **상품 ID 목록 + BE 카드 조립(P-4·CH-5 카드와 동형)으로 제안 확정 방향**(05 §4), FastAPI 응답 스키마만 LLM 팀 확정 대기
 - [x] ~~상품 상세 "바로 구매" 지원 여부~~ — **있음 확인(2026-07-10)**. O-1 body에 items[] 경로 추가로 반영(§4), 스키마 변경 없음
 - [x] ~~최근 본 상품 "개별 삭제(X)" 여부~~ — 기능 없음 확인(2026-07-10, 02 D29 종결)
-- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7은 FE 전환 완료로 폐지(2026-07-28 — 상단 결정 노트)
+- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7은 FE 전환 완료로 폐지(2026-07-28 — 상단 결정 노트). **2026-07-28~30 개정**: 다중 `lists[]`·`listType`(PICK_ONE\|BUY_ALL)·목록당 9개·목록 10개 상한, DB 영구 보존 추가 — **구현은 ERD 반영 후**(§10 I-21 행 참조)
 - [ ] CH-3(CS 챗봇) 직결 전환 후 폐지/유지 — **OPEN(LLM 확인 중)**
 - [x] ~~I-13(행동 이벤트 조회/집계) 본문 명세~~ — **노션 재작성 확인·구현 완료(2026-07-18)**
 - [x] ~~I-17(벡터DB 동기화 배치 pull) 커서 방식·리뷰 포함 여부~~ — **확정(2026-07-23)**: 커서=Base64URL `(updatedAt,id)` keyset, status `ON_SALE|HIDDEN`, ON_SALE에 `rating`·`reviewCount`(조회 집계)·`attributes`(JSON object) 포함
