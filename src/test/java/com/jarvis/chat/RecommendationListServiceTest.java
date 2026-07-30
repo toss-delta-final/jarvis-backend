@@ -237,7 +237,7 @@ class RecommendationListServiceTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(recommendationListStore, never()).saveAll(any(), any());
-        verify(valueOperations, never()).set(anyString(), anyString(), any(Duration.class));
+        verify(valueOperations, never()).setIfAbsent(anyString(), anyString(), any(Duration.class));
     }
 
     // 재전송이 동시에 도착해 UNIQUE에 걸려도 200이어야 한다 — 500이면 products.ready가 발행되지 않는다
@@ -250,6 +250,28 @@ class RecommendationListServiceTest {
         service.store(request("PICK_ONE", null, entry(LIST_ID, null, List.of(1L))));
 
         assertThat(capturedCache(LIST_ID).productIds()).containsExactly(1L);
+    }
+
+    // 타임아웃 후 재전송 — DB는 건너뛰어도 200이고, Redis는 setIfAbsent라 첫 저장이 실패했던
+    // 키만 채워진다(있으면 no-op → 내용·TTL 불변). DB와 Redis가 항상 최초 수신본으로 일치한다
+    @Test
+    @DisplayName("I-21 — 이미 저장된 listId 재전송은 멱등 통과, 캐시는 없을 때만 채운다")
+    void storeResendKeepsFirstCopy() throws Exception {
+        when(recommendationListStore.saveAll(any(), any())).thenReturn(List.of(LIST_ID));
+
+        service.store(request("PICK_ONE", null, entry(LIST_ID, null, List.of(9L))));
+
+        assertThat(capturedCache(LIST_ID).productIds()).containsExactly(9L);
+    }
+
+    // 같은 상품이 두 번 실리면 (list_id, position) PK로 position만 다른 2행 + 카드 중복 렌더가 된다
+    @Test
+    @DisplayName("I-21 — 한 목록 안에 같은 productId가 겹치면 400")
+    void storeRejectsDuplicateProductIdInList() {
+        assertThatThrownBy(() -> service.store(
+                request("PICK_ONE", null, entry(LIST_ID, null, List.of(1L, 2L, 1L)))))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
     }
 
     @Test
@@ -365,9 +387,10 @@ class RecommendationListServiceTest {
                 reasons.length == 0 ? null : List.of(reasons));
     }
 
+    // 캐시는 setIfAbsent가 계약 — 재전송이 내용을 덮거나 TTL을 다시 시작시키면 안 된다(노션 I-21)
     private RecommendationListService.StoredList capturedCache(String listId) throws Exception {
         ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
-        verify(valueOperations).set(eq("chat:list:" + listId), value.capture(),
+        verify(valueOperations).setIfAbsent(eq("chat:list:" + listId), value.capture(),
                 eq(Duration.ofMinutes(10)));
         return objectMapper.readValue(value.getValue(), RecommendationListService.StoredList.class);
     }
