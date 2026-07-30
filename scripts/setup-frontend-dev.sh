@@ -77,6 +77,15 @@ else
   say "스키마 이미 적용됨 — 건너뜀"
 fi
 
+# ── 3.5) 증분 마이그레이션 (항상 적용 — 전부 재실행 무해) ──
+# schema.sql은 최초 생성 전용이라, 이미 스키마가 깔린 DB에 그 뒤 추가된 테이블·컬럼을
+# 반영하는 경로가 이것뿐이다. 날짜 접두사 오름차순 = 적용 순서.
+for f in scripts/migrate-*.sql; do
+  [ -e "$f" ] || continue
+  say "마이그레이션 적용: $f"
+  MDB -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$f"
+done
+
 # ── 4) 시드 적용 (전부 재실행 무해: INSERT IGNORE / NOT EXISTS) ──
 for f in scripts/seed-accounts.sql scripts/seed-catalog.sql scripts/seed-commerce-demo.sql scripts/seed-analytics-demo.sql; do
   say "시드 적용: $f"
