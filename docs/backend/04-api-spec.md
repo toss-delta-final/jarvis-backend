@@ -201,7 +201,7 @@
 - [ ] P-5 개인화 추천의 응답 형태 — **상품 ID 목록 + BE 카드 조립(P-4·CH-5 카드와 동형)으로 제안 확정 방향**(05 §4), FastAPI 응답 스키마만 LLM 팀 확정 대기
 - [x] ~~상품 상세 "바로 구매" 지원 여부~~ — **있음 확인(2026-07-10)**. O-1 body에 items[] 경로 추가로 반영(§4), 스키마 변경 없음
 - [x] ~~최근 본 상품 "개별 삭제(X)" 여부~~ — 기능 없음 확인(2026-07-10, 02 D29 종결)
-- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7은 FE 전환 완료로 폐지(2026-07-28 — 상단 결정 노트). **2026-07-28~30 개정**: 다중 `lists[]`·`listType`(PICK_ONE\|BUY_ALL)·목록당 9개·목록 10개 상한, DB 영구 보존 추가 — **구현은 ERD 반영 후**(§10 I-21 행 참조)
+- [x] ~~CH-5/I-21 추천 목록(콜백+조회) 스키마~~ — **확정(2026-07-18 LLM 합의)**: listId는 FastAPI 생성 문자열, reason 이원화(SSE=채팅용 / 콜백 reasons=카드용 → CH-5 echo), TTL 10분. P-7은 FE 전환 완료로 폐지(2026-07-28 — 상단 결정 노트). **2026-07-28~30 개정**: 다중 `lists[]`·`listType`(PICK_ONE\|BUY_ALL)·목록당 9개·목록 10개 상한, DB 영구 보존 추가 — **I-21 구현 완료**(Redis+DB, 02 D38 테이블). FastAPI 전환 전까지 구 평평 구조도 함께 수용(과도기). **잔여**: CH-5의 `listType`·`sum`·`withinBudget`, `recommendation_generated` 적재(§10 I-21 행 참조)
 - [ ] CH-3(CS 챗봇) 직결 전환 후 폐지/유지 — **OPEN(LLM 확인 중)**
 - [x] ~~I-13(행동 이벤트 조회/집계) 본문 명세~~ — **노션 재작성 확인·구현 완료(2026-07-18)**
 - [x] ~~I-17(벡터DB 동기화 배치 pull) 커서 방식·리뷰 포함 여부~~ — **확정(2026-07-23)**: 커서=Base64URL `(updatedAt,id)` keyset, status `ON_SALE|HIDDEN`, ON_SALE에 `rating`·`reviewCount`(조회 집계)·`attributes`(JSON object) 포함

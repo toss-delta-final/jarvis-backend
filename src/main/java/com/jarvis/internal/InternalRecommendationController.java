@@ -10,8 +10,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * I-21 (04 §10 — 2026-07-18 LLM 합의로 확정) — FastAPI가 리랭킹 확정 Top5(+카드용 reason)를
- * 저장한 뒤에만 SSE products.ready{listId}를 발행한다(콜백 실패 시 발행 금지 — 05 §1-2-1). CH-5와 쌍.
+ * I-21 (04 §10 — 2026-07-30 다중 목록 확정) — FastAPI가 리랭킹 확정 목록(+카드용 reason)을
+ * 저장한 뒤에만 SSE products.ready{listIds}를 발행한다(콜백 실패 시 발행 금지 — 05 §1-2-1). CH-5와 쌍.
  */
 @RestController
 @RequiredArgsConstructor
@@ -21,8 +21,7 @@ public class InternalRecommendationController {
 
     @PostMapping("/internal/recommendations")
     public ApiResponse<Void> store(@Valid @RequestBody RecommendationCallbackRequest request) {
-        recommendationListService.store(request.sessionId(), request.listId(),
-                request.productIds(), request.reasons());
+        recommendationListService.store(request);
         return ApiResponse.success(null);
     }
 }
