@@ -61,15 +61,37 @@ openssl rand -hex 32
 
 ## 4. DB 준비 (필수)
 
-JPA는 `ddl-auto: validate` — **스키마를 만들지도 바꾸지도 않는다.** 배포 DB에 먼저 적용:
+JPA는 `ddl-auto: validate` — **스키마를 만들지도 바꾸지도 않는다.** 엔티티가 기대하는 테이블·컬럼이
+DB에 없으면 앱이 **기동 자체를 거부**하므로, DB 반영이 항상 앱 배포보다 먼저다.
 
-1. [docs/backend/schema.sql](docs/backend/schema.sql) — 스키마
+### 4-1. 신규 DB (처음 구축)
+
+1. [docs/backend/schema.sql](docs/backend/schema.sql) — 스키마 전체 (최초 1회 전용 — 재실행 불가 DDL)
 2. [scripts/](scripts/) 시드 — `seed-accounts.sql` → `seed-catalog.sql` → `seed-commerce-demo.sql` → `seed-analytics-demo.sql` 순 (재실행 무해)
 
 ```bash
 mariadb -h <host> -u <user> -p<pw> <db> < docs/backend/schema.sql
 mariadb -h <host> -u <user> -p<pw> <db> < scripts/seed-accounts.sql   # 이후 catalog, commerce-demo, analytics-demo 순
 ```
+
+### 4-2. 이미 운영 중인 DB (스키마가 변경됐을 때)
+
+`schema.sql`을 다시 흘리면 "table already exists"로 중단된다 — 대신 **증분 마이그레이션**을 적용한다.
+`scripts/migrate-*.sql`을 **날짜 접두사 오름차순**으로 전부 실행하면 된다(전부 재실행 무해 —
+이미 적용된 것은 조용히 건너뛰므로 어디까지 적용했는지 기억할 필요 없음). 쌓인 데이터는 보존된다.
+
+```bash
+for f in scripts/migrate-*.sql; do
+  mariadb -h <host> -u <user> -p<pw> <db> < "$f"
+done
+```
+
+**⚠️ 순서: 마이그레이션 → 앱 재기동.** main 머지로 새 이미지가 이미 배포됐다면 새 컨테이너는
+마이그레이션 전까지 기동 실패(unhealthy)를 반복한다 — 마이그레이션을 적용하는 즉시 정상 기동된다.
+
+| 마이그레이션 | 내용 | 필요 앱 버전 |
+|---|---|---|
+| `migrate-2026-07-30-recommendation-list.sql` | 추천 목록 영구 사본 테이블 2개 신설 + `behavior_events` 컬럼 5개(전부 NULL 허용)·인덱스 2개 | 2026-07-30 이후 (PR #57·#59) |
 
 ## 5. 헬스체크
 
@@ -98,7 +120,7 @@ mariadb -h <host> -u <user> -p<pw> <db> < scripts/seed-accounts.sql   # 이후 c
 - [ ] `deploy.env` 작성 — **시크릿은 §3대로 새로 생성**, `INTERNAL_API_TOKEN`은 LLM팀과 합의, `LLM_BASE_URL`은 LLM팀에서 수령
       - `JWT_SECRET`은 **배포 서버 전용 값**으로 생성(로컬 개발값과 달라도 무방 — 각 서버가 자기 키로 서명·검증).
         기본값이 없으므로 미설정 시 기동 실패. **운영 중 교체하면 발급된 AT/RT가 전부 무효화**되어 전원 재로그인.
-- [ ] 배포 DB에 `docs/backend/schema.sql` + 시드(phase1·2·6) 적용
+- [ ] 배포 DB 반영 — 신규 DB면 `docs/backend/schema.sql` + 시드 4종(§4-1), **이미 운영 중이면 `scripts/migrate-*.sql`만**(§4-2, 앱 재기동 전에)
 - [ ] 컨테이너 실행 후 `/actuator/health` = UP 확인
 - [ ] FE팀에 **공개 API URL** 공유 (FE는 프록시 타깃으로 사용)
 - [ ] (공개 노출 시) `/internal/**` 인그레스 차단
