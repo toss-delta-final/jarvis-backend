@@ -112,7 +112,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 4. FastAPI             : 벡터DB(임베딩)로 의미 리랭킹 → top-K만 LLM 태워 확정 목록 선정(목록당 ≤9) + 이유·응답 생성
 5. FastAPI → Spring    : [콜백] 확정 목록 저장 → POST /internal/recommendations (I-21)
    Spring              :   {sessionId, recommendationRequestId, listType, lists[{listId, productIds[](순서 유지), reasons?}]}
-                           → Redis(10분, CH-5 조회 전용) + DB(영구, 정본) 양쪽 저장 + recommendation_generated 적재(잔여 구현)
+                           → Redis(10분, CH-5 조회 전용) + DB(영구, 정본) 양쪽 저장 + recommendation_generated 적재(목록당 1행)
 6. FastAPI → FE(SSE)   : token/conditions/…/products.ready{listIds[]}/done — 콜백(5) 성공 후에만 발행
 7. FE → Spring         : [2왕복] products.ready 수신 트리거 → 목록마다 GET /api/chat/lists/{listId} (CH-5)
    Spring → FE         :   저장 순서대로 카드 완결 필드(가격·정가·이미지·rating·reviewCount) 부착해 반환 → FE 렌더

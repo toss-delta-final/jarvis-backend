@@ -10,6 +10,7 @@ import com.jarvis.internal.dto.RecommendationCallbackRequest;
 import com.jarvis.internal.dto.RecommendationCallbackRequest.ListEntry;
 import com.jarvis.product.ProductService;
 import com.jarvis.product.dto.ProductCardResponse;
+import com.jarvis.recommendation.RecommendationEventRecorder;
 import com.jarvis.recommendation.RecommendationList;
 import com.jarvis.recommendation.RecommendationListItem;
 import com.jarvis.recommendation.RecommendationListStore;
@@ -55,6 +56,7 @@ public class RecommendationListService {
     private final ObjectMapper objectMapper;
     private final ChatSessionService chatSessionService;
     private final RecommendationListStore recommendationListStore;
+    private final RecommendationEventRecorder recommendationEventRecorder;
 
     /**
      * I-21 — sessionId는 세션 계약상 UUID, listId는 안전 문자열이면 형식 무관.
@@ -83,18 +85,26 @@ public class RecommendationListService {
             log.warn("추천 목록을 익명으로 저장한다 — 세션이 이미 만료됐다. CH-5에서 조회되지 않는다"
                     + " (recommendationRequestId={})", requestId);
         }
-        persist(request, entries, listType, requestId, identity);
+        List<RecommendationList> saved = persist(request, entries, listType, requestId, identity);
 
         String owner = identity == null ? null : ownerKey(identity);
         entries.forEach(entry -> cache(entry, owner, requestId, listType, request.totalBudget()));
+
+        // 분석 적재는 맨 끝 — 여기서 실패해도 조회 경로(DB·Redis)는 이미 준비돼 있다.
+        // 재전송으로 건너뛴 목록은 saved에 없으므로 recommendation_generated가 이중 계상되지 않는다.
+        recommendationEventRecorder.recordGenerated(saved);
     }
 
     /**
      * DB가 정본이라 먼저 쓴다. Redis 쓰기는 트랜잭션 밖에서 한다 —
      * 열린 DB 트랜잭션 안에서 Redis를 기다리지 않는다(ChatSessionService와 같은 원칙).
+     *
+     * @return 이번 호출로 새로 저장된 목록 — recommendation_generated 적재 대상(재전송분 제외)
      */
-    private void persist(RecommendationCallbackRequest request, List<ListEntry> entries,
-                         RecommendationListType listType, String requestId, ChatIdentity identity) {
+    private List<RecommendationList> persist(RecommendationCallbackRequest request,
+                                             List<ListEntry> entries,
+                                             RecommendationListType listType, String requestId,
+                                             ChatIdentity identity) {
         LocalDateTime now = LocalDateTime.now();
         List<RecommendationList> lists = new ArrayList<>();
         List<RecommendationListItem> items = new ArrayList<>();
@@ -109,16 +119,22 @@ public class RecommendationListService {
         }
         try {
             List<String> skipped = recommendationListStore.saveAll(lists, items);
-            if (!skipped.isEmpty()) {
-                // 정상 재시도(타임아웃 후 재전송)면 무해. 같은 listId에 다른 내용이 오는 계약 위반은
-                // 어차피 최초 수신본이 이기지만(DB·Redis 동일), 조용히 묻히지 않게 남긴다.
-                log.warn("이미 저장된 listId 재전송 — 최초 수신본 유지 (recommendationRequestId={}, listIds={})",
-                        requestId, skipped);
+            if (skipped.isEmpty()) {
+                return lists;
             }
+            // 정상 재시도(타임아웃 후 재전송)면 무해. 같은 listId에 다른 내용이 오는 계약 위반은
+            // 어차피 최초 수신본이 이기지만(DB·Redis 동일), 조용히 묻히지 않게 남긴다.
+            log.warn("이미 저장된 listId 재전송 — 최초 수신본 유지 (recommendationRequestId={}, listIds={})",
+                    requestId, skipped);
+            return lists.stream()
+                    .filter(list -> !skipped.contains(list.getListId()))
+                    .toList();
         } catch (DataIntegrityViolationException e) {
             // 같은 콜백이 동시에 두 번 도착한 경우 — 다른 쪽이 이미 넣었으므로 멱등하게 통과시킨다.
             // 여기서 500을 내면 FastAPI가 products.ready를 발행하지 못해 FE가 카드를 못 받는다.
+            // 저장 주체가 저쪽이므로 recommendation_generated도 저쪽이 남긴다 — 여기선 비운다.
             log.warn("추천 목록 중복 저장 경합 — 멱등 처리 (recommendationRequestId={})", requestId, e);
+            return List.of();
         }
     }
 

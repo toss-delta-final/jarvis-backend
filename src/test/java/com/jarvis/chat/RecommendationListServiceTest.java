@@ -21,6 +21,7 @@ import com.jarvis.internal.dto.RecommendationCallbackRequest.ListEntry;
 import com.jarvis.internal.dto.RecommendationCallbackRequest.Reason;
 import com.jarvis.product.ProductService;
 import com.jarvis.product.dto.ProductCardResponse;
+import com.jarvis.recommendation.RecommendationEventRecorder;
 import com.jarvis.recommendation.RecommendationList;
 import com.jarvis.recommendation.RecommendationListItem;
 import com.jarvis.recommendation.RecommendationListStore;
@@ -61,6 +62,7 @@ class RecommendationListServiceTest {
     @Mock ChatProperties chatProperties;
     @Mock ChatSessionService chatSessionService;
     @Mock RecommendationListStore recommendationListStore;
+    @Mock RecommendationEventRecorder recommendationEventRecorder;
     @Spy ObjectMapper objectMapper = new ObjectMapper();
 
     @Captor ArgumentCaptor<List<RecommendationList>> listCaptor;
@@ -269,6 +271,33 @@ class RecommendationListServiceTest {
         service.store(request("PICK_ONE", null, entry(LIST_ID, null, List.of(9L))));
 
         assertThat(capturedCache(LIST_ID).productIds()).containsExactly(9L);
+    }
+
+    // 재전송으로 건너뛴 목록까지 적재하면 추천 발생 수(CTR 분모)가 부풀려진다
+    @Test
+    @DisplayName("I-21 — recommendation_generated는 새로 저장된 목록만 적재한다")
+    void storeRecordsGeneratedOnlyForFreshLists() {
+        when(recommendationListStore.saveAll(any(), any())).thenReturn(List.of(LIST_ID));
+
+        service.store(request("PICK_ONE", null,
+                entry(LIST_ID, null, List.of(1L)), entry(LIST_ID_2, null, List.of(2L))));
+
+        verify(recommendationEventRecorder).recordGenerated(listCaptor.capture());
+        assertThat(listCaptor.getValue()).extracting(RecommendationList::getListId)
+                .containsExactly(LIST_ID_2);
+    }
+
+    // 경합이면 저장 주체가 저쪽이다 — 양쪽이 다 적재하면 이중 계상된다
+    @Test
+    @DisplayName("I-21 — 중복 저장 경합 시에는 recommendation_generated를 적재하지 않는다")
+    void storeSkipsGeneratedOnRace() {
+        doThrow(new DataIntegrityViolationException("uk_reco_list"))
+                .when(recommendationListStore).saveAll(any(), any());
+
+        service.store(request("PICK_ONE", null, entry(LIST_ID, null, List.of(1L))));
+
+        verify(recommendationEventRecorder).recordGenerated(listCaptor.capture());
+        assertThat(listCaptor.getValue()).isEmpty();
     }
 
     // 같은 상품이 두 번 실리면 (list_id, position) PK로 position만 다른 2행 + 카드 중복 렌더가 된다

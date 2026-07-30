@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.global.auth.TokenHasher;
 import com.jarvis.global.event.dto.EventBatchRequest;
 import com.jarvis.member.GuestRepository;
+import com.jarvis.recommendation.RecommendationEventRecorder;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -26,10 +27,17 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class EventService {
 
-    /** 8종 화이트리스트 (02 §4) */
+    /** 8종 화이트리스트 (02 §4) — 추천 4종 수용은 E-1 확장에서 */
     private static final Set<String> EVENT_TYPES = Set.of(
             "session_start", "page_view", "search", "product_view",
             "add_to_cart", "checkout_start", "purchase_complete", "login");
+    /**
+     * 서버만 적재하는 타입 (02 D38) — HTTP로 들어오면 화이트리스트와 무관하게 드롭한다.
+     * E-1은 인증이 없어 여기서 받으면 추천 발생 수를 마음대로 부풀릴 수 있고(CTR 분모 조작),
+     * server-side로 옮긴 의미가 사라진다.
+     */
+    private static final Set<String> SERVER_ONLY_EVENT_TYPES = Set.of(
+            RecommendationEventRecorder.EVENT_TYPE);
     private static final String SESSION_START = "session_start";
 
     private final BehaviorEventAppender behaviorEventAppender;
@@ -42,6 +50,10 @@ public class EventService {
         Set<String> seenIds = new HashSet<>();
         List<BehaviorEvent> events = new ArrayList<>();
         for (EventBatchRequest.EventItem item : request.events()) {
+            if (SERVER_ONLY_EVENT_TYPES.contains(item.eventType())) {
+                log.warn("서버 전용 eventType이 E-1로 들어옴 — 드롭 (위조 시도 가능): {}", item.eventType());
+                continue;
+            }
             if (!EVENT_TYPES.contains(item.eventType())) {
                 log.warn("화이트리스트 외 eventType 폐기: {}", item.eventType());
                 continue;

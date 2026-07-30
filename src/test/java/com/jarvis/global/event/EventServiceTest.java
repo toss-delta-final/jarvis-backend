@@ -158,4 +158,20 @@ class EventServiceTest {
 
         verifyNoInteractions(behaviorEventAppender);
     }
+
+    // E-1은 인증이 없어 여기로 받으면 추천 발생 수(CTR 분모)를 마음대로 부풀릴 수 있다 (02 D38)
+    @Test
+    @DisplayName("E-1 — 서버 전용 recommendation_generated가 HTTP로 들어오면 그 건만 드롭")
+    void serverOnlyEventTypeDropped() {
+        EventBatchRequest mixed = new EventBatchRequest(List.of(
+                item("u-1", "recommendation_generated", null, Map.of("itemCount", 9)),
+                item("u-2", "product_view", 10L, null)));
+
+        eventService.collect(mixed, 1L, null, "1.2.3.4");
+
+        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        assertThat(eventsCaptor.getValue())
+                .extracting(BehaviorEvent::getEventType)
+                .containsExactly("product_view");
+    }
 }
