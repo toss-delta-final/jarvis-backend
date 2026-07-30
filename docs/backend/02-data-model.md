@@ -282,6 +282,15 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **선택**: (B). `original_price INT NOT NULL` — 주문 생성 시 `product.original_price + extra_price` 저장. O-4 응답에 포함.
 - **트레이드오프**: 컬럼 1개 증가. 기존 스냅샷 3종과 같은 시점·같은 트랜잭션에 채워져 추가 비용 사실상 없음.
 
+### D38. 추천 목록을 DB에 영구 보존하고, behavior_events에 발생 시각·추천 귀속을 남긴다 (2026-07-30 — 노션 I-21·E-1 개정 반영)
+
+- **문제**: 추천 목록이 Redis TTL 10분에만 있어 ① 오프라인 후 늦게 올라온 행동 이벤트를 어느 추천에 귀속시킬지 알 수 없고 ② *"그때 무엇을 추천했는지"* 를 재현할 수 없어 추천 품질 평가가 불가능했다. Redis는 TTL 외에 **서버 재시작으로도** 날아간다. 또 `behavior_events`가 서버 수신 시각만 저장해 **event-time 분석**과 지연 도착 처리가 안 됐다.
+- **선택지**: (A) Redis TTL을 늘린다 (B) 추천 목록 테이블을 신설해 영구 보존 (C) 이벤트에 추천 문맥을 그대로 저장하고 검증하지 않는다
+- **기준**: `listId`는 CH-5가 게스트 허용 공개 조회라 **사실상 bearer 키**다 — (A)는 노출 창을 늘려 보안과 맞바꾼다. (C)는 FE가 보낸 문맥을 믿는 것이라 **CTR 조작이 가능**하다.
+- **선택**: (B). `recommendation_list` + `recommendation_list_item` 신설(§3). **Redis는 CH-5 조회 전용 10분 캐시로 남기고 DB가 정본** — DB에 있어도 CH-5는 만료 후 404를 낸다(노출 창은 10분 유지, 조회 경로와 분석 경로를 분리). `behavior_events`에는 `occurred_at` + 추천 귀속 4종(`recommendation_request_id`·`list_id`·`surface`·`position`)을 추가하고, **귀속 값은 FE가 보낸 걸 쓰지 않고 서버가 `list_id`로 목록을 조회해 도출**한다(E-1 ③.5). 귀속 유효기간은 `created_at` 기준 **24시간**.
+- **왜 컬럼인가**: 추천 귀속 4종을 `properties` JSON에 넣으면 CTR 집계가 이 값들로 GROUP BY·JOIN하는데 **인덱스를 못 탄다**. 상품 목록을 JSON 배열이 아니라 행으로 펼친 것도 같은 이유 — E-1이 이벤트 1건마다 목록 포함 여부와 순위를 묻는다.
+- **트레이드오프**: `behavior_events` 인덱스가 6개→8개로 늘어 append-only 대량 INSERT의 쓰기 비용이 증가한다. 실측 후 `(list_id, event_type)`만 남기고 조정할 수 있다. `occurred_at`·`client_event_id`의 **NOT NULL 전환은 E-1 확장과 같은 작업에서** 한다 — 엔티티가 `occurred_at`을 쓰지 않는 상태에서 조이면 이벤트 적재와 시드가 통째로 실패한다.
+
 > **피그마 검토로 "디자인 수정" 확정된 항목 (스키마 무변경, 2026-07-09)**: 옵션 2축(컬러×사이즈) UI → 단일 옵션 선택으로 수정(D2 유지) · 이미지 썸네일 갤러리 → 단일 이미지(D14 유지) · 리뷰 "도움이 됐어요" 제거 · 배송비 표기 제거(배송비 미모델링 — 전 주문 무료, D36으로 명문화) · 모의 결제 "테스트: 결제 실패" 트리거 UI 추가 예정(01 D7). 문의 챗봇·판매자 페이지 등 미디자인 화면은 디자인 백로그.
 
 ---
@@ -442,9 +451,33 @@ erDiagram
         char36 guest_id FK "쿠키 서버 주입, 승계용(D5)"
         varchar session_key "FE SDK 세션"
         char36 client_event_id UK "중복 방지(D35)"
-        varchar event_type "8종 화이트리스트(§4)"
+        varchar event_type "FE 12종 + 서버 1종(D38)"
         bigint product_id "FK 미설정"
         json properties
+        datetime occurred_at "FE 발생 시각(D38)"
+        char36 recommendation_request_id "추천 귀속(D38)"
+        varchar list_id "추천 귀속 — 서버가 도출(D38)"
+        varchar surface "CHAT/HOME(D38)"
+        int position "0-based 순위(D38)"
+    }
+    recommendation_list {
+        bigint id PK
+        varchar list_id UK "CH-5 조회 키 · 귀속 키(D38)"
+        char36 recommendation_request_id "추천 실행 1회"
+        varchar surface "CHAT(I-21)/HOME(I-22)"
+        varchar list_type "PICK_ONE/BUY_ALL"
+        varchar source "AI_RECOMMENDED/POPULAR_FALLBACK"
+        char36 session_id "채팅만"
+        bigint member_id "신원 스냅샷 — FK 미설정"
+        char36 guest_id "〃"
+        varchar label "세트명 또는 니즈명"
+        int total_budget "BUY_ALL만"
+        int item_count "itemCount 원천"
+    }
+    recommendation_list_item {
+        varchar list_id PK "FK(recommendation_list.list_id)"
+        int position PK "0-based 렌더 순서"
+        bigint product_id "FK 미설정 — 이력 보존"
     }
     order_status_logs {
         bigint id PK
@@ -480,6 +513,7 @@ erDiagram
     member ||--o{ guest : "converted (승계)"
     guest  ||--o{ behavior_events : "generates (D31)"
     guest  ||--o{ cart_item : "has (D30)"
+    recommendation_list ||--o{ recommendation_list_item : "contains (D38)"
     brand ||--o{ product : has
     category ||--o{ category : "대분류>소분류(D20)"
     category ||--o{ product : "소분류가 classifies"
@@ -495,7 +529,7 @@ erDiagram
     review ||--o{ review_report : reported
 ```
 
-behavior_events의 member_id·product_id와 로그 테이블 3종(order_status_logs·product_change_logs·account_event_logs)은 **FK 미설정**(D31·D32 — append-only 로그 경량화)이라 관계선 없이 노드만 둔다. guest FK만 예외(승계 백필의 앵커, D5).
+behavior_events의 member_id·product_id와 로그 테이블 3종(order_status_logs·product_change_logs·account_event_logs)은 **FK 미설정**(D31·D32 — append-only 로그 경량화)이라 관계선 없이 노드만 둔다. guest FK만 예외(승계 백필의 앵커, D5). 추천 목록 2종(D38)도 같은 원칙 — `member_id`·`guest_id`·`product_id`에 FK를 걸지 않고, `recommendation_list_item → recommendation_list`만 FK로 묶는다(목록 없는 아이템은 존재할 수 없으므로).
 
 ## 3. 테이블 정의
 
@@ -684,16 +718,46 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 | member_id | BIGINT | NULL, **FK 미설정** | 로그인 시 JWT에서 서버 주입(body 신원 무시), 비로그인 NULL |
 | guest_id | CHAR(36) | FK(guest), NULL | 게스트 쿠키에서 서버 주입 — 승계용 (D5 패턴 유지) |
 | session_key | VARCHAR(64) | NOT NULL | FE SDK 생성, 30분 무활동 시 재발급 |
-| client_event_id | CHAR(36) | UNIQUE, NULL | FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35) |
-| event_type | VARCHAR(30) | NOT NULL | 8종 화이트리스트(§4) — 8종 외는 수집 API가 버림(경고 로그). VARCHAR인 이유: 선택 이벤트(page_leave 등) 추가 시 무DDL 확장 |
-| product_id | BIGINT | NULL | FK 미설정 — 로그 적재 경량화(구 user_event와 동일 이유) |
-| properties | JSON | NULL | 타입별 부가정보(§4). session_start의 ipHash는 서버가 주입 |
+| client_event_id | CHAR(36) | UNIQUE, NULL | FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35). **E-1 확장 시 NOT NULL로 조인다**(D38) |
+| event_type | VARCHAR(30) | NOT NULL | **FE 12종 + 서버 적재 1종**(`recommendation_generated`) — 그 외는 수집 API가 버림(경고 로그). VARCHAR인 이유: 선택 이벤트(page_leave 등) 추가 시 무DDL 확장 |
+| product_id | BIGINT | NULL | FK 미설정 — 로그 적재 경량화(구 user_event와 동일 이유). `recommendation_generated`는 목록 단위라 NULL |
+| properties | JSON | NULL | 타입별 부가정보(§4). session_start의 ipHash는 서버가 주입. `schemaVersion`·`_incomplete`·`_timeShifted`도 여기 (D38) |
+| occurred_at | DATETIME(6) | NULL | **FE 발생 시각** (D38). E-1 확장 시 NOT NULL로 조인다 |
+| recommendation_request_id | CHAR(36) | NULL | ↓ **추천 귀속 4종** — 추천에서 비롯된 이벤트에만 채워진다 (D38) |
+| list_id | VARCHAR(64) | NULL | FE가 보낸 값을 믿지 않고 서버가 `recommendation_list`를 조회해 검증·도출 (E-1 ③.5) |
+| surface | VARCHAR(10) | NULL | `CHAT` / `HOME` — `recommendation_list.surface` 복사 |
+| position | INT | NULL | 0-based 순위 — `recommendation_list_item.position` 복사 |
 | created_at | DATETIME(6) | NOT NULL | 서버 수신 시각 — 증분 분석 커서 |
 
-- 적재는 전부 FE가 신규 수집 API **`POST /api/events`(배치, 인증 선택)**로 전송 — 서버 내부 publishEvent 적재(03 D6 방식)는 폐기(D31). **성공 후 발사**: add_to_cart=담기 API 성공 콜백, purchase_complete=주문 완료 페이지.
-- 인덱스: `(member_id, created_at)` / `(guest_id, created_at)` / `(event_type, created_at)` / `(product_id, created_at)` / `(session_key)` / `(created_at)` — 분석 축(주체·타입·상품·세션·시간)별 커버.
+- 적재는 FE가 수집 API **`POST /api/events`(배치, 인증 선택)**로 전송 — 서버 내부 publishEvent 적재(03 D6 방식)는 폐기(D31). **단 `recommendation_generated`만 서버가 직접 insert**(D38 — E-1은 인증이 없어 FastAPI가 쏘면 브라우저 위조와 구별되지 않는다). **성공 후 발사**: add_to_cart=담기 API 성공 콜백, purchase_complete=주문 완료 페이지.
+- 인덱스: `(member_id, created_at)` / `(guest_id, created_at)` / `(event_type, created_at)` / `(product_id, created_at)` / `(session_key)` / `(created_at)` / `(list_id, event_type)` / `(occurred_at)` — 분석 축(주체·타입·상품·세션·시간·추천목록·발생시각)별 커버.
+- **`occurred_at`이 왜 따로 필요한가**: `created_at`만 있으면 브라우저 이벤트가 **SDK 버퍼(10건 or 5초)만큼 밀려서** 서버가 즉시 남기는 로그(order_status_logs 등)와 나란히 놓았을 때 순서가 뒤집혀 보인다. 노출→클릭 간격 같은 초 단위 분석도 불가능하다. 브라우저 시계는 못 믿으므로 `created_at`보다 미래거나 3일 이상 과거면 `created_at`으로 대체하고 `properties._timeShifted`를 남긴다 (D38).
 - 이 테이블은 append-only — **단일 예외**: 게스트→회원 승계 시 해당 guest_id 행들의 `member_id`를 백필하는 UPDATE 1회(D5). 그 외 UPDATE/DELETE 없음.
 - client_event_id 중복은 INSERT 전 검증 후 무시 — `INSERT IGNORE`로 퉁치면 중복 외의 오류까지 삼키므로 주의(D35).
+
+### recommendation_list / recommendation_list_item (추천 목록 영구 사본 — D38)
+
+I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지는 `surface`로 가른다.
+
+| 컬럼 | 타입 | 제약 | 비고 |
+|---|---|---|---|
+| list_id | VARCHAR(64) | UNIQUE, NOT NULL | ≥128bit 무작위. CH-5 조회 키이자 이벤트 귀속 키. 생성 주체는 I-21·I-22=FastAPI / P-5 fallback=Spring |
+| recommendation_request_id | CHAR(36) | NOT NULL | 추천 실행 1회 — 한 실행에 목록이 여러 개 달릴 수 있어 `list_id`와 역할이 다르다 |
+| surface | VARCHAR(10) | NOT NULL | `CHAT`(I-21) / `HOME`(I-22) — 요청 경로로 서버가 판단 |
+| list_type | VARCHAR(10) | NOT NULL | `PICK_ONE`(택1) / `BUY_ALL`(세트) |
+| source | VARCHAR(20) | NOT NULL | `AI_RECOMMENDED` / `POPULAR_FALLBACK` — "AI가 뽑았나, 인기상품으로 대신했나"만 뜻한다. 지면은 `surface`가 맡으므로 채팅은 항상 `AI_RECOMMENDED` |
+| session_id | CHAR(36) | NULL | 채팅만. 홈은 세션이 없다 |
+| member_id / guest_id | BIGINT / CHAR(36) | NULL, **FK 미설정** | 신원 스냅샷 — CH-5 소유자 검증 + 이벤트 귀속 |
+| label | VARCHAR(50) | NULL | `BUY_ALL`이면 세트명("알뜰"), `PICK_ONE`이면 니즈명("파우치") |
+| total_budget | INT | NULL | `BUY_ALL` + 예산 발화 시에만 |
+| item_count | INT | NOT NULL | `recommendation_generated`의 `properties.itemCount` 원천 |
+| created_at | DATETIME(6) | NOT NULL | 귀속 유효기간(24시간) 판정 기준 |
+
+`recommendation_list_item`은 `(list_id, position)` PK + `product_id`(FK 미설정)만 갖는다. **목록당 9개 상한**(노션 I-21) — 니즈별 추천이면 목록 하나가 한 니즈의 후보 9개다(감자 9·시래기 9·뼈 9).
+
+- **`member_id`·`guest_id`의 NULL은 정상값**이다 — 세션이 이미 만료된 뒤 콜백이 오면 신원을 구할 수 없고, 그때도 200으로 저장한다(익명 저장). 단 소유자가 없으므로 CH-5에서 조회되지 않는다(fail-closed).
+- **`reasons` 텍스트는 저장하지 않는다** — 표시 전용이고 평가용 원본은 FastAPI가 보관한다(메타 ~260B vs reasons 포함 ~4KB). CH-5는 Redis에서 읽고, Redis가 만료되면 CH-5 자체가 404라 문제되지 않는다.
+- 상품을 JSON 배열이 아니라 **행으로 펼친** 이유는 E-1 ③.5가 이벤트 1건마다 *"이 productId가 그 목록에 있나, 몇 번째인가"* 를 묻기 때문이다. 행이면 PK 조회 한 번, JSON이면 매번 파싱해야 한다.
 
 ### order_status_logs (BE 직접 적재 — D32)
 | 컬럼 | 타입 | 제약 | 비고 |
