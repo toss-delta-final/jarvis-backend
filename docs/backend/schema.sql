@@ -319,10 +319,15 @@ CREATE TABLE behavior_events (
     member_id       BIGINT      NULL,                      -- 로그인 시 JWT에서 서버 주입(body 신원 무시), 비로그인 NULL. 의도적으로 FK 없음 (D31)
     guest_id        CHAR(36)    NULL,                      -- 게스트 쿠키에서 서버 주입 — 승계용 (D5 패턴 유지)
     session_key     VARCHAR(64) NOT NULL,                  -- FE SDK 생성, 30분 무활동 시 재발급
-    client_event_id CHAR(36)    NULL,                      -- FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35)
-    event_type      VARCHAR(30) NOT NULL,                  -- 8종 화이트리스트(02 §4) — 8종 외는 수집 API가 버림. VARCHAR인 이유: 선택 이벤트 추가 시 무DDL 확장
-    product_id      BIGINT      NULL,                      -- 의도적으로 FK 없음(로그 적재 경량화)
-    properties      JSON        NULL,                      -- 타입별 부가정보. session_start의 ipHash는 서버 주입
+    client_event_id CHAR(36)    NULL,                      -- FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35). E-1 확장 시 NOT NULL로 조인다 (D38)
+    event_type      VARCHAR(30) NOT NULL,                  -- FE 12종 + 서버 적재 1종(recommendation_generated) — 그 외는 수집 API가 버림. VARCHAR인 이유: 선택 이벤트 추가 시 무DDL 확장
+    product_id      BIGINT      NULL,                      -- 의도적으로 FK 없음(로그 적재 경량화). recommendation_generated는 목록 단위라 NULL
+    properties      JSON        NULL,                      -- 타입별 부가정보. session_start의 ipHash는 서버 주입. schemaVersion·_incomplete·_timeShifted도 여기 (D38)
+    occurred_at     DATETIME(6) NULL,                      -- FE 발생 시각 (D38). created_at만으로는 브라우저 이벤트가 SDK 버퍼(10건/5초)만큼 밀려 서버 직접 적재 로그와 순서가 뒤집힌다
+    recommendation_request_id CHAR(36)    NULL,             -- ↓ 추천 귀속 4종: 추천에서 비롯된 이벤트에만 채워진다 (D38)
+    list_id         VARCHAR(64) NULL,                      --   FE가 보낸 값을 믿지 않고 서버가 recommendation_list를 조회해 검증·도출한다 (E-1 ③.5)
+    surface         VARCHAR(10) NULL,                      --   CHAT / HOME — recommendation_list.surface 복사
+    position        INT         NULL,                      --   0-based 순위 — recommendation_list_item.position 복사
     created_at      DATETIME(6) NOT NULL,                  -- 서버 수신 시각 (증분 분석 커서)
     PRIMARY KEY (id),
     UNIQUE KEY uk_behavior_client_event (client_event_id),
@@ -332,10 +337,14 @@ CREATE TABLE behavior_events (
     KEY idx_behavior_prod   (product_id, created_at),
     KEY idx_behavior_sess   (session_key),
     KEY idx_behavior_time   (created_at),
+    KEY idx_behavior_list   (list_id, event_type),         -- 추천 목록별 노출·클릭 집계(CTR) (D38)
+    KEY idx_behavior_occur  (occurred_at),                  -- event-time 기준 정렬·집계 (D38)
     CONSTRAINT fk_behavior_guest FOREIGN KEY (guest_id) REFERENCES guest (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
--- 적재는 전부 FE의 POST /api/events (배치, 인증 선택) — 서버 내부 publishEvent 적재는 폐기 (D31)
+-- 적재는 FE의 POST /api/events (배치, 인증 선택) + recommendation_generated만 서버 내부 insert (D31·D38)
 -- client_event_id 중복은 INSERT 전 검증 후 무시 — INSERT IGNORE로 퉁치면 중복 외 오류까지 삼키므로 주의 (D35)
+-- occurred_at·client_event_id를 NOT NULL로 조이는 건 E-1 확장과 같은 작업에서 한다 (D38) —
+--   엔티티가 occurred_at을 쓰지 않는 지금 NOT NULL로 두면 이벤트 적재와 시드가 통째로 실패한다.
 
 -- ------------------------------------------------------------
 -- BE 직접 로그 3종 (분석 에이전트 입력 — D32)
@@ -381,6 +390,53 @@ CREATE TABLE account_event_logs (
     KEY idx_aclog_type   (event_type, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- Spring Security AuthenticationSuccess/FailureHandler에서 적재. "마지막 로그인" 단일 출처 = LOGIN_SUCCESS (D32)
+
+-- ------------------------------------------------------------
+-- 추천 목록 영구 사본 (D38) — I-21(채팅)·I-22(홈) 공용
+-- Redis는 CH-5 조회 전용 10분 캐시고, 이 두 테이블이 정본이다.
+--   ① 늦게 도착한 행동 이벤트의 추천 귀속 검증(E-1 ③.5)
+--   ② "그때 무엇을 추천했는지" 재현 — 추천 품질 평가
+-- Redis는 TTL 만료 외에 서버 재시작으로도 날아가므로 캐시만으로는 둘 다 불가능하다.
+-- ------------------------------------------------------------
+
+CREATE TABLE recommendation_list (
+    id                        BIGINT      NOT NULL AUTO_INCREMENT,
+    list_id                   VARCHAR(64) NOT NULL,        -- >=128bit 무작위. CH-5 조회 키이자 이벤트 귀속 키
+                                                           -- 생성 주체: I-21·I-22 = FastAPI / P-5 fallback = Spring
+    recommendation_request_id CHAR(36)    NOT NULL,        -- 추천 실행 1회. 한 실행에 목록이 여러 개 달릴 수 있다
+    surface                   VARCHAR(10) NOT NULL,        -- CHAT(I-21) / HOME(I-22) — 요청 경로로 서버가 판단
+    list_type                 VARCHAR(10) NOT NULL,        -- PICK_ONE(택1) / BUY_ALL(세트)
+    source                    VARCHAR(20) NOT NULL,        -- AI_RECOMMENDED / POPULAR_FALLBACK — "AI가 뽑았나, 인기상품으로 대신했나"만 뜻한다
+                                                           -- 지면은 surface가 맡으므로 채팅은 항상 AI_RECOMMENDED
+    session_id                CHAR(36)    NULL,            -- 채팅만. 홈은 세션이 없어 NULL
+    member_id                 BIGINT      NULL,            -- 신원 스냅샷 — CH-5 소유자 검증 + 이벤트 귀속
+    guest_id                  CHAR(36)    NULL,            -- 〃. FK 미설정 — behavior_events와 같은 로그 경량화 원칙
+    label                     VARCHAR(50) NULL,            -- BUY_ALL이면 세트명("알뜰"), PICK_ONE이면 니즈명("파우치")
+    total_budget              INT         NULL,            -- BUY_ALL + 예산 발화 시에만
+    item_count                INT         NOT NULL,        -- recommendation_generated의 properties.itemCount 원천
+    created_at                DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_reco_list (list_id),                     -- 멱등 키. listId가 128bit 무작위라 이것만으로 충분
+    KEY idx_reco_request (recommendation_request_id),       -- 한 추천 실행의 목록 전체 조회
+    KEY idx_reco_owner   (member_id, created_at),
+    KEY idx_reco_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- member_id·guest_id가 NULL 허용인 건 정상값이다 — 세션이 이미 만료된 뒤 콜백이 오면 신원을 구할 수 없고,
+--   그때도 200으로 저장한다(익명 저장). 단 소유자가 없으므로 CH-5에서 조회되지 않는다(fail-closed).
+-- reasons 텍스트는 저장하지 않는다 — 표시 전용이고 평가용 원본은 FastAPI가 보관한다(메타 ~260B vs ~4KB).
+
+CREATE TABLE recommendation_list_item (
+    list_id     VARCHAR(64) NOT NULL,
+    position    INT         NOT NULL,                      -- 0-based. 리랭킹 순서 = 렌더 순서 = 이벤트의 순위
+    product_id  BIGINT      NOT NULL,                      -- FK 미설정: 상품이 지워져도 "그때 뭘 추천했는지"는 남아야 한다
+    PRIMARY KEY (list_id, position),
+    KEY idx_reco_item_product (product_id),
+    CONSTRAINT fk_reco_item_list FOREIGN KEY (list_id)
+        REFERENCES recommendation_list (list_id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 상품을 JSON 배열 한 칸이 아니라 행으로 펼친 이유: E-1 ③.5가 이벤트 1건마다 "이 productId가 그 목록에
+--   있나, 몇 번째인가"를 묻는다. 행이면 PK 조회 한 번, JSON이면 매번 파싱해야 한다.
+-- 목록당 9개 상한(노션 I-21) — 니즈별 추천이면 목록 하나가 한 니즈의 후보 9개다(감자 9·시래기 9·뼈 9).
 
 -- ============================================================
 -- ERD에 없는 것들은 누락이 아니라 결정 (02 §7):
