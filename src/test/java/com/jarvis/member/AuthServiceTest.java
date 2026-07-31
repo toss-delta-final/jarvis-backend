@@ -138,8 +138,7 @@ class AuthServiceTest {
                     eq("UPDATE behavior_events SET member_id = ? WHERE guest_id = ? AND member_id IS NULL"),
                     eq(1L), eq(guestId));
             verify(cartService).mergeGuestCart(1L, guestId);
-            verify(chatSessionService).endSessionAsync(
-                    com.jarvis.chat.ChatIdentity.guest(guestId), com.jarvis.chat.SessionEndReason.NEW_CONVERSATION);
+            verify(chatSessionService).discardSessionsAsync(com.jarvis.chat.ChatIdentity.guest(guestId));
         }
     }
 
@@ -201,8 +200,7 @@ class AuthServiceTest {
             assertThat(guest.isConverted()).isFalse();
             verify(jdbcTemplate, never()).update(anyString(), any(), any());
             verify(cartService).mergeGuestCart(1L, guestId);
-            verify(chatSessionService).endSessionAsync(
-                    com.jarvis.chat.ChatIdentity.guest(guestId), com.jarvis.chat.SessionEndReason.NEW_CONVERSATION);
+            verify(chatSessionService).discardSessionsAsync(com.jarvis.chat.ChatIdentity.guest(guestId));
         }
     }
 

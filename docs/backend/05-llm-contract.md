@@ -60,7 +60,7 @@ FastAPI       : JWKS로 signature·exp·iss·aud·scope 검증 → 스트리밍
 
 ```json
 {
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000",  // Spring(CH-1) 발급·TTL 관리(10분 sliding). 새 sessionId = 새 대화
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",  // Spring(CH-1) 발급·TTL 관리(10분 sliding). CH-1은 멱등 — 활성 세션이 있으면 같은 값이 온다
   "threadId": "550e8400-e29b-41d4-a716-446655440000",   // 대화 스레드(방) 키 — 필수(없으면 400). MVP: sessionId와 동일 값 / post-MVP: 방별 고유(FE 생성)
   "message": "유럽여행 가는데 필요한 거 추천해줘"
 }
@@ -69,7 +69,7 @@ FastAPI       : JWKS로 signature·exp·iss·aud·scope 검증 → 스트리밍
 - **`threadId` 필수** — 없으면 400 `BAD_REQUEST`. MVP에선 `sessionId`와 같은 값을 싣고(session=대화), post-MVP에서 한 접속 아래 방(대화창)을 분리하며 방마다 고유 값으로 분화한다(계약은 지금부터 이 필드를 유지). 동시 스트림 409 기준도 MVP=`sessionId` / post-MVP=`threadId`(방).
 - **`channel`은 body 필드가 아니다** — 대화 종류(SHOPPING/CS/SELLER)는 **세션 발급 시점**에 확정된다. SHOPPING/CS는 CH-1(`POST /api/chat/sessions`, body `channel`)에서, SELLER는 S-4(`POST /api/chat/seller/sessions` — 입구 자체가 SELLER 전용)에서 정해져 티켓 claim·세션에 실리고, SELLER 스트림은 `/seller/chat` 별도 엔드포인트로 간다(일반 CH-1의 `channel:"SELLER"`는 400).
 - **신원(userId/guestId)은 body에 없다 — 티켓 claim(`sub`/`sub_type`)에서** 취한다(§1-0). 게스트면 `sub_type:guest`, 개인화 없이 응답.
-- 멀티턴 맥락은 sessionId 기준으로 **FastAPI가 인메모리/자체 스토어에 유지** (BE는 메시지를 저장하지 않음). 세션 종료 시 Spring이 **I-20 `POST {LLM_BASE_URL}/events/session-end`** 로 정리 통지(§2-1) — 트리거: 로그아웃 / 새 대화(CH-1 재호출) / 가입·로그인 게스트 승계(노션 A-1/A-2 07-20). 유휴·탭 종료는 통지 없이 TTL 소멸(FastAPI 자체 TTL 백스톱 §3 — enum의 IDLE_TIMEOUT·TAB_CLOSE는 예약). *(구 `DELETE {LLM_BASE_URL}/sessions/{id}` 안(OPEN이었음)을 대체 — 2026-07-17 확정. sessionId 형식도 UUID로 합의 완료)*
+- 멀티턴 맥락은 sessionId 기준으로 **FastAPI가 인메모리/자체 스토어에 유지** (BE는 메시지를 저장하지 않음). 세션 종료 시 Spring이 **I-20 `POST {LLM_BASE_URL}/events/session-end`** 로 정리 통지(§2-1) — 트리거: **로그아웃 하나뿐**(노션 I-20 정본 2026-07-30 — 새 대화는 CH-1을 부르지 않게 되어 사유 소멸, 가입·로그인 게스트 승계는 게스트라 원래 미발화). 유휴·탭 종료는 통지 없이 TTL 소멸(FastAPI 자체 TTL 백스톱 §3 — enum의 IDLE_TIMEOUT·TAB_CLOSE는 예약). *(구 `DELETE {LLM_BASE_URL}/sessions/{id}` 안(OPEN이었음)을 대체 — 2026-07-17 확정. sessionId 형식도 UUID로 합의 완료)*
 - 카테고리 진입(메인에서 카테고리 클릭)은 별도 필드 없이 message로 전달: FE가 `"[카테고리] 주방용품 보여줘"` 형태로 첫 메시지 구성. **(OPEN: 전용 필드로 분리할지)**
 
 ### 1-2. 응답: SSE 스트림
@@ -236,9 +236,9 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **body** (camelCase): `{ "sessionId": "<uuid>", "userId": <회원 BIGINT>, "reason": "logout" }`
   - `sessionId` — Spring이 UUID로 발급(정규식 제한 없이 불투명 문자열 수용, 2026-07-17 합의).
   - `userId` — **회원 BIGINT 필수**. 프로필 세션 버퍼 조회 키.
-  - `reason` — 관측·진단용 선택 필드(처리 분기 미사용, 알려진 값 외 문자열도 400 아님). 알려진 값 `logout | inactivityTimeout | newConversation`.
-- **게스트 생략**: 게스트는 프로필 대상이 아니므로 **Spring이 I-20 호출 자체를 생략**한다(`sub_type=guest`면 skip — 로그아웃/새 대화/가입·로그인 승계의 게스트 세션 종료는 Redis 정리만, FastAPI 맥락은 자체 TTL 소멸). 코드: `ChatSessionService#notifyIfMember`.
-- **실발화 트리거(회원)**: 로그아웃(`logout`) / 새 대화=CH-1 재호출(`newConversation`) 둘만. 유휴 종료(`inactivityTimeout`)는 FastAPI 내부 idle flush로 이관, 탭 종료(`tabClose`)는 계약에서 제외 — Spring은 이 둘을 통지하지 않으며 FastAPI는 수신을 전제하지 말 것(노션 I-20 정본).
+  - `reason` — 관측·진단용 선택 필드(처리 분기 미사용, 알려진 값 외 문자열도 400 아님). 알려진 값 `logout | inactivityTimeout` (`newConversation`은 2026-07-30 폐기 — 새 대화가 CH-1을 부르지 않게 되어 사유 자체가 사라졌다).
+- **게스트 생략**: 게스트는 프로필 대상이 아니므로 **Spring이 I-20 호출 자체를 생략**한다(`sub_type=guest`면 skip — 로그아웃·가입·로그인 승계의 게스트 세션 정리는 Redis만, FastAPI 맥락은 자체 TTL 소멸). 코드: `ChatSessionService#notifyIfMember`(로그아웃) · `#discardSessionsAsync`(게스트 승계 — 통지 없이 정리).
+- **실발화 트리거(회원)**: **로그아웃(`logout`) 하나뿐**(노션 I-20 정본 2026-07-30 확정). 유휴 종료(`inactivityTimeout`)는 FastAPI 내부 idle flush로 이관, 탭 종료(`tabClose`)는 계약에서 제외, 새 대화(`newConversation`)는 FE가 `threadId`만 갱신해 세션을 유지하므로 **사유 자체가 소멸** — Spring은 셋 다 통지하지 않으며 FastAPI는 수신을 전제하지 말 것. 로그아웃 시 채널별 활성 세션이 여럿이면 세션마다 한 건씩 나가며, 멱등이라 무해하다.
 - **멱등**: `dedupKey = "session-end:" + userId + ":" + sessionId`. 신규=`202 {"status":"accepted"}`, 중복=`202 {"status":"duplicate"}`. 재시도·중복 호출 무해.
 - 구 계약 폐기: snake_case `session_id`/`user_id`/`guest_id`, `S-` 접두 정규식, checkpointer 삭제 부수효과, `200 {cleared}` 응답, `403 SESSION_FORBIDDEN`(노션 I-20 「제외된 구계약」).
 - 구 "세션 만료 시 `DELETE {LLM_BASE_URL}/sessions/{id}` 통지(OPEN)" 항목을 대체 — 2026-07-17 확정.
