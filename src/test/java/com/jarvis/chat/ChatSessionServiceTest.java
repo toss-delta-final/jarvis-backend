@@ -43,7 +43,7 @@ class ChatSessionServiceTest {
     void setUp() {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         lenient().when(chatProperties.sessionTtlMinutes()).thenReturn(10L);
-        lenient().when(ticketProvider.createTicket(any())).thenReturn("ticket");
+        lenient().when(ticketProvider.createTicket(any(), anyString())).thenReturn("ticket");
         lenient().when(ticketProvider.ttlSeconds()).thenReturn(60L);
         lenient().when(llmProperties.sseUrl()).thenReturn("http://localhost:8000");
     }
@@ -118,7 +118,7 @@ class ChatSessionServiceTest {
         when(valueOperations.get("chat:owner:member:7:SELLER")).thenReturn(null);
         when(valueOperations.setIfAbsent(eq("chat:owner:member:7:SELLER"), anyString(), any(Duration.class)))
                 .thenReturn(true);
-        when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket");
+        when(ticketProvider.createSellerTicket(any(), anyString(), eq(3L))).thenReturn("seller-ticket");
 
         ChatSessionResponse response = service.issueSellerSession(ChatIdentity.member(7L), 3L);
 
@@ -131,8 +131,8 @@ class ChatSessionServiceTest {
                 eq("member|7|SELLER|3"), eq(Duration.ofMinutes(10)));
         verify(valueOperations).setIfAbsent(eq("chat:owner:member:7:SELLER"),
                 eq(response.sessionId()), eq(Duration.ofMinutes(10)));
-        verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), eq(3L));
-        verify(ticketProvider, never()).createTicket(any());
+        verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), anyString(), eq(3L));
+        verify(ticketProvider, never()).createTicket(any(), anyString());
     }
 
     @Test
@@ -140,7 +140,7 @@ class ChatSessionServiceTest {
     void issueSellerSessionReusesActive() {
         when(valueOperations.get("chat:owner:member:7:SELLER")).thenReturn("live-seller-session");
         when(valueOperations.get("chat:session:live-seller-session")).thenReturn("member|7|SELLER|3");
-        when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket");
+        when(ticketProvider.createSellerTicket(any(), anyString(), eq(3L))).thenReturn("seller-ticket");
 
         ChatSessionResponse response = service.issueSellerSession(ChatIdentity.member(7L), 3L);
 
@@ -154,14 +154,14 @@ class ChatSessionServiceTest {
     @DisplayName("S-4/CH-1b — SELLER 세션 티켓 재발급도 세션 값의 brandId로 SELLER 티켓 유지")
     void reissueTicketKeepsSellerScope() {
         when(valueOperations.get("chat:session:s-seller")).thenReturn("member|7|SELLER|3");
-        when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket-2");
+        when(ticketProvider.createSellerTicket(any(), anyString(), eq(3L))).thenReturn("seller-ticket-2");
 
         ChatSessionResponse response = service.reissueTicket(ChatIdentity.member(7L), "s-seller");
 
         assertThat(response.streamTicket()).isEqualTo("seller-ticket-2");
         assertThat(response.llmSseUrl()).isEqualTo("http://localhost:8000/seller/chat");
-        verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), eq(3L));
-        verify(ticketProvider, never()).createTicket(any());
+        verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), anyString(), eq(3L));
+        verify(ticketProvider, never()).createTicket(any(), anyString());
         verify(redisTemplate).expire(eq("chat:session:s-seller"), eq(Duration.ofMinutes(10)));
     }
 

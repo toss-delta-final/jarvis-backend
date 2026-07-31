@@ -46,12 +46,14 @@ FastAPI       : JWKS로 signature·exp·iss·aud·scope 검증 → 스트리밍
 {
   "sub": "123",                 // userId 또는 guestId
   "sub_type": "member",         // member | guest
+  "sessionId": "550e8400-...",  // [2026-07-31] 발급 대상 세션 — threadId는 싣지 않는다
   "iss": "jarvis-spring-auth",
   "aud": "jarvis-fastapi-ai",
   "scope": "chat:stream",       // SELLER도 동일 scope — 판매자는 role/brandId claim 추가(아래·§I-6b)
-  "exp": 1720000000             // 발급 후 30~60초
+  "exp": 1720000000             // 발급 후 30~60초 (현행 설정 60초)
 }
 ```
+- **`sessionId`를 서명에 싣는 이유(2026-07-31 · CHAT-SESSION D7)**: 종전엔 신원만 담고 세션은 클라이언트가 body로 주장했다. 그러면 ① 임의 문자열로 FastAPI 쪽 맥락을 무한 생성할 수 있고 ② CH-7 승계 직후에도 60초 남은 구 게스트 티켓을 티켓만 보고 거부할 수 없다. FastAPI는 `/chat` body의 `sessionId`가 이 claim과 다르면 거부하고, 이 값으로 stable `context_id`를 파생한다(jarvis-ai #187 · api-spec v0.17.0 §3.5.1). **`threadId`는 여전히 싣지 않으므로 "티켓 1장 = 한 접속의 여러 방" 원칙은 유지**된다.
 - **신원은 티켓에서, body가 아님**: `userId`/`guestId`/`brandId`는 FastAPI 툴 인자·요청 body로 받지 않고 **티켓 `sub`/claim에서** 취한다(클라이언트 주장 무시 — 인젝션 차단). `/internal` 콜백엔 이 값을 **메아리**로 실어보낸다(§0-1).
 - **왜 전권 AT 직접 안 씀**: `EventSource`(GET)는 커스텀 헤더가 안 실려 AT가 쿼리스트링 노출 → 30~60초 read-only 티켓만 내보내 유출 피해를 "스트림 1회"로 봉쇄. 게스트도 동일 경로로 발급(`sub_type:guest`).
 - **연결 시점 인증**: 티켓이 만료돼도 이미 열린 스트림은 유지(SSE 관례 — 스트림 자체가 LLM 응답 1회 분량).

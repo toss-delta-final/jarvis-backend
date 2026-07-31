@@ -35,9 +35,31 @@ class StreamTicketProviderTest {
     }
 
     @Test
+    @DisplayName("signed sessionId — 발급 대상 세션이 서명에 실린다 (CHAT-SESSION D7 · jarvis-ai #187)")
+    void ticketBindsSession() throws Exception {
+        String ticket = provider.createTicket(ChatIdentity.member(123L), "550e8400-session");
+        String sellerTicket = provider.createSellerTicket(ChatIdentity.member(7L), "seller-session", 77L);
+
+        assertThat(claimsOf(ticket).get("sessionId", String.class)).isEqualTo("550e8400-session");
+        assertThat(claimsOf(sellerTicket).get("sessionId", String.class)).isEqualTo("seller-session");
+    }
+
+    @Test
+    @DisplayName("threadId는 싣지 않는다 — 티켓 1장이 한 접속의 여러 방을 커버한다(SPEC-CHAT-SESSION)")
+    void ticketOmitsThread() throws Exception {
+        String ticket = provider.createTicket(ChatIdentity.member(123L), "s-1");
+
+        assertThat(claimsOf(ticket)).doesNotContainKey("threadId");
+    }
+
+    private Claims claimsOf(String ticket) throws Exception {
+        return Jwts.parser().verifyWith(publicKeyFromJwks()).build().parseSignedClaims(ticket).getPayload();
+    }
+
+    @Test
     @DisplayName("티켓 claim — sub/sub_type/iss/aud/scope/exp(+60s), 헤더 kid (05 §1-0)")
     void ticketClaims() throws Exception {
-        String ticket = provider.createTicket(ChatIdentity.member(123L));
+        String ticket = provider.createTicket(ChatIdentity.member(123L), "s-1");
 
         Jws<Claims> jws = Jwts.parser().verifyWith(publicKeyFromJwks()).build()
                 .parseSignedClaims(ticket);
@@ -57,8 +79,8 @@ class StreamTicketProviderTest {
     @Test
     @DisplayName("S-4 SELLER 티켓 — role/brandId claim 추가(노션 CH-6), 일반 티켓엔 없음")
     void sellerTicket() throws Exception {
-        String sellerTicket = provider.createSellerTicket(ChatIdentity.member(7L), 77L);
-        String normalTicket = provider.createTicket(ChatIdentity.member(7L));
+        String sellerTicket = provider.createSellerTicket(ChatIdentity.member(7L), "s-1", 77L);
+        String normalTicket = provider.createTicket(ChatIdentity.member(7L), "s-1");
 
         Claims sellerClaims = Jwts.parser().verifyWith(publicKeyFromJwks()).build()
                 .parseSignedClaims(sellerTicket).getPayload();
@@ -77,7 +99,7 @@ class StreamTicketProviderTest {
     @Test
     @DisplayName("게스트도 동일 경로 — sub_type:guest (03 D5)")
     void guestTicket() throws Exception {
-        String ticket = provider.createTicket(ChatIdentity.guest("guest-uuid"));
+        String ticket = provider.createTicket(ChatIdentity.guest("guest-uuid"), "s-1");
 
         Claims claims = Jwts.parser().verifyWith(publicKeyFromJwks()).build()
                 .parseSignedClaims(ticket).getPayload();
