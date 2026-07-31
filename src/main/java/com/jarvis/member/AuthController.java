@@ -41,9 +41,10 @@ public class AuthController {
     public ApiResponse<SignupResponse> signup(@Valid @RequestBody SignupRequest request,
                                               HttpServletRequest httpRequest,
                                               HttpServletResponse httpResponse) {
-        AuthResult result = authService.signup(request, ClientIp.resolve(httpRequest),
-                guestCookieManager.resolve(httpRequest).orElse(null));
+        String guestId = guestCookieManager.resolve(httpRequest).orElse(null);
+        AuthResult result = authService.signup(request, ClientIp.resolve(httpRequest), guestId);
         refreshCookieManager.write(httpResponse, result.refreshToken());
+        retireGuest(httpResponse, guestId);
         return ApiResponse.success(new SignupResponse(result.accessToken(), result.member()));
     }
 
@@ -51,10 +52,21 @@ public class AuthController {
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
                                             HttpServletRequest httpRequest,
                                             HttpServletResponse httpResponse) {
-        AuthResult result = authService.login(request, ClientIp.resolve(httpRequest),
-                guestCookieManager.resolve(httpRequest).orElse(null));
+        String guestId = guestCookieManager.resolve(httpRequest).orElse(null);
+        AuthResult result = authService.login(request, ClientIp.resolve(httpRequest), guestId);
         refreshCookieManager.write(httpResponse, result.refreshToken());
+        retireGuest(httpResponse, guestId);
         return ApiResponse.success(new LoginResponse(result.accessToken(), result.member()));
+    }
+
+    /**
+     * 승계가 끝났으면 guest_id 쿠키를 반납한다 — 그 익명 구간은 끝났고, 이후 로그아웃 뒤의 익명 활동은
+     * 새 게스트로 쌓인다(GUEST-LIFECYCLE). 실패 경로는 예외로 빠지므로 여기까지 오지 않는다.
+     */
+    private void retireGuest(HttpServletResponse httpResponse, String guestId) {
+        if (guestId != null) {
+            guestCookieManager.clear(httpResponse);
+        }
     }
 
     @PostMapping("/logout")

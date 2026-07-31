@@ -41,7 +41,7 @@
 
 - **게스트 채팅 횟수 제한은 두지 않는다** (2026-07-07 팀 회의: "이 정도 loss는 감수" — 가입 전 이탈 방지 우선). 게스트는 무제한 채팅 가능하되 개인화만 미적용.
 - guest 테이블은 카운트용이 아니라 **행동 이력(behavior_events — D31로 교체, 패턴 동일)의 주체 식별 + 가입 시 승계**를 위해 유지: `guest(id UUID, converted_member_id)`.
-- 가입/로그인 시 프론트가 guestId를 전달하면 `converted_member_id` 기록 + 해당 guest의 behavior_events member_id 백필(UPDATE) + **장바구니 병합**(D30 — 같은 트랜잭션).
+- 가입/로그인 시 `guest_id` 쿠키 기준으로 `converted_member_id`·`converted_at` 기록 + **장바구니 병합**(D30 — 같은 트랜잭션) + 쿠키 반납. **behavior_events 백필은 폐기**(2026-07-31 · GUEST-LIFECYCLE) — 게스트는 "로그인 사이의 익명 구간"(쿠키 2시간 sliding)이고, 로그는 고쳐 쓰지 않고 이 귀속 기록으로 회원과 잇는다(CH-5 소유자 예외 · I-16 귀속 조인).
 
 ### D6. Refresh Token은 Redis가 아니라 DB 테이블에 저장한다
 
@@ -239,7 +239,7 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
   - **신원은 서버 주입**: member_id=JWT, guest_id=게스트 쿠키 — body의 신원 주장은 무시. session_start의 ipHash도 서버가 properties에 주입.
   - **성공 후 발사**: add_to_cart=담기 API 성공 콜백, purchase_complete=주문 완료 페이지 — 실패한 행동이 이벤트로 남지 않게.
   - CHAT_QUERY·WISHLIST_ADD·ORDER_CREATED 타입은 **소멸** — 소비처였던 최근 본 상품(D3)·인기 상품·추천 프로필은 behavior_events의 product_view/add_to_cart로 대체.
-  - append-only 단일 예외(D5)는 유지 — 가입/로그인 승계 시 해당 guest_id 행들의 member_id 백필 UPDATE 1회.
+  - **완전한 append-only가 됐다**(2026-07-31) — 백필 폐기로 D5의 단일 예외였던 member_id UPDATE가 사라졌다.
 - **트레이드오프**: 서버 적재는 누락이 없었지만 FE 발사는 이탈·차단으로 누락 가능 → 분석 지표는 추세 소비라 감수, 판매·정산 수치의 정본은 이벤트가 아니라 order_item(§4 원칙 유지). 비인증 쓰기 표면 증가 → 화이트리스트 + 신원 서버 주입 + client_event_id UNIQUE(D35)로 방어.
 
 ### D32. 서버만 아는 사실은 BE가 직접 로그 테이블 3종에 적재한다 (2026-07-17)
@@ -546,7 +546,7 @@ erDiagram
     review ||--o{ review_report : reported
 ```
 
-behavior_events의 member_id·product_id와 로그 테이블 3종(order_status_logs·product_change_logs·account_event_logs)은 **FK 미설정**(D31·D32 — append-only 로그 경량화)이라 관계선 없이 노드만 둔다. guest FK만 예외(승계 백필의 앵커, D5). 추천 목록 2종(D38)도 같은 원칙 — `member_id`·`guest_id`·`product_id`에 FK를 걸지 않고, `recommendation_list_item → recommendation_list`만 FK로 묶는다(목록 없는 아이템은 존재할 수 없으므로).
+behavior_events의 member_id·product_id와 로그 테이블 3종(order_status_logs·product_change_logs·account_event_logs)은 **FK 미설정**(D31·D32 — append-only 로그 경량화)이라 관계선 없이 노드만 둔다. guest FK만 예외(승계 귀속 조인의 앵커 — 로그를 회원과 잇는 유일한 경로라 무결성이 필요하다, D5). 추천 목록 2종(D38)도 같은 원칙 — `member_id`·`guest_id`·`product_id`에 FK를 걸지 않고, `recommendation_list_item → recommendation_list`만 FK로 묶는다(목록 없는 아이템은 존재할 수 없으므로).
 
 ## 3. 테이블 정의
 
@@ -749,7 +749,7 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 - 적재는 FE가 수집 API **`POST /api/events`(배치, 인증 선택)**로 전송 — 서버 내부 publishEvent 적재(03 D6 방식)는 폐기(D31). **단 `recommendation_generated`만 서버가 직접 insert**(D38 — E-1은 인증이 없어 FastAPI가 쏘면 브라우저 위조와 구별되지 않는다). **성공 후 발사**: add_to_cart=담기 API 성공 콜백, purchase_complete=주문 완료 페이지.
 - 인덱스: `(member_id, created_at)` / `(guest_id, created_at)` / `(event_type, created_at)` / `(product_id, created_at)` / `(session_key)` / `(created_at)` / `(list_id, event_type)` / `(occurred_at)` — 분석 축(주체·타입·상품·세션·시간·추천목록·발생시각)별 커버.
 - **`occurred_at`이 왜 따로 필요한가**: `created_at`만 있으면 브라우저 이벤트가 **SDK 버퍼(10건 or 5초)만큼 밀려서** 서버가 즉시 남기는 로그(order_status_logs 등)와 나란히 놓았을 때 순서가 뒤집혀 보인다. 노출→클릭 간격 같은 초 단위 분석도 불가능하다. 브라우저 시계는 못 믿으므로 `created_at`보다 미래거나 3일 이상 과거면 `created_at`으로 대체하고 `properties._timeShifted`를 남긴다 (D38).
-- 이 테이블은 append-only — **단일 예외**: 게스트→회원 승계 시 해당 guest_id 행들의 `member_id`를 백필하는 UPDATE 1회(D5). 그 외 UPDATE/DELETE 없음.
+- 이 테이블은 **완전한 append-only**다 — UPDATE/DELETE가 없다. 구 D5의 단일 예외(승계 시 `member_id` 백필 UPDATE)는 2026-07-31 폐기됐고, 게스트 시절 행은 `guest_id`를 그대로 둔 채 `guest.converted_member_id`로 회원과 잇는다(GUEST-LIFECYCLE).
 - client_event_id 중복은 INSERT 전 검증 후 무시 — `INSERT IGNORE`로 퉁치면 중복 외의 오류까지 삼키므로 주의(D35).
 
 ### recommendation_list / recommendation_list_item (추천 목록 영구 사본 — D38)
@@ -854,7 +854,7 @@ FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommenda
 - [ ] 할인율·평점 평균·주문 대표 상태를 저장하는 컬럼이 어디에도 없는가 (전량 취소 시 orders.status→CANCELLED 승격은 기록된 예외 — D32)
 - [ ] 수집 API(`POST /api/events`)가 8종 외 event_type을 버리고(경고 로그), member_id/guest_id를 body가 아니라 JWT·쿠키에서 주입하는가 (D31)
 - [ ] client_event_id 중복이 무시되는가 — `INSERT IGNORE`로 다른 오류까지 삼키고 있지 않은가 (D35)
-- [ ] guest → member 승계 시 behavior_events의 member_id가 백필되는가 (D5·D31)
+- [ ] guest → member 승계 시 `converted_member_id`·`converted_at`이 기록되고 쿠키가 반납되는가 (D5 — 백필은 폐기, 로그는 이 매핑으로 해석)
 - [ ] guest → member 승계 시 cart_item이 병합되는가 (D30 — 동일 상품+옵션 수량 합산·상한 99, 행동 이벤트 승계와 같은 트랜잭션)
 - [ ] 시드 상품의 attributes 키가 소속 category.attribute_schema와 일치하는가 (D11)
 - [ ] 결제 성공 처리(PAID 전이)가 재고를 같은 트랜잭션의 조건부 UPDATE로 차감하고, 부족 시 결제 실패(OUT_OF_STOCK)·0 도달 시 STOCK 로그 1행을 남기는가 (D33·D32)

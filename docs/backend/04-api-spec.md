@@ -19,8 +19,8 @@
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
-| A-1 | POST | /api/auth/signup | 🔓 | 회원가입. body: email, password, nickname, gender, birthDate, agreeTerms(true 필수), agreePrivacy(true 필수) — 성공 시 자동 로그인(토큰 발급) + 게스트 승계(behavior_events member_id 백필 + 장바구니 병합 — 02 D5·D30·D31). **승계 신원은 guest_id HttpOnly 쿠키에서 서버가 취함**(노션 07-20 개정 — body guestId 폐기, 보내도 무시). 부수효과: 해당 게스트 채팅 세션 정리(Redis만 — 게스트는 I-20 미발화). 400 검증 실패는 `VALIDATION_ERROR` + fields[](03 규약 — 07-17 FE) |
-| A-2 | POST | /api/auth/login | 🔓 | 일반 로그인. body: email, password — 게스트 승계는 guest_id 쿠키 기준(노션 07-20 개정, body guestId 폐기). **장바구니 병합만** 수행(백필·convertTo는 가입 전용 — 공용 PC 이력 오염 방지), 재로그인에도 매번(02 D30). 부수효과: 게스트 채팅 세션 정리(Redis만 — 게스트는 I-20 미발화) |
+| A-1 | POST | /api/auth/signup | 🔓 | 회원가입. body: email, password, nickname, gender, birthDate, agreeTerms(true 필수), agreePrivacy(true 필수) — 성공 시 자동 로그인(토큰 발급) + 게스트 구간 승계(장바구니 병합 + 구간 귀속 기록 `converted_member_id`·`converted_at` + 쿠키 반납 — 02 D5·D30). **behavior_events 백필은 폐기**(2026-07-31 — 로그는 고쳐 쓰지 않고 귀속 기록으로 해석). **승계 신원은 guest_id HttpOnly 쿠키에서 서버가 취함**(노션 07-20 개정 — body guestId 폐기, 보내도 무시). 부수효과: 해당 게스트 채팅 세션 정리(Redis만 — 게스트는 I-20 미발화). 400 검증 실패는 `VALIDATION_ERROR` + fields[](03 규약 — 07-17 FE) |
+| A-2 | POST | /api/auth/login | 🔓 | 일반 로그인. body: email, password — 게스트 승계는 guest_id 쿠키 기준(노션 07-20 개정, body guestId 폐기). **승계 동작은 가입(A-1)과 완전히 동일**(2026-07-31 개정) — 장바구니 병합 + 구간 귀속 기록 + 쿠키 반납, 재로그인에도 매번(02 D30). 공용 PC 위험은 백필 폐기와 쿠키 2시간 sliding으로 다룬다. 부수효과: 게스트 채팅 세션 정리(Redis만 — 게스트는 I-20 미발화) |
 | A-3 | POST | /api/auth/logout | 🔓(RT쿠키) | RT 삭제 + 쿠키 만료. AT가 만료돼도 로그아웃은 가능해야 하므로 RT 쿠키 기준(없어도 성공 응답) |
 | A-4 | POST | /api/auth/refresh | 🔓(RT쿠키) | AT 재발급 |
 | A-5 | GET | /api/auth/me | 🔑 | 내 정보(id, email, nickname, role) — FE 라우팅 가드용 |

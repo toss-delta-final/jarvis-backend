@@ -2,6 +2,7 @@ package com.jarvis.global.config;
 
 import com.jarvis.global.auth.EnvelopeAccessDeniedHandler;
 import com.jarvis.global.auth.EnvelopeAuthenticationEntryPoint;
+import com.jarvis.global.auth.GuestCookieSlidingFilter;
 import com.jarvis.global.auth.JwtAuthenticationFilter;
 import com.jarvis.global.auth.JwtProperties;
 import com.jarvis.internal.InternalTokenFilter;
@@ -35,6 +36,7 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final InternalTokenFilter internalTokenFilter;
+    private final GuestCookieSlidingFilter guestCookieSlidingFilter;
     private final EnvelopeAuthenticationEntryPoint authenticationEntryPoint;
     private final EnvelopeAccessDeniedHandler accessDeniedHandler;
 
@@ -74,7 +76,8 @@ public class SecurityConfig {
                                 "/api/inquiries/**", "/api/members/**").hasRole("USER")
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class);
+                .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)
+                .addFilterAfter(guestCookieSlidingFilter, JwtAuthenticationFilter.class);
         return http.build();
     }
 
