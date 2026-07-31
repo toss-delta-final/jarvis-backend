@@ -93,6 +93,7 @@ done
 | 마이그레이션 | 내용 | 적용 시점 |
 |---|---|---|
 | `migrate-2026-07-30-recommendation-list.sql` | 추천 목록 영구 사본 테이블 2개 신설 + `behavior_events` 컬럼 5개(전부 NULL 허용)·인덱스 2개 | **앱 배포 전.** 새 앱은 이 테이블이 없으면 `ddl-auto=validate`에 걸려 기동 자체를 거부한다. 이미 새 이미지가 crash loop 중이면 적용하는 즉시 정상 기동된다 |
+| `migrate-2026-07-31-guest-converted-at.sql` | `guest.converted_at`(은퇴 시각) 컬럼 추가 — NULL 허용 | **앱 배포 전.** 컬럼 추가 자체는 구 앱과 무해하게 공존하지만, **새 앱은 이 컬럼이 없으면 `ddl-auto=validate`에 걸려 기동을 거부한다**(2026-07-31 CD 실패 원인 — `Schema-validation: missing column [converted_at] in table [guest]`). crash loop 중이면 적용하는 즉시 정상 기동된다 |
 | `migrate-2026-07-31-behavior-events-not-null.sql` | `behavior_events.occurred_at`·`client_event_id`를 백필 후 `NOT NULL`로 (기존 행 삭제 없음) | **앱 배포 후.** 앱이 `occurred_at`을 채우기 시작한 뒤에야 조일 수 있다. 순서: 새 이미지 배포 → `/actuator/health` UP 확인 → 적용. 먼저 적용해도 서비스는 죽지 않지만, 그 사이 들어온 **행동 이벤트만 유실**된다(적재는 비동기) |
 
 ## 5. 헬스체크
