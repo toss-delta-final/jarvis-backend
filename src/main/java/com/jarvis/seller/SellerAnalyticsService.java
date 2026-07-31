@@ -61,9 +61,10 @@ public class SellerAnalyticsService {
     private static final int RETURN_REASON_TOP_LIMIT = 5;
     private static final int SESSIONS_WINDOW_DAYS = 30;
     private static final String CHECKOUT_START = "checkout_start";
+    private static final String PURCHASE_COMPLETE = "purchase_complete";
     /** I-13 상품 연계 4종 (노션 I-13) — counts 키는 camelCase */
     private static final List<String> I13_EVENT_TYPES =
-            List.of("product_view", "add_to_cart", CHECKOUT_START, "purchase_complete");
+            List.of("product_view", "add_to_cart", CHECKOUT_START, PURCHASE_COMPLETE);
 
     private final BehaviorEventRepository behaviorEventRepository;
     private final OrderItemRepository orderItemRepository;
@@ -90,7 +91,7 @@ public class SellerAnalyticsService {
         // behavior_events엔 적재 세대 구분이 없고 EventService는 처음부터 properties를 그대로
         // 적재해 왔다 — 전 구간 계산 가능으로 보고 항상 computable true.
         long checkoutStarts = countBrandCheckoutStarts(brandId, null, fromDt, toDt);
-        long purchases = orderItemRepository.countSellerPurchaseOrders(brandId, fromDt, toDt);
+        long purchases = orderItemRepository.countSellerPurchaseOrders(brandId, null, fromDt, toDt);
 
         List<SellerFunnelResponse.Stage> stages = List.of(
                 new SellerFunnelResponse.Stage("product_view", productViews, "events", null),
@@ -136,8 +137,11 @@ public class SellerAnalyticsService {
         LocalDateTime fromDt = period.from().atStartOfDay();
         LocalDateTime toDt = period.to().plusDays(1).atStartOfDay();
 
-        // checkout_start는 product_id 컬럼이 아닌 properties.productIds 귀속(I-7 3단과 동일 방식)
-        List<String> columnTypes = types.stream().filter(t -> !CHECKOUT_START.equals(t)).toList();
+        // product_id 컬럼으로 집계할 수 있는 건 product_view·add_to_cart뿐이다. checkout_start는
+        // properties.productIds JSON 귀속, purchase_complete는 주문(order_item×product×brand) 귀속 —
+        // 둘 다 product_id가 비어 있어 컬럼 조인 스코프에서 탈락한다(노션 I-13 2026-07-31 개정).
+        List<String> columnTypes = types.stream()
+                .filter(t -> !CHECKOUT_START.equals(t) && !PURCHASE_COMPLETE.equals(t)).toList();
         List<BrandCheckout> checkouts = types.contains(CHECKOUT_START)
                 ? loadBrandCheckouts(brandId, productId, fromDt, toDt)
                 : List.of();
@@ -316,6 +320,14 @@ public class SellerAnalyticsService {
         checkouts.forEach(c -> c.matchedProductIds().forEach(pid -> countsByProduct
                 .computeIfAbsent(pid, k -> new HashMap<>())
                 .merge(CHECKOUT_START, 1L, Long::sum)));
+        // 구매만 있고 조회·담기 이벤트가 없는 상품도 여기서 rows에 처음 등장한다
+        if (types.contains(PURCHASE_COMPLETE)) {
+            orderItemRepository
+                    .countSellerPurchaseOrdersByProduct(brandId, productId, fromDt, toDt)
+                    .forEach(row -> countsByProduct
+                            .computeIfAbsent(row.getProductId(), k -> new HashMap<>())
+                            .put(PURCHASE_COMPLETE, row.getCnt()));
+        }
         // uniqueVisitors는 product_id 컬럼 기반 이벤트만 distinct — JSON 귀속(checkout_start) 제외 근사
         Map<Long, Long> visitors = columnTypes.isEmpty() ? Map.of()
                 : behaviorEventRepository
@@ -347,11 +359,17 @@ public class SellerAnalyticsService {
                         .stream()
                         .collect(Collectors.toMap(BehaviorEventRepository.TypeCountRow::getEventType,
                                 BehaviorEventRepository.TypeCountRow::getCnt));
+        // I-7 purchase 단과 같은 쿼리 — 두 API 수치가 어긋나면 워커가 교차 조회에서 혼동한다
+        long purchases = types.contains(PURCHASE_COMPLETE)
+                ? orderItemRepository.countSellerPurchaseOrders(brandId, productId, fromDt, toDt)
+                : 0L;
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String type : types) {
-            counts.put(camel(type), CHECKOUT_START.equals(type)
-                    ? checkouts.size() // 주문서 1회=1 (02 §4)
-                    : raw.getOrDefault(type, 0L));
+            counts.put(camel(type), switch (type) {
+                case CHECKOUT_START -> (long) checkouts.size(); // 주문서 1회=1 (02 §4)
+                case PURCHASE_COMPLETE -> purchases;
+                default -> raw.getOrDefault(type, 0L);
+            });
         }
         return SellerEventsResponse.ofEventType(brandId, period.from(), period.to(), counts);
     }
@@ -370,6 +388,12 @@ public class SellerAnalyticsService {
         checkouts.forEach(c -> byDay
                 .computeIfAbsent(c.createdAt().toLocalDate().toString(), k -> new HashMap<>())
                 .merge(CHECKOUT_START, 1L, Long::sum));
+        // 구매의 일자 기준은 orders.paid_at — 다른 3종(behavior_events.created_at)과 다르다
+        if (types.contains(PURCHASE_COMPLETE)) {
+            orderItemRepository.countSellerPurchaseOrdersByDate(brandId, productId, fromDt, toDt)
+                    .forEach(row -> byDay.computeIfAbsent(row.getDay(), k -> new HashMap<>())
+                            .put(PURCHASE_COMPLETE, row.getCnt()));
+        }
         // 빈 일자 0 채움 — I-6 시계열과 같은 관성
         List<Map<String, Object>> series = new ArrayList<>();
         for (LocalDate d = period.from(); !d.isAfter(period.to()); d = d.plusDays(1)) {

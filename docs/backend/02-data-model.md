@@ -831,7 +831,7 @@ FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommenda
 | `recommendation_dismiss` | 추천 닫음 = 명시적 비선호 (D38) | `dismissMethod`? |
 | `recommendation_generated` | **서버(Spring) 내부 insert** — I-21 성공·I-22 저장·P-5 fallback 시. E-1 HTTP로 들어오면 드롭 (D38) | `itemCount` · 홈 fallback이면 `fallbackReason` |
 
-퍼널(4단): `product_view → add_to_cart → checkout_start → purchase_complete`. 판매자 단위 3단(checkout_start까지)은 checkout_start의 `properties.productIds` 배열로 계산 가능하고, **4단 purchase의 정본은 이벤트가 아니라 order_item×product×brand 집계**다 — 이벤트와 정산 데이터의 역할 분리(기존 원칙 유지). 구 타입 `CHAT_QUERY`·`WISHLIST_ADD`·`ORDER_CREATED`는 소멸(D31).
+퍼널(4단): `product_view → add_to_cart → checkout_start → purchase_complete`. 판매자 단위 3단(checkout_start까지)은 checkout_start의 `properties.productIds` 배열로 계산 가능하고, **4단 purchase의 정본은 이벤트가 아니라 order_item×product×brand 집계**다 — 이벤트와 정산 데이터의 역할 분리(기존 원칙 유지). 이 원칙은 **I-7 퍼널만이 아니라 I-13 행동 이벤트 집계에도 적용된다**(2026-07-31, 이슈 #62) — I-13이 purchase_complete만 이벤트 컬럼 기준으로 세다가 `product_id` NULL로 상시 0이 됐던 것을 같은 정본으로 정렬했다. 구 타입 `CHAT_QUERY`·`WISHLIST_ADD`·`ORDER_CREATED`는 소멸(D31).
 
 ## 5. 시드 데이터 요구사항 (LLM팀 공동 안건)
 
