@@ -32,6 +32,7 @@ public class ChatSessionService {
     private final LlmNotifyClient llmNotifyClient;
     private final ChatProperties chatProperties;
     private final LlmProperties llmProperties;
+    private final com.jarvis.member.GuestService guestService;
 
     /** CH-1 — 세션 + 티켓 동시 발급. 같은 신원·채널의 활성 세션이 있으면 그것을 그대로 준다(D5 멱등) */
     public ChatSessionResponse issueSession(ChatIdentity identity, ChatChannel channel) {
@@ -73,9 +74,7 @@ public class ChatSessionService {
     private ChatSessionResponse create(String ownerKey, ChatIdentity identity, ChatChannel channel, Long brandId) {
         String sessionId = UUID.randomUUID().toString();
         Duration ttl = sessionTtl();
-        String value = identity.subType() + DELIMITER + identity.sub() + DELIMITER + channel.name()
-                + (brandId != null ? DELIMITER + brandId : "");
-        redisTemplate.opsForValue().set(sessionKey(sessionId), value, ttl);
+        redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(identity, channel, brandId), ttl);
         if (Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(ownerKey, sessionId, ttl))) {
             return response(sessionId, identity, brandId);
         }
@@ -125,6 +124,42 @@ public class ChatSessionService {
     }
 
     /**
+     * CH-7 — 게스트 접속을 회원에게 승계한다(이슈 #63). sessionId와 그 아래 모든 방(thread)은 그대로 두고
+     * 주인만 바꾸므로 대화가 이어진다.
+     *
+     * <p><b>소유권 근거는 쿠키가 아니라 귀속 기록</b>이다 — 로그인 시점에 guest_id 쿠키가 이미 반납되므로
+     * (GUEST-LIFECYCLE), "이 게스트 구간의 주인이 요청 회원인가"를 {@code guest.converted_member_id}로 묻는다.
+     * 덕분에 남의 세션을 sessionId만으로 주워갈 수 없다 — 자기가 방금 은퇴시킨 게스트만 승계된다.
+     *
+     * <p><b>순서가 중요하다</b>: AI 전이(I-23)가 성공해야 Redis owner를 옮긴다. 뒤집으면 AI가 409로
+     * 거부했을 때 "Spring은 회원, AI는 게스트"인 부분 성공이 고착된다(이슈 #63 §5).
+     */
+    public ChatSessionResponse claimSession(long memberId, String sessionId) {
+        String value = redisTemplate.opsForValue().get(sessionKey(sessionId));
+        if (value == null) {
+            throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+        }
+        String[] parts = value.split("\\" + DELIMITER);
+        String guestId = parts[1];
+        if (!ChatIdentity.TYPE_GUEST.equals(parts[0]) || !guestService.isOwnedBy(guestId, memberId)) {
+            throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);
+        }
+        ChatChannel channel = ChatChannel.valueOf(parts[2]);
+        ChatIdentity member = ChatIdentity.member(memberId);
+        // 다른 기기에서 이미 회원으로 대화 중이면 병합하지 않는다 — FE는 CH-1로 그 세션을 받는다(D5)
+        if (redisTemplate.opsForValue().get(ownerKey(member, channel)) != null) {
+            throw new BusinessException(ErrorCode.SESSION_CLAIM_CONFLICT);
+        }
+        llmNotifyClient.notifySessionClaim(sessionId, guestId, memberId);
+        Long brandId = brandIdOf(value);
+        Duration ttl = sessionTtl();
+        redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(member, channel, brandId), ttl);
+        redisTemplate.delete(ownerKey(ChatIdentity.guest(guestId), channel));
+        redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ttl);
+        return response(sessionId, member, brandId);
+    }
+
+    /**
      * 세션에 기록된 신원 조회 (I-21이 추천 목록에 소유자를 박기 위해 사용 — 노션 CH-5 소유자 검증).
      * 세션 키 형식을 아는 건 이 클래스뿐이라 파싱도 여기 둔다. 만료·미존재면 empty.
      */
@@ -145,25 +180,6 @@ public class ChatSessionService {
      * Spring이 I-20을 발화하는 유일한 경로다(노션 I-20 정본 2026-07-30 — reason은 logout 하나).
      */
     public void endSession(ChatIdentity identity, SessionEndReason reason) {
-        clearSessions(identity, reason);
-    }
-
-    /**
-     * 게스트 승계 시 세션 정리 — 게스트는 프로필 대상이 아니라 I-20을 발화하지 않으므로 통지 없이 비운다
-     * (노션 I-20 정본). Phase C에서 "정리"가 "승계"(I-23)로 바뀔 자리다.
-     */
-    @Async
-    public void discardSessionsAsync(ChatIdentity identity) {
-        try {
-            clearSessions(identity, null);
-        } catch (RuntimeException e) {
-            log.warn("채팅 세션 정리 실패 — TTL 소멸에 위임. identity={}:{}",
-                    identity.subType(), identity.sub(), e);
-        }
-    }
-
-    /** reason이 null이면 통지 없이 Redis만 비운다 */
-    private void clearSessions(ChatIdentity identity, SessionEndReason reason) {
         for (ChatChannel channel : ChatChannel.values()) {
             String ownerKey = ownerKey(identity, channel);
             String sessionId = redisTemplate.opsForValue().get(ownerKey);
@@ -172,9 +188,7 @@ public class ChatSessionService {
             }
             redisTemplate.delete(sessionKey(sessionId));
             redisTemplate.delete(ownerKey);
-            if (reason != null) {
-                notifyIfMember(sessionId, identity, reason);
-            }
+            notifyIfMember(sessionId, identity, reason);
         }
     }
 
@@ -212,6 +226,11 @@ public class ChatSessionService {
 
     private Duration sessionTtl() {
         return Duration.ofMinutes(chatProperties.sessionTtlMinutes());
+    }
+
+    private static String sessionValue(ChatIdentity identity, ChatChannel channel, Long brandId) {
+        return identity.subType() + DELIMITER + identity.sub() + DELIMITER + channel.name()
+                + (brandId != null ? DELIMITER + brandId : "");
     }
 
     /** 세션 값의 4번째 칸은 S-4 SELLER 세션에만 있다 */

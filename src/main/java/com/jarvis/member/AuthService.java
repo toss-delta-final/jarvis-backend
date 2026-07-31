@@ -127,9 +127,12 @@ public class AuthService {
      *
      * <p>behavior_events 백필은 폐기했다 — 로그는 "일어난 사실"이라 고쳐 쓰지 않고, "이 구간의 주인은
      * 회원 N"이라는 귀속 기록으로 해석한다(CH-5 소유자 예외 · I-16 귀속 조인).
-     * 쿠키 반납은 컨트롤러 소관이고(03 §3-1 — 쿠키 읽기/쓰기는 컨트롤러에서만), <b>채팅 맥락 승계는
-     * 여기서 하지 않는다</b> — 채팅 화면에서 시작한 로그인만 CH-7로 명시적으로 claim한다(이슈 #63).
-     * 게스트는 프로필 대상이 아니라 세션 정리에 I-20은 발화하지 않는다(노션 I-20 정본).
+     * 쿠키 반납은 컨트롤러 소관이다(03 §3-1 — 쿠키 읽기/쓰기는 컨트롤러에서만).
+     *
+     * <p><b>게스트 채팅 세션은 건드리지 않는다</b> — 여기서 지우면 뒤이어 오는 CH-7이 승계할 대상을
+     * 잃는다(이슈 #63). 채팅 화면에서 시작한 로그인이면 FE가 CH-7로 승계하고, 아니면 그 세션은
+     * 주인 없이 남아 TTL(10분)로 소멸한다. 쿠키가 반납돼 신원이 사라졌으므로 CH-1b로 티켓을
+     * 갱신할 수도 없어, 남아 있어도 접근 경로가 없다.
      */
     private void inheritGuest(Long memberId, String guestId) {
         if (guestId == null || guestId.isBlank()) {
@@ -140,7 +143,6 @@ public class AuthService {
                     guest.convertTo(memberId);
                     cartService.mergeGuestCart(memberId, guestId);
                 });
-        chatSessionService.discardSessionsAsync(ChatIdentity.guest(guestId));
     }
 
     private AuthResult issueTokens(Member member) {

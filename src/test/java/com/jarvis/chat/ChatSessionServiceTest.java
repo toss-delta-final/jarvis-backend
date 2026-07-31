@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,6 +37,7 @@ class ChatSessionServiceTest {
     @Mock LlmNotifyClient llmNotifyClient;
     @Mock ChatProperties chatProperties;
     @Mock LlmProperties llmProperties;
+    @Mock com.jarvis.member.GuestService guestService;
 
     @InjectMocks ChatSessionService service;
 
@@ -231,16 +233,83 @@ class ChatSessionServiceTest {
     }
 
     @Test
-    @DisplayName("게스트 승계 — Redis는 정리하되 I-20은 생략(게스트는 프로필 대상 아님, 노션 I-20 정본)")
-    void discardSessionsSkipsNotify() {
+    @DisplayName("게스트 세션 종료 — Redis는 정리하되 I-20은 생략(게스트는 프로필 대상 아님, 노션 I-20 정본)")
+    void endSessionGuestSkipsNotify() {
         when(valueOperations.get("chat:owner:guest:g-uuid:SHOPPING")).thenReturn("gs1");
         when(valueOperations.get("chat:owner:guest:g-uuid:CS")).thenReturn(null);
         when(valueOperations.get("chat:owner:guest:g-uuid:SELLER")).thenReturn(null);
 
-        service.discardSessionsAsync(ChatIdentity.guest("g-uuid"));
+        service.endSession(ChatIdentity.guest("g-uuid"), SessionEndReason.LOGOUT);
 
         verify(redisTemplate).delete("chat:session:gs1");
         verify(redisTemplate).delete("chat:owner:guest:g-uuid:SHOPPING");
         verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("CH-7 — 귀속 기록으로 소유권을 확인하고 owner를 회원으로 옮긴다 (이슈 #63)")
+    void claimSession() {
+        when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|SHOPPING");
+        when(guestService.isOwnedBy("g-uuid", 7L)).thenReturn(true);
+        when(valueOperations.get("chat:owner:member:7:SHOPPING")).thenReturn(null);
+
+        ChatSessionResponse response = service.claimSession(7L, "s1");
+
+        assertThat(response.sessionId()).isEqualTo("s1");
+        verify(llmNotifyClient).notifySessionClaim("s1", "g-uuid", 7L);
+        verify(valueOperations).set("chat:session:s1", "member|7|SHOPPING", Duration.ofMinutes(10));
+        verify(redisTemplate).delete("chat:owner:guest:g-uuid:SHOPPING");
+        verify(valueOperations).set("chat:owner:member:7:SHOPPING", "s1", Duration.ofMinutes(10));
+    }
+
+    @Test
+    @DisplayName("CH-7 — 내가 은퇴시킨 게스트가 아니면 403 (sessionId만으로 남의 세션을 주울 수 없다)")
+    void claimSessionRejectsForeignGuest() {
+        when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|SHOPPING");
+        when(guestService.isOwnedBy("g-uuid", 7L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.claimSession(7L, "s1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SESSION_FORBIDDEN);
+        verify(llmNotifyClient, never()).notifySessionClaim(anyString(), anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("CH-7 — 회원이 이미 그 채널에서 대화 중이면 409, 병합하지 않는다")
+    void claimSessionRejectsWhenMemberAlreadyHasSession() {
+        when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|SHOPPING");
+        when(guestService.isOwnedBy("g-uuid", 7L)).thenReturn(true);
+        when(valueOperations.get("chat:owner:member:7:SHOPPING")).thenReturn("existing");
+
+        assertThatThrownBy(() -> service.claimSession(7L, "s1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SESSION_CLAIM_CONFLICT);
+        verify(llmNotifyClient, never()).notifySessionClaim(anyString(), anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("CH-7 — AI가 거부하면 Redis owner를 옮기지 않는다 (부분 성공 고착 방지)")
+    void claimSessionKeepsRedisWhenAiRejects() {
+        when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|SHOPPING");
+        when(guestService.isOwnedBy("g-uuid", 7L)).thenReturn(true);
+        when(valueOperations.get("chat:owner:member:7:SHOPPING")).thenReturn(null);
+        doThrow(new BusinessException(ErrorCode.SESSION_ACTIVE))
+                .when(llmNotifyClient).notifySessionClaim("s1", "g-uuid", 7L);
+
+        assertThatThrownBy(() -> service.claimSession(7L, "s1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SESSION_ACTIVE);
+        verify(redisTemplate, never()).delete(anyString());
+        verify(valueOperations, never()).set(eq("chat:owner:member:7:SHOPPING"), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("CH-7 — 세션이 만료됐으면 404 (FE는 CH-1로 새 세션)")
+    void claimSessionNotFound() {
+        when(valueOperations.get("chat:session:gone")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.claimSession(7L, "gone"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SESSION_NOT_FOUND);
     }
 }

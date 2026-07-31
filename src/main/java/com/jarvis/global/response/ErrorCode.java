@@ -60,6 +60,10 @@ public enum ErrorCode {
     // chat (04 §6 — Phase 5)
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "채팅 세션이 만료되었거나 존재하지 않습니다."),
     SESSION_FORBIDDEN(HttpStatus.FORBIDDEN, "본인 세션이 아닙니다."),
+    // CH-7 승계 — AI가 거부한 사유를 그대로 옮긴다(노션 I-23 · jarvis-ai #187)
+    SESSION_ACTIVE(HttpStatus.CONFLICT, "대화가 진행 중입니다. 잠시 후 다시 시도해 주세요."),
+    SESSION_CLAIM_CONFLICT(HttpStatus.CONFLICT, "이미 정리되었거나 다른 계정으로 승계된 세션입니다."),
+    SESSION_CLAIM_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "지금은 대화를 이어받을 수 없습니다. 잠시 후 다시 시도해 주세요."),
 
     // internal (03 D4 — Phase 5)
     INTERNAL_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "서비스 토큰이 유효하지 않습니다."),
