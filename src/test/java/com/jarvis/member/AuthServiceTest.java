@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.jarvis.cart.CartService;
@@ -134,7 +135,8 @@ class AuthServiceTest {
             assertThat(guest.getConvertedMemberId()).isEqualTo(1L);
             assertThat(guest.getConvertedAt()).isNotNull();
             verify(cartService).mergeGuestCart(1L, guestId);
-            verify(chatSessionService).discardSessionsAsync(com.jarvis.chat.ChatIdentity.guest(guestId));
+            // 채팅 세션은 건드리지 않는다 — 지우면 뒤이어 오는 CH-7이 승계할 대상을 잃는다(이슈 #63)
+            verifyNoInteractions(chatSessionService);
         }
     }
 
@@ -196,7 +198,8 @@ class AuthServiceTest {
             assertThat(guest.getConvertedMemberId()).isEqualTo(1L);
             assertThat(guest.getConvertedAt()).isNotNull();
             verify(cartService).mergeGuestCart(1L, guestId);
-            verify(chatSessionService).discardSessionsAsync(com.jarvis.chat.ChatIdentity.guest(guestId));
+            // 채팅 세션은 건드리지 않는다 — 지우면 뒤이어 오는 CH-7이 승계할 대상을 잃는다(이슈 #63)
+            verifyNoInteractions(chatSessionService);
         }
     }
 

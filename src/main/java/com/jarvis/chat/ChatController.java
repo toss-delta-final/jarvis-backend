@@ -71,6 +71,18 @@ public class ChatController {
                 ChatIdentity.member(authUser.memberId()), brand.getId()));
     }
 
+    /**
+     * CH-7 (이슈 #63) — 채팅 화면에서 로그인·가입했을 때 FE가 호출해 게스트 접속을 회원으로 승계한다.
+     * 자동이 아닌 이유: 모든 로그인에 대화를 귀속시키지 않고, AI 동기 호출을 로그인 트랜잭션에 넣지
+     * 않기 위해서다. 신원은 AT(회원)와 세션에 기록된 게스트의 귀속 기록으로만 판정한다 — 클라이언트가
+     * guestId를 주장하지 않는다.
+     */
+    @PostMapping("/sessions/{sessionId}/claim")
+    public ApiResponse<ChatSessionResponse> claimSession(@PathVariable String sessionId,
+                                                         @AuthenticationPrincipal AuthUser authUser) {
+        return ApiResponse.success(chatSessionService.claimSession(authUser.memberId(), sessionId));
+    }
+
     /** CH-1b — 티켓 만료 401 시 FE가 호출 후 1회 재시도 (05 §1-0) */
     @PostMapping("/tickets")
     public ApiResponse<ChatSessionResponse> reissueTicket(@Valid @RequestBody TicketReissueRequest request,

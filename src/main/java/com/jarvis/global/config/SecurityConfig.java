@@ -64,6 +64,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/events").permitAll() // E-1 인증 선택
                         .requestMatchers(HttpMethod.POST, "/api/chat/sessions", "/api/chat/tickets").permitAll()
                         .requestMatchers("/api/chat/lists/**").permitAll() // CH-5
+                        // CH-7 승계 — 회원 AT 필수(게스트는 부를 수 없다). 소유권은 서비스가 귀속 기록으로 검증
+                        .requestMatchers(HttpMethod.POST, "/api/chat/sessions/*/claim").authenticated()
                         .requestMatchers("/.well-known/**").permitAll() // JWKS (Phase 5)
                         // /internal은 시큐리티가 아니라 InternalTokenFilter가 지킨다 (03 D4 — 3중 방어의 앱 층)
                         .requestMatchers("/internal/**").permitAll()
