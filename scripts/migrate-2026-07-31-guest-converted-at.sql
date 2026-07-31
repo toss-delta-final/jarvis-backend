@@ -10,5 +10,7 @@
 -- 기존 행의 converted_at은 NULL로 남는다: 백필 시절 승계된 게스트라 정확한 은퇴 시각을 알 수 없고,
 -- 추측값을 넣으면 "구간 경계"를 로그와 대조할 때 오히려 틀린 근거가 된다.
 
+-- 재실행 무해(IF NOT EXISTS) — DEPLOY.md §4-2가 migrate-*.sql을 전부 다시 흘리는 것을 전제한다.
 ALTER TABLE guest
-    ADD COLUMN converted_at DATETIME NULL COMMENT '은퇴 시각(귀속 시점)' AFTER converted_member_id;
+    ADD COLUMN IF NOT EXISTS converted_at DATETIME NULL COMMENT '은퇴 시각(귀속 시점)'
+        AFTER converted_member_id;
