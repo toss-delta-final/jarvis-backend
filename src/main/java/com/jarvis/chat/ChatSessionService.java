@@ -111,7 +111,6 @@ public class ChatSessionService {
      * endSession의 비동기 입구 — 열린 DB 트랜잭션 안에서 Redis를 기다리지 않도록 분리
      * (로그아웃처럼 @Transactional 안에서 호출하는 곳 전용). Redis 장애는 warn만 남기고
      * 세션은 TTL 소멸에 위임 — 호출측 흐름(RT 삭제 등)은 영향받지 않는다.
-     * 주의: issue()의 "새 대화" 정리는 새 세션 발급과의 순서 보장이 필요해 동기 경로를 유지한다.
      */
     @Async
     public void endSessionAsync(ChatIdentity identity, SessionEndReason reason) {
