@@ -17,7 +17,6 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,11 +35,10 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
     private final JwtProperties jwtProperties;
-    private final JdbcTemplate jdbcTemplate;
     private final CartService cartService;
     private final ChatSessionService chatSessionService;
 
-    /** A-1 — 가입 + 자동 로그인 + 게스트 승계(백필 + 병합 — 가입 전용). guestId는 쿠키 유래(컨트롤러 주입) */
+    /** A-1 — 가입 + 자동 로그인 + 게스트 구간 승계. guestId는 쿠키 유래(컨트롤러 주입) */
     @Transactional
     public AuthResult signup(SignupRequest request, String clientIp, String guestId) {
         if (memberRepository.existsByEmail(request.email())) {
@@ -53,12 +51,12 @@ public class AuthService {
                 request.gender(),
                 request.birthDate(),
                 LocalDateTime.now()));
-        inheritGuest(member.getId(), guestId, true);
+        inheritGuest(member.getId(), guestId);
         accountEventLogger.log(member.getId(), AccountEventType.SIGNUP, clientIp);
         return issueTokens(member);
     }
 
-    /** A-2 — 실패는 계정 존재 여부 무관 통일 401 AUTH_LOGIN_FAILED (04). 승계는 장바구니 병합만 */
+    /** A-2 — 실패는 계정 존재 여부 무관 통일 401 AUTH_LOGIN_FAILED (04). 승계는 가입과 동일 */
     @Transactional
     public AuthResult login(LoginRequest request, String clientIp, String guestId) {
         Member member = memberRepository.findByEmail(request.email())
@@ -66,7 +64,7 @@ public class AuthService {
         if (!passwordEncoder.matches(request.password(), member.getPassword())) {
             throw loginFail(member.getId(), clientIp);
         }
-        inheritGuest(member.getId(), guestId, false);
+        inheritGuest(member.getId(), guestId);
         accountEventLogger.log(member.getId(), AccountEventType.LOGIN_SUCCESS, clientIp);
         return issueTokens(member);
     }
@@ -124,25 +122,22 @@ public class AuthService {
     }
 
     /**
-     * 게스트 승계 (02 D5·D30, 노션 A-1/A-2 2026-07-20 개정) —
-     * 가입(A-1): converted_member_id 기록 + behavior_events member_id 백필 + 장바구니 병합.
-     * 로그인(A-2): 장바구니 병합만 — 공용 PC에서 앞 사람의 탐색 이력이 다른 계정에 귀속되면
-     * 추천·분석이 오염되므로 백필은 가입 전용. 병합은 재로그인에도 매번 수행(02 D30).
-     * 승계 후 해당 게스트의 채팅 세션 종료(Redis 정리) — 게스트는 프로필 대상이 아니라 I-20은
-     * 발화하지 않는다(노션 I-20 정본, FastAPI 맥락은 자체 TTL로 소멸). 이후 채팅은 CH-1로 새 세션.
+     * 게스트 구간 승계 (GUEST-LIFECYCLE · 노션 A-1/A-2 2026-07-31 개정) — 가입·로그인이 완전히 동일하다.
+     * ① 장바구니 병합(사용자가 보고 쓰던 상태라 즉시 옮긴다, 02 D30) ② 구간 귀속 기록 ③ 채팅 세션 정리.
+     *
+     * <p>behavior_events 백필은 폐기했다 — 로그는 "일어난 사실"이라 고쳐 쓰지 않고, "이 구간의 주인은
+     * 회원 N"이라는 귀속 기록으로 해석한다(CH-5 소유자 예외 · I-16 귀속 조인).
+     * 쿠키 반납은 컨트롤러 소관이고(03 §3-1 — 쿠키 읽기/쓰기는 컨트롤러에서만), <b>채팅 맥락 승계는
+     * 여기서 하지 않는다</b> — 채팅 화면에서 시작한 로그인만 CH-7로 명시적으로 claim한다(이슈 #63).
+     * 게스트는 프로필 대상이 아니라 세션 정리에 I-20은 발화하지 않는다(노션 I-20 정본).
      */
-    private void inheritGuest(Long memberId, String guestId, boolean backfill) {
+    private void inheritGuest(Long memberId, String guestId) {
         if (guestId == null || guestId.isBlank()) {
             return;
         }
         guestRepository.findById(guestId)
                 .ifPresent(guest -> {
-                    if (backfill && !guest.isConverted()) {
-                        guest.convertTo(memberId);
-                        jdbcTemplate.update(
-                                "UPDATE behavior_events SET member_id = ? WHERE guest_id = ? AND member_id IS NULL",
-                                memberId, guestId);
-                    }
+                    guest.convertTo(memberId);
                     cartService.mergeGuestCart(memberId, guestId);
                 });
         chatSessionService.discardSessionsAsync(ChatIdentity.guest(guestId));

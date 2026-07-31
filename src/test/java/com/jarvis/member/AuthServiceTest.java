@@ -30,7 +30,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -45,7 +44,6 @@ class AuthServiceTest {
     @Mock GuestRepository guestRepository;
     @Mock RefreshTokenRepository refreshTokenRepository;
     @Mock AccountEventLogger accountEventLogger;
-    @Mock JdbcTemplate jdbcTemplate;
     @Mock CartService cartService;
     @Mock ChatSessionService chatSessionService;
 
@@ -58,7 +56,7 @@ class AuthServiceTest {
     @BeforeEach
     void setUp() {
         authService = new AuthService(memberRepository, guestRepository, refreshTokenRepository,
-                accountEventLogger, passwordEncoder, jwtProvider, jwtProperties, jdbcTemplate,
+                accountEventLogger, passwordEncoder, jwtProvider, jwtProperties,
                 cartService, chatSessionService);
     }
 
@@ -119,7 +117,7 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("게스트 쿠키가 오면 승계 — converted_member_id 기록 + 백필 + 병합 + 게스트 세션 종료(Redis 정리, I-20 미발화)")
+        @DisplayName("게스트 쿠키가 오면 승계 — 귀속 기록 + 병합 + 세션 정리. 백필은 하지 않는다(GUEST-LIFECYCLE)")
         void withGuestId_convertsGuest() {
             String guestId = "11111111-1111-1111-1111-111111111111";
             Guest guest = Guest.issue(guestId);
@@ -134,9 +132,7 @@ class AuthServiceTest {
             authService.signup(signupRequest(), IP, guestId);
 
             assertThat(guest.getConvertedMemberId()).isEqualTo(1L);
-            verify(jdbcTemplate).update(
-                    eq("UPDATE behavior_events SET member_id = ? WHERE guest_id = ? AND member_id IS NULL"),
-                    eq(1L), eq(guestId));
+            assertThat(guest.getConvertedAt()).isNotNull();
             verify(cartService).mergeGuestCart(1L, guestId);
             verify(chatSessionService).discardSessionsAsync(com.jarvis.chat.ChatIdentity.guest(guestId));
         }
@@ -187,8 +183,8 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("로그인 승계는 장바구니 병합만 — 백필·convertTo 금지(노션 A-2 07-20, 공용 PC 이력 오염 방지)")
-        void loginInheritsMergeOnly() {
+        @DisplayName("로그인 승계도 가입과 동일 — 귀속 기록 + 병합 + 세션 정리 (노션 A-2 2026-07-31 개정)")
+        void loginInheritsSameAsSignup() {
             String guestId = "22222222-2222-2222-2222-222222222222";
             Guest guest = Guest.issue(guestId);
             when(memberRepository.findByEmail("user@test.com"))
@@ -197,8 +193,8 @@ class AuthServiceTest {
 
             authService.login(new LoginRequest("user@test.com", "password1"), IP, guestId);
 
-            assertThat(guest.isConverted()).isFalse();
-            verify(jdbcTemplate, never()).update(anyString(), any(), any());
+            assertThat(guest.getConvertedMemberId()).isEqualTo(1L);
+            assertThat(guest.getConvertedAt()).isNotNull();
             verify(cartService).mergeGuestCart(1L, guestId);
             verify(chatSessionService).discardSessionsAsync(com.jarvis.chat.ChatIdentity.guest(guestId));
         }

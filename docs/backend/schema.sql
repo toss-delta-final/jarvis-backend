@@ -34,9 +34,13 @@ CREATE TABLE member (
     UNIQUE KEY uk_member_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 게스트 = 로그인과 로그인 사이의 익명 구간(쿠키 2시간 sliding). 로그인/가입 시 아래 두 칸을 채우고
+-- 쿠키를 반납해 은퇴하므로, 이 테이블이 곧 "구간 → 귀속 계정" 연결 기록 대장이다(GUEST-LIFECYCLE).
+-- behavior_events·recommendation_list는 고쳐 쓰지 않고 이 매핑으로 회원과 잇는다.
 CREATE TABLE guest (
     id                   CHAR(36) NOT NULL,                -- UUID, 쿠키 값 그대로 (D5)
-    converted_member_id  BIGINT   NULL,                    -- 가입/로그인 승계 시 기록 (D5)
+    converted_member_id  BIGINT   NULL,                    -- 이 구간의 귀속 계정 — 가입·로그인 공통 기록 (D5)
+    converted_at         DATETIME NULL,                    -- 은퇴 시각(귀속 시점). 구간 경계를 로그와 대조할 때 쓴다
     created_at           DATETIME NOT NULL,
     updated_at           DATETIME NULL,
     PRIMARY KEY (id),
