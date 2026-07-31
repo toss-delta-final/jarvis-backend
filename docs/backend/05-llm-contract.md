@@ -232,15 +232,17 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 
 ### I-20. 세션 종료 통지 `POST {LLM_BASE_URL}/events/session-end` — **방향 예외(Spring→FastAPI)**
 
-세션 종료를 통지해 FastAPI의 **회원 프로필 버퍼(승격 전 발화)를 프로필로 조기 승격**하는 트리거. best-effort·멱등이며 응답은 **202**(노션 I-20 정본 2026-07-21 개정 반영).
+FastAPI의 **회원 프로필 버퍼(승격 전 발화)를 지금 프로필로 승격하라는 신호**. 승격 트리거는 셋(로그아웃·새 대화·유휴)이고 그중 **Spring만 감지할 수 있는 로그아웃**을 HTTP로 넘기는 통로가 I-20이다 — 나머지 둘은 FastAPI가 자체 판정해 HTTP 없이 처리한다. best-effort·멱등이며 응답은 **202**(노션 I-20 정본 2026-07-31 개정 반영).
 
 - **인증**: `X-Internal-Token` 필수 — 인바운드 콜백과 동일한 공유 시크릿(§0 ②, `app.internal.token`). 미검증 시 401 `INTERNAL_TOKEN_INVALID`.
 - **body** (camelCase): `{ "sessionId": "<uuid>", "userId": <회원 BIGINT>, "reason": "logout" }`
   - `sessionId` — Spring이 UUID로 발급(정규식 제한 없이 불투명 문자열 수용, 2026-07-17 합의).
   - `userId` — **회원 BIGINT 필수**. 프로필 세션 버퍼 조회 키.
-  - `reason` — 관측·진단용 선택 필드(처리 분기 미사용, 알려진 값 외 문자열도 400 아님). 알려진 값 `logout | inactivityTimeout` (`newConversation`은 2026-07-30 폐기 — 새 대화가 CH-1을 부르지 않게 되어 사유 자체가 사라졌다).
+  - `reason` — 관측·진단용 선택 필드(처리 분기 미사용, 알려진 값 외 문자열도 400 아님). 알려진 값 `logout | inactivityTimeout` (`newConversation`은 **API 사유가 아니다** — 새 대화는 AI가 `threadId` 최초 등장으로 감지해 HTTP 없이 승격한다, 2026-07-31 확정).
 - **게스트 생략**: 게스트는 프로필 대상이 아니므로 **Spring이 I-20 호출 자체를 생략**한다(`sub_type=guest`면 skip — 로그아웃·가입·로그인 승계의 게스트 세션 정리는 Redis만, FastAPI 맥락은 자체 TTL 소멸). 코드: `ChatSessionService#notifyIfMember`(로그아웃) · `#discardSessionsAsync`(게스트 승계 — 통지 없이 정리).
-- **실발화 트리거(회원)**: **로그아웃(`logout`) 하나뿐**(노션 I-20 정본 2026-07-30 확정). 유휴 종료(`inactivityTimeout`)는 FastAPI 내부 idle flush로 이관, 탭 종료(`tabClose`)는 계약에서 제외, 새 대화(`newConversation`)는 FE가 `threadId`만 갱신해 세션을 유지하므로 **사유 자체가 소멸** — Spring은 셋 다 통지하지 않으며 FastAPI는 수신을 전제하지 말 것. 로그아웃 시 채널별 활성 세션이 여럿이면 세션마다 한 건씩 나가며, 멱등이라 무해하다.
+- **실발화 트리거(회원)**: **로그아웃(`logout`) 하나뿐**(노션 I-20 정본 2026-07-31 확정). 유휴 종료(`inactivityTimeout`)는 FastAPI 내부 idle flush, 새 대화는 **FastAPI가 `/chat`의 `threadId` 최초 등장으로 감지해 직전 thread 버퍼를 승격**(HTTP 신호 없음 — Spring은 thread를 모르고 티켓에도 싣지 않는다), 탭 종료(`tabClose`)는 계약에서 제외. Spring은 셋 다 통지하지 않으며 FastAPI는 수신을 전제하지 말 것.
+- **승격 단위는 thread**: I-20 수신 시 FastAPI가 승격하는 대상은 그 세션에서 **아직 승격되지 않은 thread 버퍼**다 — 새 대화 전환·idle로 이미 승격된 thread는 재승격하지 않는다. thread 단위 자체 승격은 HTTP를 타지 않아 아래 멱등 키를 소비하지 않는다.
+- **발화 조건의 한계(FastAPI가 알아야 할 것)**: ① 로그아웃 1회가 채널 수만큼 발화한다 — SHOPPING·CS·SELLER는 서로 다른 `sessionId`라 최대 3건, 멱등 키도 각각 별개. ② 채팅 세션 TTL(10분 sliding)이 지난 뒤 로그아웃하면 Spring에 세션이 없어 **통지 자체가 없다**. 즉 프로필 승격의 주 경로는 AI 자체 감지이고 I-20은 보조다.
 - **멱등**: `dedupKey = "session-end:" + userId + ":" + sessionId`. 신규=`202 {"status":"accepted"}`, 중복=`202 {"status":"duplicate"}`. 재시도·중복 호출 무해.
 - 구 계약 폐기: snake_case `session_id`/`user_id`/`guest_id`, `S-` 접두 정규식, checkpointer 삭제 부수효과, `200 {cleared}` 응답, `403 SESSION_FORBIDDEN`(노션 I-20 「제외된 구계약」).
 - 구 "세션 만료 시 `DELETE {LLM_BASE_URL}/sessions/{id}` 통지(OPEN)" 항목을 대체 — 2026-07-17 확정.

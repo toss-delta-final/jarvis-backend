@@ -2,9 +2,10 @@ package com.jarvis.chat;
 
 /**
  * I-20 세션 종료 사유 (05 §2-1). 와이어 값은 노션 정본대로 camelCase — enum 상수명과 분리해
- * {@link #wireValue()}로 내보낸다. Spring이 발화하는 사유는 로그아웃 하나뿐이다(노션 I-20 정본
- * 2026-07-30 확정) — 유휴 종료는 FastAPI 내부 idle flush로, 탭 종료는 계약에서 제외됐고,
- * "새 대화"는 FE가 threadId만 새로 만들어 세션을 유지하므로 사유 자체가 사라졌다(SPEC-CHAT-SESSION).
+ * {@link #wireValue()}로 내보낸다. I-20은 "프로필을 지금 승격하라"는 신호이고, 승격 트리거 셋 중
+ * Spring이 감지할 수 있는 건 로그아웃 하나뿐이다(노션 I-20 정본 2026-07-31 확정) — 유휴는 FastAPI
+ * 내부 idle flush, "새 대화"는 FastAPI가 /chat의 threadId 최초 등장으로 자체 감지하며(Spring은
+ * thread를 모른다), 탭 종료는 계약에서 제외됐다.
  */
 public enum SessionEndReason {
     LOGOUT("logout");
