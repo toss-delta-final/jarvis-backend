@@ -143,12 +143,20 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
                                                @Param("from") LocalDateTime from,
                                                @Param("to") LocalDateTime to);
 
-    /** I-13 uniqueVisitors — distinct(member_id, guest_id), 게스트 포함(둘 다 없으면 session_key로 근사) */
+    /**
+     * I-13 uniqueVisitors — distinct(회원, 게스트), 게스트 포함(둘 다 없으면 session_key로 근사).
+     * 승계된 게스트 구간은 귀속 계정으로 접어 센다(GUEST-LIFECYCLE) — 게스트 신원이 2시간마다 회전하므로
+     * 접지 않으면 "로그아웃 상태로 보다가 로그인해 산 한 사람"이 둘로 세어진다. 끝내 로그인하지 않은
+     * 게스트는 구간마다 별개로 남는데, 그건 신원을 밝히지 않은 방문이라 합칠 근거가 없다.
+     */
     @Query(value = """
             SELECT be.product_id AS productId,
-                   COUNT(DISTINCT COALESCE(CAST(be.member_id AS CHAR), be.guest_id, be.session_key)) AS visitors
+                   COUNT(DISTINCT COALESCE(CAST(be.member_id AS CHAR),
+                                           CAST(g.converted_member_id AS CHAR),
+                                           be.guest_id, be.session_key)) AS visitors
             FROM behavior_events be
             JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
+            LEFT JOIN guest g ON g.id = be.guest_id
             WHERE be.event_type IN (:types)
               AND (:productId IS NULL OR be.product_id = :productId)
               AND be.created_at >= :from AND be.created_at < :to
@@ -177,58 +185,77 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
                                                        @Param("from") LocalDateTime from,
                                                        @Param("to") LocalDateTime to);
 
-    /** I-16 코호트 — 기간 내 자사 상품과 상호작용(product_id 연계 이벤트)한 회원 (노션 I-16) */
+    /**
+     * I-16 코호트 — 기간 내 자사 상품과 상호작용(product_id 연계 이벤트)한 회원 (노션 I-16).
+     * 회원 이벤트 + 그 회원에게 귀속된 게스트 구간의 이벤트를 함께 본다 — 백필을 폐기하면서 로그를
+     * 고쳐 쓰지 않기로 했으므로, 로그인 전 탐색은 guest.converted_member_id로만 회원과 이어진다
+     * (GUEST-LIFECYCLE). 접지 않으면 가입 직전에 한참 둘러본 회원이 코호트에서 통째로 빠진다.
+     */
     @Query(value = """
-            SELECT DISTINCT be.member_id
+            SELECT DISTINCT COALESCE(be.member_id, g.converted_member_id)
             FROM behavior_events be
             JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
-            WHERE be.member_id IS NOT NULL
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE COALESCE(be.member_id, g.converted_member_id) IS NOT NULL
               AND be.created_at >= :from AND be.created_at < :to
             """, nativeQuery = true)
     List<Long> findChurnCohortMemberIds(@Param("brandId") Long brandId,
                                         @Param("from") LocalDateTime from,
                                         @Param("to") LocalDateTime to);
 
-    /** I-16 lastActivityAt — 브랜드 무관 전체 behavior_events 기준(무활동 판정의 분모) */
+    /**
+     * I-16 lastActivityAt — 브랜드 무관 전체 behavior_events 기준(무활동 판정의 분모).
+     * 귀속된 게스트 구간을 포함하지 않으면 로그아웃 상태로 계속 둘러본 회원이 "무활동"으로 잡혀
+     * 이탈로 오판된다(GUEST-LIFECYCLE 연결 규칙).
+     */
     @Query(value = """
-            SELECT be.member_id AS memberId, MAX(be.created_at) AS lastActivity
+            SELECT COALESCE(be.member_id, g.converted_member_id) AS memberId,
+                   MAX(be.created_at) AS lastActivity
             FROM behavior_events be
-            WHERE be.member_id IN (:memberIds)
-            GROUP BY be.member_id
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE COALESCE(be.member_id, g.converted_member_id) IN (:memberIds)
+            GROUP BY COALESCE(be.member_id, g.converted_member_id)
             """, nativeQuery = true)
     List<LastActivityRow> findLastActivities(@Param("memberIds") Collection<Long> memberIds);
 
     /** I-16 preChurnEvent 폴백 재료 — 회원별 마지막 이벤트 타입(동시각 중복은 서비스에서 첫 행 채택) */
     @Query(value = """
-            SELECT be.member_id AS memberId, be.event_type AS eventType
+            SELECT t.member_id AS memberId, be.event_type AS eventType
             FROM behavior_events be
-            JOIN (SELECT member_id, MAX(created_at) AS last_at
-                  FROM behavior_events
-                  WHERE member_id IN (:memberIds)
-                  GROUP BY member_id) t
-              ON t.member_id = be.member_id AND t.last_at = be.created_at
+            LEFT JOIN guest g ON g.id = be.guest_id
+            JOIN (SELECT COALESCE(be2.member_id, g2.converted_member_id) AS member_id,
+                         MAX(be2.created_at) AS last_at
+                  FROM behavior_events be2
+                  LEFT JOIN guest g2 ON g2.id = be2.guest_id
+                  WHERE COALESCE(be2.member_id, g2.converted_member_id) IN (:memberIds)
+                  GROUP BY COALESCE(be2.member_id, g2.converted_member_id)) t
+              ON t.member_id = COALESCE(be.member_id, g.converted_member_id)
+             AND t.last_at = be.created_at
             """, nativeQuery = true)
     List<LastEventRow> findLastEventTypes(@Param("memberIds") Collection<Long> memberIds);
 
-    /** I-16 sessions30d — 최근 30일 session_start distinct 세션 수 */
+    /** I-16 sessions30d — 최근 30일 session_start distinct 세션 수 (귀속된 게스트 구간 포함) */
     @Query(value = """
-            SELECT be.member_id AS memberId, COUNT(DISTINCT be.session_key) AS cnt
+            SELECT COALESCE(be.member_id, g.converted_member_id) AS memberId,
+                   COUNT(DISTINCT be.session_key) AS cnt
             FROM behavior_events be
-            WHERE be.member_id IN (:memberIds)
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE COALESCE(be.member_id, g.converted_member_id) IN (:memberIds)
               AND be.event_type = 'session_start'
               AND be.created_at >= :since
-            GROUP BY be.member_id
+            GROUP BY COALESCE(be.member_id, g.converted_member_id)
             """, nativeQuery = true)
     List<MemberCntRow> countRecentSessions(@Param("memberIds") Collection<Long> memberIds,
                                            @Param("since") LocalDateTime since);
 
     /** I-16 priceIncreaseExposed — PRICE 인상 기록 이후 해당 상품을 조회한 이탈 회원 수(근사) */
     @Query(value = """
-            SELECT COUNT(DISTINCT be.member_id)
+            SELECT COUNT(DISTINCT COALESCE(be.member_id, g.converted_member_id))
             FROM behavior_events be
             JOIN product_change_logs pcl ON pcl.product_id = be.product_id
             JOIN product p ON p.id = pcl.product_id AND p.brand_id = :brandId
-            WHERE be.member_id IN (:memberIds)
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE COALESCE(be.member_id, g.converted_member_id) IN (:memberIds)
               AND be.event_type = 'product_view'
               AND pcl.change_type = 'PRICE'
               AND pcl.old_value IS NOT NULL

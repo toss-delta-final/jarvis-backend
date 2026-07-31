@@ -63,6 +63,7 @@ class RecommendationListServiceTest {
     @Mock ChatSessionService chatSessionService;
     @Mock RecommendationListStore recommendationListStore;
     @Mock RecommendationEventRecorder recommendationEventRecorder;
+    @Mock com.jarvis.member.GuestService guestService;
     @Spy ObjectMapper objectMapper = new ObjectMapper();
 
     @Captor ArgumentCaptor<List<RecommendationList>> listCaptor;
@@ -484,6 +485,40 @@ class RecommendationListServiceTest {
         assertThatThrownBy(() -> service.getList(LIST_ID, OWNER))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("CH-5 승계 예외 — 게스트 목록도 그 구간의 귀속 계정이면 읽힌다 (GUEST-LIFECYCLE)")
+    void getListAllowsInheritedGuestList() throws Exception {
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), "guest:g-uuid"));
+        when(guestService.isOwnedBy("g-uuid", 7L)).thenReturn(true);
+        when(productService.getCardsByIds(List.of(1L))).thenReturn(List.of(card(1L, true)));
+
+        RecommendationListResponse response = service.getList(LIST_ID, ChatIdentity.member(7L));
+
+        assertThat(response.items()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("CH-5 승계 예외 — 귀속 계정이 다르면 여전히 404 (남의 구간을 주워 읽을 수 없다)")
+    void getListRejectsOtherMembersGuestList() throws Exception {
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), "guest:g-uuid"));
+        when(guestService.isOwnedBy("g-uuid", 7L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.getList(LIST_ID, ChatIdentity.member(7L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("CH-5 승계 예외 — 게스트가 남의 게스트 목록을 읽으려는 건 매핑을 보지도 않는다")
+    void getListGuestRequesterSkipsInheritanceCheck() throws Exception {
+        givenStored(pickOne(List.of(1L), java.util.Map.of(), "guest:g-uuid"));
+
+        assertThatThrownBy(() -> service.getList(LIST_ID, ChatIdentity.guest("other")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+        verify(guestService, never()).isOwnedBy(anyString(), any());
     }
 
     private static RecommendationCallbackRequest request(String listType, Integer totalBudget,
