@@ -7,6 +7,7 @@ import com.jarvis.chat.dto.RecommendedCardResponse;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.internal.dto.RecommendationCallbackRequest;
+import com.jarvis.member.GuestService;
 import com.jarvis.internal.dto.RecommendationCallbackRequest.ListEntry;
 import com.jarvis.product.ProductService;
 import com.jarvis.product.dto.ProductCardResponse;
@@ -57,6 +58,7 @@ public class RecommendationListService {
     private final ChatSessionService chatSessionService;
     private final RecommendationListStore recommendationListStore;
     private final RecommendationEventRecorder recommendationEventRecorder;
+    private final GuestService guestService;
 
     /**
      * I-21 — sessionId는 세션 계약상 UUID, listId는 안전 문자열이면 형식 무관.
@@ -273,11 +275,31 @@ public class RecommendationListService {
      * 소유자 검증 — 목록에 owner가 없으면(세션이 이미 사라진 뒤 도착한 콜백) 아무도 못 읽는다.
      * 불일치·신원 없음도 모두 404로 수렴시켜 listId 존재 여부를 노출하지 않는다.
      */
-    private static void requireOwner(StoredList stored, ChatIdentity requester) {
-        if (stored.owner() == null || requester == null
-                || !stored.owner().equals(ownerKey(requester))) {
+    /**
+     * 소유자 검증 — 불일치는 403이 아니라 404로 통일해 listId의 존재를 노출하지 않는다(노션 CH-5).
+     * 게스트 승계 예외(2026-07-31): 목록 주인이 게스트이고 그 구간의 귀속 계정이 요청 회원이면 통과한다.
+     * 게스트로 추천받은 뒤 로그인하면 카드가 404가 되던 것을 막는다 — 추천 목록은 로그성 자산이라
+     * 고쳐 쓰지 않고 귀속 기록으로 잇는다(GUEST-LIFECYCLE). 채팅 세션 승계(CH-7) 여부와는 무관하다.
+     */
+    private void requireOwner(StoredList stored, ChatIdentity requester) {
+        if (stored.owner() == null || requester == null) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
+        if (stored.owner().equals(ownerKey(requester))) {
+            return;
+        }
+        if (!inheritedByRequester(stored.owner(), requester)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+    }
+
+    private boolean inheritedByRequester(String owner, ChatIdentity requester) {
+        if (!ChatIdentity.TYPE_MEMBER.equals(requester.subType())
+                || !owner.startsWith(ChatIdentity.TYPE_GUEST + ":")) {
+            return false;
+        }
+        String ownerGuestId = owner.substring(ChatIdentity.TYPE_GUEST.length() + 1);
+        return guestService.isOwnedBy(ownerGuestId, Long.valueOf(requester.sub()));
     }
 
     private static String ownerKey(ChatIdentity identity) {

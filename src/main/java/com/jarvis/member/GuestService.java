@@ -25,4 +25,18 @@ public class GuestService {
         guestRepository.save(Guest.issue(id));
         return id;
     }
+
+    /**
+     * 이 게스트 구간의 주인이 그 회원인가 — 게스트 시절 만든 것을 로그인 후에도 자기 것으로 읽게 하는
+     * 연결 규칙(GUEST-LIFECYCLE). 로그는 고쳐 쓰지 않으므로 소유 판정을 이 매핑으로 한다(CH-5 소유자 예외).
+     */
+    @Transactional(readOnly = true)
+    public boolean isOwnedBy(String guestId, Long memberId) {
+        if (guestId == null || memberId == null) {
+            return false;
+        }
+        return guestRepository.findById(guestId)
+                .map(guest -> memberId.equals(guest.getConvertedMemberId()))
+                .orElse(false);
+    }
 }
