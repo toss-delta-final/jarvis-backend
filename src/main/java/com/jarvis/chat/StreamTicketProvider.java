@@ -28,6 +28,9 @@ public class StreamTicketProvider {
 
     private static final String CLAIM_SUB_TYPE = "sub_type";
     private static final String CLAIM_SCOPE = "scope";
+    // 2026-07-31 — 발급 대상 세션을 서명에 싣는다(노션 CH-1 · CHAT-SESSION D7). FastAPI는 /chat body의
+    // sessionId가 이 클레임과 다르면 거부하고, 이 값으로 stable context_id를 파생한다(jarvis-ai #187).
+    private static final String CLAIM_SESSION_ID = "sessionId";
     // 노션 CH-6 계약(2026-07-18 확정): 판매자 티켓은 role=seller + brandId — FastAPI가 노션 기준으로 검증
     private static final String CLAIM_ROLE = "role";
     private static final String CLAIM_BRAND_ID = "brandId";
@@ -52,22 +55,27 @@ public class StreamTicketProvider {
         this.ttl = Duration.ofSeconds(properties.ttlSeconds());
     }
 
-    /** 티켓 claim은 05 §1-0 고정 — sub/sub_type/iss/aud/scope/exp */
-    public String createTicket(ChatIdentity identity) {
-        return buildTicket(identity, null);
+    /** 티켓 claim은 05 §1-0 — sub/sub_type/iss/aud/scope/exp + sessionId(2026-07-31 추가) */
+    public String createTicket(ChatIdentity identity, String sessionId) {
+        return buildTicket(identity, sessionId, null);
     }
 
     /** S-4 SELLER 스코프 티켓 (04 §7) — brandId는 BE가 DB에서 도출한 값만(클라이언트/LLM 주장 무시) */
-    public String createSellerTicket(ChatIdentity identity, Long brandId) {
-        return buildTicket(identity, brandId);
+    public String createSellerTicket(ChatIdentity identity, String sessionId, Long brandId) {
+        return buildTicket(identity, sessionId, brandId);
     }
 
-    private String buildTicket(ChatIdentity identity, Long brandId) {
+    /**
+     * threadId는 싣지 않는다 — 티켓 1장이 한 접속의 여러 방 스트림을 커버하는 원칙은 그대로다
+     * (SPEC-CHAT-SESSION). 세션만 묶어 임의 세션 주장과 승계 직후 남은 구 티켓을 막는다.
+     */
+    private String buildTicket(ChatIdentity identity, String sessionId, Long brandId) {
         Date now = new Date();
         var builder = Jwts.builder()
                 .header().keyId(kid).and()
                 .subject(identity.sub())
                 .claim(CLAIM_SUB_TYPE, identity.subType())
+                .claim(CLAIM_SESSION_ID, sessionId)
                 .issuer(ISSUER)
                 .audience().add(AUDIENCE).and()
                 .claim(CLAIM_SCOPE, SCOPE_CHAT_STREAM);

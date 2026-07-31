@@ -191,8 +191,8 @@ public class ChatSessionService {
 
     private ChatSessionResponse response(String sessionId, ChatIdentity identity, Long brandId) {
         String ticket = brandId != null
-                ? ticketProvider.createSellerTicket(identity, brandId)
-                : ticketProvider.createTicket(identity);
+                ? ticketProvider.createSellerTicket(identity, sessionId, brandId)
+                : ticketProvider.createTicket(identity, sessionId);
         return new ChatSessionResponse(sessionId, sessionTtl().toSeconds(), ticket,
                 ticketProvider.ttlSeconds(), sseEndpoint(brandId != null));
     }
