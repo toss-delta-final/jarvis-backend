@@ -40,8 +40,9 @@ public class ChatController {
     private final SellerBrandResolver sellerBrandResolver;
 
     /**
-     * CH-1 — "새 대화" 버튼도 이걸 재호출 (05 §1-0). Body 없음·channel 미지정은 SHOPPING 기본값,
-     * SELLER 채널은 S-4 별도 입구 전용
+     * CH-1 — 멱등 발급(노션 CH-1 2026-07-31 개정): 같은 신원·채널의 활성 세션이 있으면 그대로 돌려준다.
+     * "새 대화"는 FE가 threadId만 갱신하므로 더 이상 이 API를 부르지 않는다.
+     * Body 없음·channel 미지정은 SHOPPING 기본값, SELLER 채널은 S-4 별도 입구 전용
      */
     @PostMapping("/sessions")
     public ApiResponse<ChatSessionResponse> createSession(@RequestBody(required = false) ChatSessionRequest request,

@@ -145,7 +145,7 @@ public class AuthService {
                     }
                     cartService.mergeGuestCart(memberId, guestId);
                 });
-        chatSessionService.endSessionAsync(ChatIdentity.guest(guestId), SessionEndReason.NEW_CONVERSATION);
+        chatSessionService.discardSessionsAsync(ChatIdentity.guest(guestId));
     }
 
     private AuthResult issueTokens(Member member) {

@@ -26,7 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
-/** CH-1/CH-1b (04 §6) — 세션 발급·소유권 검증·새 대화 정리(I-20) */
+/** CH-1/CH-1b (04 §6) — 멱등 발급(D5)·채널별 공존·소유권 검증·로그아웃 정리(I-20) */
 @ExtendWith(MockitoExtension.class)
 class ChatSessionServiceTest {
 
@@ -49,9 +49,11 @@ class ChatSessionServiceTest {
     }
 
     @Test
-    @DisplayName("CH-1 — 세션+티켓 동시 발급, 세션·owner 키 TTL 저장")
+    @DisplayName("CH-1 — 활성 세션이 없으면 발급, owner 키는 SETNX로 잡는다")
     void issueSession() {
-        when(valueOperations.get("chat:owner:member:1")).thenReturn(null);
+        when(valueOperations.get("chat:owner:member:1:SHOPPING")).thenReturn(null);
+        when(valueOperations.setIfAbsent(eq("chat:owner:member:1:SHOPPING"), anyString(), any(Duration.class)))
+                .thenReturn(true);
 
         ChatSessionResponse response = service.issueSession(ChatIdentity.member(1L), ChatChannel.SHOPPING);
 
@@ -61,26 +63,61 @@ class ChatSessionServiceTest {
         assertThat(response.ticketTtlSeconds()).isEqualTo(60L);
         verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
                 eq("member|1|SHOPPING"), eq(Duration.ofMinutes(10)));
-        verify(valueOperations).set(eq("chat:owner:member:1"),
+        verify(valueOperations).setIfAbsent(eq("chat:owner:member:1:SHOPPING"),
                 eq(response.sessionId()), eq(Duration.ofMinutes(10)));
         verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 
     @Test
-    @DisplayName("CH-1 — 같은 신원의 기존 세션은 새 대화로 정리 + I-20 NEW_CONVERSATION (05 §1-1)")
-    void issueSessionEndsPrevious() {
-        when(valueOperations.get("chat:owner:member:1")).thenReturn("old-session");
+    @DisplayName("CH-1 D5 — 활성 세션이 있으면 축출하지 않고 그대로 반환 + TTL sliding (노션 CH-1 07-31)")
+    void issueSessionReusesActive() {
+        when(valueOperations.get("chat:owner:member:1:SHOPPING")).thenReturn("live-session");
+        when(valueOperations.get("chat:session:live-session")).thenReturn("member|1|SHOPPING");
 
-        service.issueSession(ChatIdentity.member(1L), ChatChannel.SHOPPING);
+        ChatSessionResponse response = service.issueSession(ChatIdentity.member(1L), ChatChannel.SHOPPING);
 
-        verify(redisTemplate).delete("chat:session:old-session");
-        verify(llmNotifyClient).notifySessionEnd("old-session", 1L, SessionEndReason.NEW_CONVERSATION);
+        assertThat(response.sessionId()).isEqualTo("live-session");
+        verify(redisTemplate).expire("chat:session:live-session", Duration.ofMinutes(10));
+        verify(redisTemplate).expire("chat:owner:member:1:SHOPPING", Duration.ofMinutes(10));
+        verify(redisTemplate, never()).delete(anyString());
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("CH-1 — owner 키만 남고 세션이 만료된 불일치는 새로 발급한다")
+    void issueSessionRecoversFromDanglingOwnerKey() {
+        when(valueOperations.get("chat:owner:member:1:SHOPPING")).thenReturn("dead-session");
+        when(valueOperations.get("chat:session:dead-session")).thenReturn(null);
+        when(valueOperations.setIfAbsent(eq("chat:owner:member:1:SHOPPING"), anyString(), any(Duration.class)))
+                .thenReturn(false);
+
+        ChatSessionResponse response = service.issueSession(ChatIdentity.member(1L), ChatChannel.SHOPPING);
+
+        assertThat(response.sessionId()).isNotEqualTo("dead-session");
+        verify(valueOperations).set(eq("chat:owner:member:1:SHOPPING"),
+                eq(response.sessionId()), eq(Duration.ofMinutes(10)));
+    }
+
+    @Test
+    @DisplayName("CH-1 — 채널이 다르면 별개 세션(SHOPPING 세션이 살아 있어도 CS는 새로 발급)")
+    void issueSessionPerChannel() {
+        when(valueOperations.get("chat:owner:member:1:CS")).thenReturn(null);
+        when(valueOperations.setIfAbsent(eq("chat:owner:member:1:CS"), anyString(), any(Duration.class)))
+                .thenReturn(true);
+
+        ChatSessionResponse response = service.issueSession(ChatIdentity.member(1L), ChatChannel.CS);
+
+        verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
+                eq("member|1|CS"), eq(Duration.ofMinutes(10)));
+        verify(valueOperations, never()).get("chat:owner:member:1:SHOPPING");
     }
 
     @Test
     @DisplayName("S-4 — SELLER 세션 발급: brandId는 세션 값에 보관, SELLER 티켓 + /seller/chat 주소")
     void issueSellerSession() {
-        when(valueOperations.get("chat:owner:member:7")).thenReturn(null);
+        when(valueOperations.get("chat:owner:member:7:SELLER")).thenReturn(null);
+        when(valueOperations.setIfAbsent(eq("chat:owner:member:7:SELLER"), anyString(), any(Duration.class)))
+                .thenReturn(true);
         when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket");
 
         ChatSessionResponse response = service.issueSellerSession(ChatIdentity.member(7L), 3L);
@@ -92,22 +129,25 @@ class ChatSessionServiceTest {
         assertThat(response.llmSseUrl()).isEqualTo("http://localhost:8000/seller/chat");
         verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
                 eq("member|7|SELLER|3"), eq(Duration.ofMinutes(10)));
-        verify(valueOperations).set(eq("chat:owner:member:7"),
+        verify(valueOperations).setIfAbsent(eq("chat:owner:member:7:SELLER"),
                 eq(response.sessionId()), eq(Duration.ofMinutes(10)));
         verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), eq(3L));
         verify(ticketProvider, never()).createTicket(any());
     }
 
     @Test
-    @DisplayName("S-4 — 같은 판매자의 기존 세션은 새 대화로 정리 + I-20 NEW_CONVERSATION")
-    void issueSellerSessionEndsPrevious() {
-        when(valueOperations.get("chat:owner:member:7")).thenReturn("old-seller-session");
-        when(ticketProvider.createSellerTicket(any(), anyLong())).thenReturn("seller-ticket");
+    @DisplayName("S-4 D5 — 같은 판매자의 활성 세션도 그대로 반환하며 brandId(SELLER 티켓)를 유지한다")
+    void issueSellerSessionReusesActive() {
+        when(valueOperations.get("chat:owner:member:7:SELLER")).thenReturn("live-seller-session");
+        when(valueOperations.get("chat:session:live-seller-session")).thenReturn("member|7|SELLER|3");
+        when(ticketProvider.createSellerTicket(any(), eq(3L))).thenReturn("seller-ticket");
 
-        service.issueSellerSession(ChatIdentity.member(7L), 3L);
+        ChatSessionResponse response = service.issueSellerSession(ChatIdentity.member(7L), 3L);
 
-        verify(redisTemplate).delete("chat:session:old-seller-session");
-        verify(llmNotifyClient).notifySessionEnd("old-seller-session", 7L, SessionEndReason.NEW_CONVERSATION);
+        assertThat(response.sessionId()).isEqualTo("live-seller-session");
+        assertThat(response.streamTicket()).isEqualTo("seller-ticket");
+        verify(redisTemplate, never()).delete(anyString());
+        verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 
     @Test
@@ -134,7 +174,7 @@ class ChatSessionServiceTest {
 
         assertThat(response.sessionId()).isEqualTo("s1");
         verify(redisTemplate).expire(eq("chat:session:s1"), eq(Duration.ofMinutes(10)));
-        verify(redisTemplate).expire(eq("chat:owner:guest:g-uuid"), eq(Duration.ofMinutes(10)));
+        verify(redisTemplate).expire(eq("chat:owner:guest:g-uuid:CS"), eq(Duration.ofMinutes(10)));
     }
 
     @Test
@@ -166,36 +206,41 @@ class ChatSessionServiceTest {
     }
 
     @Test
-    @DisplayName("로그아웃 — 활성 세션 삭제 + I-20 LOGOUT 통지 (05 §2-1)")
+    @DisplayName("로그아웃 — 채널별 활성 세션을 모두 삭제 + 각각 I-20 LOGOUT 통지 (05 §2-1)")
     void endSession() {
-        when(valueOperations.get("chat:owner:member:1")).thenReturn("s1");
+        when(valueOperations.get("chat:owner:member:1:SHOPPING")).thenReturn("s1");
+        when(valueOperations.get("chat:owner:member:1:CS")).thenReturn(null);
+        when(valueOperations.get("chat:owner:member:1:SELLER")).thenReturn("s2");
 
         service.endSession(ChatIdentity.member(1L), SessionEndReason.LOGOUT);
 
         verify(redisTemplate).delete("chat:session:s1");
-        verify(redisTemplate).delete("chat:owner:member:1");
+        verify(redisTemplate).delete("chat:owner:member:1:SHOPPING");
+        verify(redisTemplate).delete("chat:session:s2");
+        verify(redisTemplate).delete("chat:owner:member:1:SELLER");
         verify(llmNotifyClient).notifySessionEnd("s1", 1L, SessionEndReason.LOGOUT);
+        verify(llmNotifyClient).notifySessionEnd("s2", 1L, SessionEndReason.LOGOUT);
     }
 
     @Test
     @DisplayName("로그아웃 — 활성 세션 없으면 통지 없음(멱등)")
     void endSessionNoActive() {
-        when(valueOperations.get("chat:owner:member:1")).thenReturn(null);
-
         service.endSession(ChatIdentity.member(1L), SessionEndReason.LOGOUT);
 
         verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 
     @Test
-    @DisplayName("게스트 세션 종료 — Redis는 정리하되 I-20은 생략(게스트는 프로필 대상 아님, 노션 I-20 정본)")
-    void endSessionGuestSkipsNotify() {
-        when(valueOperations.get("chat:owner:guest:g-uuid")).thenReturn("gs1");
+    @DisplayName("게스트 승계 — Redis는 정리하되 I-20은 생략(게스트는 프로필 대상 아님, 노션 I-20 정본)")
+    void discardSessionsSkipsNotify() {
+        when(valueOperations.get("chat:owner:guest:g-uuid:SHOPPING")).thenReturn("gs1");
+        when(valueOperations.get("chat:owner:guest:g-uuid:CS")).thenReturn(null);
+        when(valueOperations.get("chat:owner:guest:g-uuid:SELLER")).thenReturn(null);
 
-        service.endSession(ChatIdentity.guest("g-uuid"), SessionEndReason.NEW_CONVERSATION);
+        service.discardSessionsAsync(ChatIdentity.guest("g-uuid"));
 
         verify(redisTemplate).delete("chat:session:gs1");
-        verify(redisTemplate).delete("chat:owner:guest:g-uuid");
+        verify(redisTemplate).delete("chat:owner:guest:g-uuid:SHOPPING");
         verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 }
