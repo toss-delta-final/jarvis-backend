@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * I-13 행동 이벤트 집계 (노션 I-13) — 판매자 스코프 = behavior_events.product_id→product→brand.
+ * I-13 행동 이벤트 집계 (노션 I-13) — 판매자 스코프의 귀속 경로는 이벤트마다 다르다:
+ * product_view·add_to_cart는 behavior_events.product_id→product→brand, checkout_start는
+ * properties.productIds JSON, purchaseComplete는 order_item×product×brand(주문 정본, #62).
  * shape가 groupBy로 갈린다: product → rows+total, eventType → counts, date → series — NON_NULL로 상호 배제.
  * counts 키는 event_type camelCase(product_view→productView).
  */

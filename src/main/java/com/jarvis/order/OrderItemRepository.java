@@ -34,6 +34,16 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
         Long getCnt();
     }
 
+    interface ProductCountRow {
+        Long getProductId();
+        Long getCnt();
+    }
+
+    interface DayCountRow {
+        String getDay();
+        Long getCnt();
+    }
+
     List<OrderItem> findAllByOrderId(Long orderId);
 
     List<OrderItem> findAllByOrderIdIn(List<Long> orderIds);
@@ -224,15 +234,55 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             """, nativeQuery = true)
     List<StatusCountRow> countSellerItemsByStatus(@Param("brandId") Long brandId);
 
-    /** I-7 4단 purchase 정본 — order_item×product×brand, 주문서 1회=1 (02 §4) */
+    /**
+     * I-7 4단 purchase 정본 — order_item×product×brand, 주문서 1회=1 (02 §4).
+     * I-13 groupBy=eventType의 purchaseComplete도 같은 값을 쓴다(노션 I-13 2026-07-31 개정) —
+     * productId는 I-13 상품 한정 필터용이고 I-7은 null을 넘긴다.
+     */
     @Query(value = """
             SELECT COUNT(DISTINCT oi.order_id)
             FROM order_item oi
             JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
             JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
-            WHERE o.paid_at >= :from AND o.paid_at < :to
+            WHERE (:productId IS NULL OR oi.product_id = :productId)
+              AND o.paid_at >= :from AND o.paid_at < :to
             """, nativeQuery = true)
     long countSellerPurchaseOrders(@Param("brandId") Long brandId,
+                                   @Param("productId") Long productId,
                                    @Param("from") LocalDateTime from,
                                    @Param("to") LocalDateTime to);
+
+    /**
+     * I-13 상품별 purchaseComplete — "그 상품이 포함된 구매완료 주문 수"(노션 I-13 2026-07-31 개정).
+     * purchase_complete 이벤트는 주문당 1회 발사라 product_id가 비어 이벤트로는 상품 귀속이
+     * 불가능하다 — 주문이 정본이다(02 §4). 수량이 아니라 주문 건수라 DISTINCT order_id.
+     */
+    @Query(value = """
+            SELECT oi.product_id AS productId, COUNT(DISTINCT oi.order_id) AS cnt
+            FROM order_item oi
+            JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+            WHERE (:productId IS NULL OR oi.product_id = :productId)
+              AND o.paid_at >= :from AND o.paid_at < :to
+            GROUP BY oi.product_id
+            """, nativeQuery = true)
+    List<ProductCountRow> countSellerPurchaseOrdersByProduct(@Param("brandId") Long brandId,
+                                                             @Param("productId") Long productId,
+                                                             @Param("from") LocalDateTime from,
+                                                             @Param("to") LocalDateTime to);
+
+    /** I-13 groupBy=date의 purchaseComplete — 일자 기준은 paid_at(다른 3종은 이벤트 created_at) */
+    @Query(value = """
+            SELECT DATE_FORMAT(o.paid_at, '%Y-%m-%d') AS day, COUNT(DISTINCT oi.order_id) AS cnt
+            FROM order_item oi
+            JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+            WHERE (:productId IS NULL OR oi.product_id = :productId)
+              AND o.paid_at >= :from AND o.paid_at < :to
+            GROUP BY DATE_FORMAT(o.paid_at, '%Y-%m-%d')
+            """, nativeQuery = true)
+    List<DayCountRow> countSellerPurchaseOrdersByDate(@Param("brandId") Long brandId,
+                                                      @Param("productId") Long productId,
+                                                      @Param("from") LocalDateTime from,
+                                                      @Param("to") LocalDateTime to);
 }

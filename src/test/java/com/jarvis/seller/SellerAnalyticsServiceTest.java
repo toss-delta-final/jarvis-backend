@@ -23,6 +23,7 @@ import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
+import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
 import com.jarvis.seller.dto.SellerOrderEventsResponse;
 import com.jarvis.seller.dto.SellerProductChangesResponse;
@@ -89,7 +90,8 @@ class SellerAnalyticsServiceTest {
                 checkoutEvent(null));
         when(behaviorEventRepository.findBrandCheckouts(anyString(), any(), any()))
                 .thenReturn(checkouts);
-        when(orderItemRepository.countSellerPurchaseOrders(eq(BRAND_ID), any(), any())).thenReturn(1L);
+        when(orderItemRepository.countSellerPurchaseOrders(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(1L);
 
         SellerFunnelResponse response = service.funnel(BRAND_ID, PERIOD);
 
@@ -164,6 +166,129 @@ class SellerAnalyticsServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.INVALID_GROUP_BY);
+    }
+
+    private static BehaviorEventRepository.ProductTypeCountRow productTypeCount(long productId,
+                                                                                String type,
+                                                                                long cnt) {
+        return new BehaviorEventRepository.ProductTypeCountRow() {
+            public Long getProductId() { return productId; }
+            public String getEventType() { return type; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
+    private static OrderItemRepository.ProductCountRow purchaseCount(long productId, long cnt) {
+        return new OrderItemRepository.ProductCountRow() {
+            public Long getProductId() { return productId; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
+    private static OrderItemRepository.DayCountRow purchaseDayCount(String day, long cnt) {
+        return new OrderItemRepository.DayCountRow() {
+            public String getDay() { return day; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
+    /** 브랜드 상품 id만 필요한 경로(checkout_start JSON 귀속 대상 집합) */
+    private void stubBrandProductIds(Long... productIds) {
+        stubBrandProducts(false, productIds);
+    }
+
+    /** groupBy=product는 productName까지 쓴다 */
+    private void stubBrandProducts(Long... productIds) {
+        stubBrandProducts(true, productIds);
+    }
+
+    private void stubBrandProducts(boolean withName, Long... productIds) {
+        List<Product> products = new java.util.ArrayList<>();
+        for (Long id : productIds) {
+            Product product = mock(Product.class);
+            when(product.getId()).thenReturn(id);
+            if (withName) {
+                when(product.getName()).thenReturn("상품" + id);
+            }
+            products.add(product);
+        }
+        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(products);
+    }
+
+    @Test
+    @DisplayName("I-13 groupBy=product — purchaseComplete는 주문 집계로 채운다, 구매만 있는 상품도 rows 등장 (#62)")
+    void eventsByProductFillsPurchaseFromOrders() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        stubBrandProducts(37L, 41L);
+        // 이벤트는 37번만 — 41번은 구매만 있고 조회·담기 이벤트가 없는 상품
+        when(behaviorEventRepository.countSellerEventsByProductType(eq(BRAND_ID), any(), any(), any(),
+                any())).thenReturn(List.of(productTypeCount(37L, "product_view", 10),
+                        productTypeCount(37L, "add_to_cart", 4)));
+        when(behaviorEventRepository.countSellerVisitorsByProduct(eq(BRAND_ID), any(), any(), any(),
+                any())).thenReturn(List.of());
+        when(orderItemRepository.countSellerPurchaseOrdersByProduct(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(purchaseCount(37L, 3), purchaseCount(41L, 2)));
+
+        SellerEventsResponse response = service.events(BRAND_ID, null, null, "product", PERIOD);
+
+        assertThat(response.rows()).extracting(SellerEventsResponse.ProductRow::productId)
+                .containsExactly(37L, 41L); // 활동량 내림차순 — 37번 17건 > 41번 2건
+        assertThat(response.rows().get(0).counts()).containsEntry("purchaseComplete", 3L);
+        assertThat(response.rows().get(1).counts()).containsEntry("purchaseComplete", 2L);
+        assertThat(response.total()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("I-13 groupBy=eventType — purchaseComplete가 I-7 purchase 단과 같은 쿼리·같은 값 (#62)")
+    void eventsByTypePurchaseMatchesFunnel() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.countSellerEventsByType(eq(BRAND_ID), any(), any(), any(), any()))
+                .thenReturn(List.of(typeCount("product_view", 100), typeCount("add_to_cart", 30)));
+        stubBrandProductIds(37L);
+        when(behaviorEventRepository.findBrandCheckouts(anyString(), any(), any()))
+                .thenReturn(List.of(checkoutEvent("{\"productIds\":[37]}")));
+        when(orderItemRepository.countSellerPurchaseOrders(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(12L);
+
+        SellerEventsResponse events = service.events(BRAND_ID, null, null, "eventType", PERIOD);
+        SellerFunnelResponse funnel = service.funnel(BRAND_ID, PERIOD);
+
+        assertThat(events.counts()).containsEntry("purchaseComplete", 12L);
+        assertThat(events.counts().get("purchaseComplete"))
+                .isEqualTo(funnel.stages().get(3).count()); // I-7↔I-13 정합(수용 기준 2)
+    }
+
+    @Test
+    @DisplayName("I-13 eventType=purchase_complete 단독 — 이벤트가 없어도 rows가 비지 않는다 (#62)")
+    void eventsPurchaseOnlyStillReturnsRows() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        stubBrandProducts(37L);
+        when(orderItemRepository.countSellerPurchaseOrdersByProduct(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(purchaseCount(37L, 5)));
+
+        SellerEventsResponse response =
+                service.events(BRAND_ID, "purchase_complete", null, "product", PERIOD);
+
+        assertThat(response.rows()).hasSize(1);
+        assertThat(response.rows().get(0).counts()).containsExactly(
+                java.util.Map.entry("purchaseComplete", 5L));
+        // 조회 이벤트를 요청하지 않았으므로 전환율은 계산 불가
+        assertThat(response.rows().get(0).viewToCartRate()).isNull();
+    }
+
+    @Test
+    @DisplayName("I-13 groupBy=date — 구매는 paid_at 일자에 얹히고 빈 일자는 0 (#62)")
+    void eventsByDateFillsPurchaseFromOrders() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(orderItemRepository.countSellerPurchaseOrdersByDate(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(purchaseDayCount("2026-06-02", 4)));
+
+        SellerEventsResponse response =
+                service.events(BRAND_ID, "purchase_complete", null, "date", PERIOD);
+
+        assertThat(response.series()).hasSize(30);
+        assertThat(response.series().get(1)).containsEntry("purchaseComplete", 4L);
+        assertThat(response.series().get(0)).containsEntry("purchaseComplete", 0L);
     }
 
     private static OrderStatusLogRepository.MemberAggRow memberAgg(long memberId, long orders,
