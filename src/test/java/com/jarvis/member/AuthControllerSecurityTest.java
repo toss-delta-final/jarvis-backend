@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import jakarta.servlet.http.Cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -25,6 +24,8 @@ import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.member.dto.AuthResult;
 import com.jarvis.member.dto.MeResponse;
+import jakarta.servlet.http.Cookie;
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -151,6 +152,10 @@ class AuthControllerSecurityTest {
                 .andExpect(cookie().value(AccessCookieManager.COOKIE_NAME, "access-token"))
                 .andExpect(cookie().httpOnly(AccessCookieManager.COOKIE_NAME, true))
                 .andExpect(cookie().path(AccessCookieManager.COOKIE_NAME, "/"))
+                // 쿠키 수명은 AT(30분)가 아니라 RT(14일) 기준이어야 한다 — 30분으로 두면 브라우저가
+                // 정각에 쿠키를 지워 서버가 만료를 못 보고, AUTH_TOKEN_EXPIRED 대신 AUTH_REQUIRED가
+                // 나가 조용한 재발급이 죽는다(30분마다 강제 로그아웃)
+                .andExpect(cookie().maxAge(AccessCookieManager.COOKIE_NAME, (int) Duration.ofDays(14).toSeconds()))
                 .andExpect(cookie().exists(RefreshCookieManager.COOKIE_NAME))
                 .andExpect(cookie().httpOnly(RefreshCookieManager.COOKIE_NAME, true))
                 .andExpect(cookie().path(RefreshCookieManager.COOKIE_NAME, "/api/auth"));

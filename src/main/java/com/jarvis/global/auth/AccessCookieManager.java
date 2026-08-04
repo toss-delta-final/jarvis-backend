@@ -32,6 +32,19 @@ import org.springframework.stereotype.Component;
  * {@code Lax}는 <b>크로스사이트 POST·PUT·DELETE에는 쿠키를 싣지 않아</b> CSRF의 실질 위협을 막는다 —
  * 그래서 CSRF 토큰을 따로 두지 않는다(SecurityConfig 주석 참고). 전제는 <b>GET으로 상태를 바꾸는
  * API를 만들지 않는 것</b>이다.
+ *
+ * <p><b>쿠키 수명을 AT 수명(30분)이 아니라 RT 수명(14일)에 맞추는 이유</b> — 둘은 다른 것을 뜻한다.
+ * 토큰의 진짜 수명은 JWT에 박힌 {@code exp}가 정하고 서버가 그걸로 판정한다. 쿠키의 {@code Max-Age}는
+ * <b>브라우저가 이 값을 언제까지 들고 있을지</b>일 뿐이다.
+ *
+ * <p>둘을 같게 두면 <b>조용한 재발급이 죽는다.</b> 30분 정각에 브라우저가 쿠키를 스스로 지워버려
+ * 서버가 만료된 토큰을 <b>보지 못하고</b>, 그래서 "재발급하라"({@code AUTH_TOKEN_EXPIRED})가 아니라
+ * "로그인하라"({@code AUTH_REQUIRED})로 답하게 된다. RT가 14일 멀쩡히 남아 있는데도 FE는
+ * 로그인 화면으로 보내버린다 — <b>30분마다 로그아웃</b>. 쿠키를 남겨둬야 서버가 만료를 인지하고
+ * A-4로 유도할 수 있다.
+ *
+ * <p>만료된 값이 브라우저에 더 오래 남지만 <b>그 값은 아무 권한도 주지 않는다</b> — 인증 필요 경로에선
+ * 401이고, 로그인·가입은 애초에 쿠키를 보지 않고 자격증명으로 판정한다.
  */
 @Component
 public class AccessCookieManager {
@@ -44,7 +57,9 @@ public class AccessCookieManager {
 
     public AccessCookieManager(JwtProperties properties,
                                @Value("${app.cookie.secure:true}") boolean secure) {
-        this.maxAge = Duration.ofMinutes(properties.accessTokenMinutes());
+        // AT 수명이 아니라 RT 수명 — 위 Javadoc 참고. 여기를 accessTokenMinutes로 되돌리면
+        // 30분마다 강제 로그아웃이 된다.
+        this.maxAge = Duration.ofDays(properties.refreshTokenDays());
         this.secure = secure;
     }
 
