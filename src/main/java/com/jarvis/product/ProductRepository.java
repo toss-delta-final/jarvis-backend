@@ -155,6 +155,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * 정렬을 걸지 않는 것도 같은 이유(응답 순서 무보장, 05 §I-1) — 순위는 FastAPI 리랭킹 소관이라
      * 매칭 전체에 filesort를 거는 비용만 남는다.
      * applyCategory/applyBrand=false면 ids는 센티널(빈 IN 방지) — excluded()와 같은 관성.
+     *
+     * <p><b>색상은 3갈래</b>(2026-08-03 LLM팀 실측 합의) — ① 색상 미지정 ② <b>attributes에 색상 축이
+     * 없으면 통과</b>(색상 미상이 카탈로그의 34%라 거르면 전멸한다) ③ 있으면 값만 비교. 구 구현은
+     * attributes JSON <i>전문</i>을 LIKE로 훑어 정밀도가 화이트 37.9%였다 — `_extra.visual_features`
+     * 설명문이 오탐 출처였다. `json_extract`로 색상 키만 좁혀 그 오탐을 없앤다.
+     * 복수 색상은 정규식 하나로 합쳐 넘긴다(JPQL은 리스트에 대한 동적 OR을 표현할 수 없다) —
+     * 부분 일치를 유지해야 "그레이"가 "다크그레이"를 잡는다(실측 75건).
      */
     @Query("""
             select new com.jarvis.product.dto.CandidateRow(p, count(r), avg(r.rating))
@@ -171,7 +178,11 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                    or lower(p.name) like lower(concat('%', :keyword, '%'))
                    or lower(p.summary) like lower(concat('%', :keyword, '%'))
                    or lower(p.attributes) like lower(concat('%', :keyword, '%')))
-              and (:color is null or lower(p.attributes) like lower(concat('%', :color, '%')))
+              and (:colorPattern is null
+                   or function('json_extract', p.attributes, '$."색상"') is null
+                   or function('regexp_instr',
+                               lower(cast(function('json_extract', p.attributes, '$."색상"') as string)),
+                               :colorPattern) > 0)
             group by p
             """)
     List<CandidateRow> searchCandidates(@Param("keyword") String keyword,
@@ -181,7 +192,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                         @Param("brandIds") List<Long> brandIds,
                                         @Param("minPrice") Integer minPrice,
                                         @Param("maxPrice") Integer maxPrice,
-                                        @Param("color") String color);
+                                        @Param("colorPattern") String colorPattern);
 
     /**
      * S-3/I-9 자사 상품 목록 (04 §7·§10) — HIDDEN도 노출(본인 화면), 정렬은 Pageable

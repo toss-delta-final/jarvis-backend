@@ -23,6 +23,7 @@ import java.util.stream.LongStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -154,5 +155,83 @@ class ProductCandidateSearchTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).categoryName()).isEqualTo("티셔츠");
         assertThat(result.get(0).brandName()).isEqualTo("브랜드");
+    }
+
+    /** 색상 조건은 SQL이 판정하므로 여기선 "리포지토리에 무엇을 넘기는가"만 검증한다 */
+    private String capturedColorPattern(List<String> colors) {
+        ArgumentCaptor<String> pattern = ArgumentCaptor.forClass(String.class);
+        when(productRepository.searchCandidates(any(), eq(false), any(), eq(false), any(),
+                any(), any(), pattern.capture())).thenReturn(List.of());
+
+        productService.searchCandidates(null, null, null, null, null, colors);
+
+        return pattern.getValue();
+    }
+
+    @Test
+    @DisplayName("I-1 — 복수 색상은 정규식 하나로 합쳐 넘긴다 (2026-08-03)")
+    void multipleColorsBecomeAlternationPattern() {
+        assertThat(capturedColorPattern(List.of("네이비", "블랙"))).isEqualTo("네이비|블랙");
+    }
+
+    @Test
+    @DisplayName("I-1 — 색상명의 정규식 메타문자는 이스케이프한다 (패턴 주입 차단)")
+    void colorPatternEscapesRegexMeta() {
+        // 이스케이프가 없으면 ".*"가 모든 상품을 통과시켜 색상 필터가 무력화된다
+        assertThat(capturedColorPattern(List.of(".*"))).isEqualTo("\\.\\*");
+        assertThat(capturedColorPattern(List.of("(블랙"))).isEqualTo("\\(블랙");
+    }
+
+    @Test
+    @DisplayName("I-1 — 색상 미지정·공백뿐이면 패턴 null (조건 자체를 걸지 않는다)")
+    void blankColorsYieldNullPattern() {
+        assertThat(capturedColorPattern(null)).isNull();
+        assertThat(capturedColorPattern(List.of("  ", ""))).isNull();
+    }
+
+    @Test
+    @DisplayName("I-1 — 옵션은 20개까지만 싣고 optionCount는 전체 개수 (05 §I-1)")
+    void optionsAreCappedWithFullCount() {
+        CandidateRow row = new CandidateRow(product(1L, 11L, 2L, 1000), 0L, null);
+        when(productRepository.searchCandidates(any(), eq(false), any(), eq(false), any(),
+                any(), any(), any())).thenReturn(List.of(row));
+        lenient().when(categoryService.getNames(anyCollection())).thenReturn(Map.of(11L, "티셔츠"));
+        lenient().when(brandService.getNames(anyCollection())).thenReturn(Map.of(2L, "브랜드"));
+        // 목 생성을 스터빙 밖에서 끝낸다 — thenReturn 인자 안에서 만들면 스터빙이 중첩돼 깨진다
+        List<ProductOption> options =
+                LongStream.rangeClosed(1, 25).mapToObj(i -> option(1L, "색상" + i)).toList();
+        when(productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(List.of(1L)))
+                .thenReturn(options);
+
+        ProductCandidateResponse candidate = productService.searchCandidates(
+                null, null, null, null, null, null).get(0);
+
+        assertThat(candidate.options()).hasSize(20).first().isEqualTo("색상1");
+        assertThat(candidate.optionCount()).isEqualTo(25);
+    }
+
+    @Test
+    @DisplayName("I-1 — 옵션 없는 상품은 빈 배열 + optionCount 0")
+    void productWithoutOptions() {
+        CandidateRow row = new CandidateRow(product(1L, 11L, 2L, 1000), 0L, null);
+        when(productRepository.searchCandidates(any(), eq(false), any(), eq(false), any(),
+                any(), any(), any())).thenReturn(List.of(row));
+        lenient().when(categoryService.getNames(anyCollection())).thenReturn(Map.of(11L, "티셔츠"));
+        lenient().when(brandService.getNames(anyCollection())).thenReturn(Map.of(2L, "브랜드"));
+        when(productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(List.of(1L)))
+                .thenReturn(List.of());
+
+        ProductCandidateResponse candidate = productService.searchCandidates(
+                null, null, null, null, null, null).get(0);
+
+        assertThat(candidate.options()).isEmpty();
+        assertThat(candidate.optionCount()).isZero();
+    }
+
+    private static ProductOption option(long productId, String name) {
+        ProductOption option = mock(ProductOption.class, withSettings().strictness(Strictness.LENIENT));
+        when(option.getProductId()).thenReturn(productId);
+        when(option.getName()).thenReturn(name);
+        return option;
     }
 }
