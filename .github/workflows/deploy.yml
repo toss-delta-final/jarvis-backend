@@ -158,7 +158,7 @@ jobs:
             # 5. 기동 확인 — 2초 간격 최대 60회(약 2분)
             OK=0
             for i in $(seq 1 60); do
-              CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health || true)
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health/liveness || true)
               if [ "$CODE" = "200" ]; then OK=1; break; fi
               sleep 2
             done
@@ -195,7 +195,7 @@ jobs:
               # 롤백이 실제로 살아났는지 검증 — 최대 90초
               RB=0
               for i in $(seq 1 45); do
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health || true)
+                CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health/liveness || true)
                 if [ "$CODE" = "200" ]; then RB=1; break; fi
                 sleep 2
               done

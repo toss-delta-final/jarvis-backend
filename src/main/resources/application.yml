@@ -43,6 +43,15 @@ management:
     web:
       exposure:
         include: health
+  endpoint:
+    health:
+      group:
+        # ALB·오케스트레이터가 볼 것 — DB만 본다 (07 §4-1).
+        # 집계 /actuator/health 는 redis를 포함하므로 그걸 LB 타겟으로 쓰면
+        # Redis 장애가 "인스턴스 전체를 LB에서 제거" = 상품·주문까지 중단으로 번진다.
+        # 쇼핑은 Redis 없이 동작하므로 트래픽 라우팅이 Redis에 걸리면 안 된다.
+        liveness:
+          include: db
 
 # 인증 (03 D3 — AT 30분 / RT 14일, 시크릿은 환경변수)
 jwt:
@@ -64,6 +73,9 @@ app:
   # 채팅 세션·스트림 티켓 (03 D5, 05 §1-0)
   chat:
     session-ttl-minutes: 10
+    # 추천 목록(CH-5 조회) TTL — 세션과 근거가 다르므로 값을 공유하지 않는다 (07 §2-1).
+    # 세션은 대화 지속성이, 이쪽은 listId 노출 창이 근거라 세션을 늘려도 따라 늘면 안 된다.
+    list-ttl-minutes: 10
   stream-ticket:
     private-key: ${STREAM_TICKET_PRIVATE_KEY} # RS256 private key — base64(PKCS#8 DER), Spring만 보관 (03 §5)
     kid: ${STREAM_TICKET_KID}

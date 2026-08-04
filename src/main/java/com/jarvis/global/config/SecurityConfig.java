@@ -69,7 +69,10 @@ public class SecurityConfig {
                         .requestMatchers("/.well-known/**").permitAll() // JWKS (Phase 5)
                         // /internal은 시큐리티가 아니라 InternalTokenFilter가 지킨다 (03 D4 — 3중 방어의 앱 층)
                         .requestMatchers("/internal/**").permitAll()
-                        .requestMatchers("/actuator/health").permitAll()
+                        // 하위 경로까지 열어야 한다 — ALB 타겟인 /actuator/health/liveness(07 §4-1)가
+                        // 401을 받으면 인스턴스를 통째로 LB에서 빼버려 헬스 그룹 분리가 역효과를 낸다.
+                        // show-details 기본값이 never라 컴포넌트 상세는 노출되지 않는다.
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // 역할 가드
                         .requestMatchers("/api/seller/**", "/api/chat/seller/**").hasRole("SELLER")
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")

@@ -74,7 +74,7 @@ class RecommendationListServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        lenient().when(chatProperties.sessionTtlMinutes()).thenReturn(10L);
+        lenient().when(chatProperties.listTtlMinutes()).thenReturn(10L);
         lenient().when(chatSessionService.findIdentity(SESSION_ID))
                 .thenReturn(java.util.Optional.of(OWNER));
     }

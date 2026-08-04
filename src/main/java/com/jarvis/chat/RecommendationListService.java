@@ -152,10 +152,12 @@ public class RecommendationListService {
                 .filter(r -> r.productId() != null && r.reason() != null)
                 .collect(Collectors.toMap(RecommendationCallbackRequest.Reason::productId,
                         RecommendationCallbackRequest.Reason::reason, (a, b) -> b));
+        // 세션 TTL이 아니라 목록 전용 TTL — 근거가 다르다(07 §2-1). 세션은 대화 지속성이,
+        // 이쪽은 listId 노출 창이 근거라 세션을 늘려도 이 값이 따라 늘어나면 안 된다.
         redisTemplate.opsForValue().setIfAbsent(LIST_KEY_PREFIX + entry.listId(),
                 toJson(new StoredList(entry.productIds(), reasonById, owner,
                         requestId, listType.name(), entry.label(), totalBudget)),
-                Duration.ofMinutes(chatProperties.sessionTtlMinutes()));
+                Duration.ofMinutes(chatProperties.listTtlMinutes()));
     }
 
     private static void requireValidEntry(ListEntry entry) {

@@ -288,6 +288,43 @@ class ChatSessionServiceTest {
     }
 
     @Test
+    @DisplayName("CH-7 — 이미 내 소유면 성공 반환 (멱등 — 재시도·더블클릭 안전)")
+    void claimSessionIsIdempotent() {
+        when(valueOperations.get("chat:session:s1")).thenReturn("member|7|SHOPPING");
+        when(valueOperations.get("chat:owner:member:7:SHOPPING")).thenReturn("s1");
+
+        ChatSessionResponse response = service.claimSession(7L, "s1");
+
+        assertThat(response.sessionId()).isEqualTo("s1");
+        // 두 번째 호출은 AI를 다시 부르지 않는다 — 이미 전이된 세션이다
+        verify(llmNotifyClient, never()).notifySessionClaim(anyString(), anyString(), anyLong());
+        verify(guestService, never()).isOwnedBy(anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("CH-7 — 통지 후 owner 이전이 끊긴 부분 실패를 재시도가 복구한다")
+    void claimSessionRecoversHalfDoneOwnerMove() {
+        // 세션 값만 회원으로 바뀌고 owner 이전 직전에 끊긴 상태
+        when(valueOperations.get("chat:session:s1")).thenReturn("member|7|SHOPPING");
+        when(valueOperations.get("chat:owner:member:7:SHOPPING")).thenReturn(null);
+
+        service.claimSession(7L, "s1");
+
+        verify(valueOperations).set("chat:owner:member:7:SHOPPING", "s1", Duration.ofMinutes(10));
+    }
+
+    @Test
+    @DisplayName("CH-7 — 같은 채널에 다른 세션이 이미 회원 소유면 409 (승계가 아니라 충돌)")
+    void claimSessionRejectsWhenAnotherSessionOwned() {
+        when(valueOperations.get("chat:session:s1")).thenReturn("member|7|SHOPPING");
+        when(valueOperations.get("chat:owner:member:7:SHOPPING")).thenReturn("other");
+
+        assertThatThrownBy(() -> service.claimSession(7L, "s1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SESSION_CLAIM_CONFLICT);
+    }
+
+    @Test
     @DisplayName("CH-7 — AI가 거부하면 Redis owner를 옮기지 않는다 (부분 성공 고착 방지)")
     void claimSessionKeepsRedisWhenAiRejects() {
         when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|SHOPPING");

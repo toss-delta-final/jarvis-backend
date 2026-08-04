@@ -132,6 +132,11 @@ public class ChatSessionService {
      *
      * <p><b>순서가 중요하다</b>: AI 전이(I-23)가 성공해야 Redis owner를 옮긴다. 뒤집으면 AI가 409로
      * 거부했을 때 "Spring은 회원, AI는 게스트"인 부분 성공이 고착된다(이슈 #63 §5).
+     *
+     * <p><b>멱등하다</b>(07 §3-2) — 이미 이 회원 소유인 세션이면 성공으로 돌려준다. 승계가 끝나면
+     * 세션 값이 {@code member|…}가 되는데, 멱등 분기가 없으면 재시도가 아래 게스트 검사에 걸려
+     * 403이 된다. 그러면 통지 성공 후 owner 이전이 실패한 부분 상태를 <b>복구할 방법이 없다</b> —
+     * owner 인덱스가 게스트를 가리킨 채 남아 로그아웃이 그 세션을 못 찾는다. 재시도·더블클릭도 안전해진다.
      */
     public ChatSessionResponse claimSession(long memberId, String sessionId) {
         String value = redisTemplate.opsForValue().get(sessionKey(sessionId));
@@ -139,12 +144,15 @@ public class ChatSessionService {
             throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
         }
         String[] parts = value.split("\\" + DELIMITER);
+        ChatChannel channel = ChatChannel.valueOf(parts[2]);
+        ChatIdentity member = ChatIdentity.member(memberId);
+        if (ChatIdentity.TYPE_MEMBER.equals(parts[0]) && parts[1].equals(String.valueOf(memberId))) {
+            return reclaim(sessionId, member, channel, brandIdOf(value));
+        }
         String guestId = parts[1];
         if (!ChatIdentity.TYPE_GUEST.equals(parts[0]) || !guestService.isOwnedBy(guestId, memberId)) {
             throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);
         }
-        ChatChannel channel = ChatChannel.valueOf(parts[2]);
-        ChatIdentity member = ChatIdentity.member(memberId);
         // 다른 기기에서 이미 회원으로 대화 중이면 병합하지 않는다 — FE는 CH-1로 그 세션을 받는다(D5)
         if (redisTemplate.opsForValue().get(ownerKey(member, channel)) != null) {
             throw new BusinessException(ErrorCode.SESSION_CLAIM_CONFLICT);
@@ -155,6 +163,26 @@ public class ChatSessionService {
         redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(member, channel, brandId), ttl);
         redisTemplate.delete(ownerKey(ChatIdentity.guest(guestId), channel));
         redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ttl);
+        return response(sessionId, member, brandId);
+    }
+
+    /**
+     * 이미 승계된 세션의 재요청 — 성공으로 돌려주되 <b>끊긴 지점을 마저 세운다</b>.
+     * 세션 값만 바뀌고 owner 이전에서 실패했을 수 있어 member owner를 (재)설정한다.
+     *
+     * <p>게스트 owner는 지우지 못한다 — 세션 값이 이미 회원이라 {@code guestId}를 알 수 없다.
+     * 다만 로그인 시점에 쿠키가 반납돼 그 게스트로 올 주체가 없으므로 TTL 소멸에 맡겨도 무해하다.
+     * 같은 채널에 <b>다른</b> 세션이 이미 회원 소유면 그건 승계가 아니라 충돌이다.
+     */
+    private ChatSessionResponse reclaim(String sessionId, ChatIdentity member,
+                                        ChatChannel channel, Long brandId) {
+        String owned = redisTemplate.opsForValue().get(ownerKey(member, channel));
+        if (owned != null && !owned.equals(sessionId)) {
+            throw new BusinessException(ErrorCode.SESSION_CLAIM_CONFLICT);
+        }
+        Duration ttl = sessionTtl();
+        redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ttl);
+        redisTemplate.expire(sessionKey(sessionId), ttl);
         return response(sessionId, member, brandId);
     }
 
