@@ -1,5 +1,7 @@
 package com.jarvis.global.response;
 
+import com.jarvis.global.ratelimit.LoginRateLimiter;
+import org.springframework.http.HttpHeaders;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +19,15 @@ public class GlobalExceptionHandler {
         ErrorCode code = e.getErrorCode();
         return ResponseEntity.status(code.getStatus())
                 .body(ApiResponse.error(code, e.getMessage(), e.getDetail()));
+    }
+
+    // 429는 "언제 다시 오면 되는지"를 알려줘야 클라이언트가 무작정 재시도하지 않는다 (07 §3-4)
+    @ExceptionHandler(LoginRateLimiter.RateLimitedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRateLimited(LoginRateLimiter.RateLimitedException e) {
+        ErrorCode code = e.getErrorCode();
+        return ResponseEntity.status(code.getStatus())
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+                .body(ApiResponse.error(code, e.getMessage(), null));
     }
 
     // @Valid 검증 실패 → VALIDATION_ERROR + fields[{field, message}] (03 D2, 2026-07-17 FE 요청)

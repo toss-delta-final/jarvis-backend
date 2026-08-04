@@ -36,13 +36,14 @@ public class AuthController {
     private final AuthService authService;
     private final RefreshCookieManager refreshCookieManager;
     private final GuestCookieManager guestCookieManager;
+    private final ClientIp clientIp;
 
     @PostMapping("/signup")
     public ApiResponse<SignupResponse> signup(@Valid @RequestBody SignupRequest request,
                                               HttpServletRequest httpRequest,
                                               HttpServletResponse httpResponse) {
         String guestId = guestCookieManager.resolve(httpRequest).orElse(null);
-        AuthResult result = authService.signup(request, ClientIp.resolve(httpRequest), guestId);
+        AuthResult result = authService.signup(request, clientIp.resolve(httpRequest), guestId);
         refreshCookieManager.write(httpResponse, result.refreshToken());
         retireGuest(httpResponse, guestId);
         return ApiResponse.success(new SignupResponse(result.accessToken(), result.member()));
@@ -53,7 +54,7 @@ public class AuthController {
                                             HttpServletRequest httpRequest,
                                             HttpServletResponse httpResponse) {
         String guestId = guestCookieManager.resolve(httpRequest).orElse(null);
-        AuthResult result = authService.login(request, ClientIp.resolve(httpRequest), guestId);
+        AuthResult result = authService.login(request, clientIp.resolve(httpRequest), guestId);
         refreshCookieManager.write(httpResponse, result.refreshToken());
         retireGuest(httpResponse, guestId);
         return ApiResponse.success(new LoginResponse(result.accessToken(), result.member()));
@@ -72,7 +73,7 @@ public class AuthController {
     @PostMapping("/logout")
     public ApiResponse<Void> logout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
         authService.logout(refreshCookieManager.resolve(httpRequest).orElse(null),
-                ClientIp.resolve(httpRequest));
+                clientIp.resolve(httpRequest));
         refreshCookieManager.expire(httpResponse);
         return ApiResponse.success(null);
     }

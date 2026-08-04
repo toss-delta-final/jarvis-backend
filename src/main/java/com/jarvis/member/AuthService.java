@@ -7,6 +7,7 @@ import com.jarvis.chat.SessionEndReason;
 import com.jarvis.global.auth.JwtProperties;
 import com.jarvis.global.auth.JwtProvider;
 import com.jarvis.global.auth.TokenHasher;
+import com.jarvis.global.ratelimit.LoginRateLimiter;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.member.dto.AuthResult;
@@ -37,10 +38,14 @@ public class AuthService {
     private final JwtProperties jwtProperties;
     private final CartService cartService;
     private final ChatSessionService chatSessionService;
+    private final LoginRateLimiter loginRateLimiter;
 
     /** A-1 — 가입 + 자동 로그인 + 게스트 구간 승계. guestId는 쿠키 유래(컨트롤러 주입) */
     @Transactional
     public AuthResult signup(SignupRequest request, String clientIp, String guestId) {
+        // 무차별 계정 생성 차단 (07 §3-4). 로그인과 같은 카운터를 쓴다 — 두 경로 모두 이메일을 축으로
+        // 삼고, 공격자가 한쪽 한도를 채운 뒤 다른 쪽으로 넘어가는 걸 막는다.
+        loginRateLimiter.check(clientIp, request.email());
         if (memberRepository.existsByEmail(request.email())) {
             throw new BusinessException(ErrorCode.MEMBER_EMAIL_DUPLICATE);
         }
@@ -59,6 +64,8 @@ public class AuthService {
     /** A-2 — 실패는 계정 존재 여부 무관 통일 401 AUTH_LOGIN_FAILED (04). 승계는 가입과 동일 */
     @Transactional
     public AuthResult login(LoginRequest request, String clientIp, String guestId) {
+        // 비밀번호 대조 전에 센다 — 존재하지 않는 계정으로 찌르는 것도 시도로 잡아야 한다
+        loginRateLimiter.check(clientIp, request.email());
         Member member = memberRepository.findByEmail(request.email())
                 .orElseThrow(() -> loginFail(null, clientIp));
         if (!passwordEncoder.matches(request.password(), member.getPassword())) {

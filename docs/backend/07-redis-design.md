@@ -6,7 +6,8 @@
 > ⚠️ **현재 상태 (2026-08-04)**
 > - ✅ **반영됨**: 헬스 그룹 분리(§4-1) · CH-7 승계 멱등성(§3-2) · 추천 목록 TTL 분리(§2-1)
 >   · **캐시 2종**(`global/cache/RedisCache` — fail-open·스탬피드 락 포함)
-> - ⬜ **미착수**: 토큰 에폭, 레이트리밋 — §2 키 지도의 해당 키는 아직 코드에 없다
+> - ✅ **반영됨(2차)**: 로그인·가입 레이트리밋 · `readiness` 그룹 · `ClientIp` 오른쪽 기준(XFF 위조 방어)
+> - ⬜ **미착수**: 토큰 에폭 — §2 키 지도의 `auth:epoch:`는 아직 코드에 없다
 > - ⏸ **대기**: 세션 60분·owner 61분은 LLM 팀 맥락 TTL 동조 후(§6)
 
 ---
@@ -300,8 +301,9 @@ management:
 ### 4-3. ElastiCache 전환 시 (형상 확인 후)
 
 - JVM `-Dnetworkaddress.cache.ttl=30` — failover 후 옛 IP로 계속 붙는 것 방지(AWS 권장)
-- TLS(`spring.data.redis.ssl.enabled`) + AUTH 토큰 — 전송 암호화를 켜면 필수.
-  **현재 배포는 평문·무인증**이다(설정에 ssl/password 없음)
+- ~~TLS(`spring.data.redis.ssl.enabled`) + AUTH 토큰~~ — **이번 프로젝트 기간 미적용 확정**(2026-08-04 배포 담당).
+  켜려면 클러스터 재생성이 필요하고, 보안그룹으로 VPC 내부에서만 열려 있어 잔여 기간 위험이 낮다는 판단이다.
+  현재 배포는 평문·무인증으로 동작한다 — **수용된 위험**이지 누락이 아니다
 - **replica 읽기 분산은 하지 않는다** — 방금 쓴 값이 안 보이는 문제(무효화 직후 특히 위험)
 - CloudWatch 알람: `Evictions > 0`, 메모리 사용률, `CurrConnections`
 

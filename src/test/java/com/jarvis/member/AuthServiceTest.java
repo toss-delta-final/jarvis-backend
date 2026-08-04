@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.jarvis.cart.CartService;
 import com.jarvis.chat.ChatSessionService;
 import com.jarvis.global.auth.JwtProperties;
+import com.jarvis.global.ratelimit.LoginRateLimiter;
 import com.jarvis.global.auth.JwtProvider;
 import com.jarvis.global.auth.TokenHasher;
 import com.jarvis.global.response.BusinessException;
@@ -52,13 +53,16 @@ class AuthServiceTest {
     private final JwtProperties jwtProperties = new JwtProperties(SECRET, 30, 14);
     private final JwtProvider jwtProvider = new JwtProvider(jwtProperties);
 
+    /** 시도 제한은 여기서 검증 대상이 아니다 — 통과시켜 인증 로직만 본다 (전용 테스트는 LoginRateLimiterTest) */
+    @Mock LoginRateLimiter loginRateLimiter;
+
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         authService = new AuthService(memberRepository, guestRepository, refreshTokenRepository,
                 accountEventLogger, passwordEncoder, jwtProvider, jwtProperties,
-                cartService, chatSessionService);
+                cartService, chatSessionService, loginRateLimiter);
     }
 
     private SignupRequest signupRequest() {
