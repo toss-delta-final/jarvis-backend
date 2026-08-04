@@ -21,6 +21,9 @@ public enum ErrorCode {
     AUTH_REQUIRED(HttpStatus.UNAUTHORIZED, "로그인이 필요합니다."),
     AUTH_TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "인증이 만료되었습니다."),
     AUTH_LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "이메일 또는 비밀번호가 올바르지 않습니다."),
+    // 로그인·가입 시도 제한 (07 §3-4) — 계정 잠금이 아니라 일시 차단이라 창이 지나면 자동 해제된다.
+    // 응답에 Retry-After 헤더가 함께 나간다.
+    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "시도가 너무 많습니다. 잠시 후 다시 시도해주세요."),
     AUTH_FORBIDDEN(HttpStatus.FORBIDDEN, "접근 권한이 없습니다."),
 
     // member

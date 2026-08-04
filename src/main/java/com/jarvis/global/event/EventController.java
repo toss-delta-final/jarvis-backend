@@ -24,6 +24,7 @@ public class EventController {
     private final EventService eventService;
     private final GuestCookieManager guestCookieManager;
     private final GuestService guestService;
+    private final ClientIp clientIp;
 
     @PostMapping("/api/events")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -43,6 +44,6 @@ public class EventController {
                 guestId = issued;
             }
         }
-        eventService.collect(request, memberId, guestId, ClientIp.resolve(httpRequest));
+        eventService.collect(request, memberId, guestId, clientIp.resolve(httpRequest));
     }
 }

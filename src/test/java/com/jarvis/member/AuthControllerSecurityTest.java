@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jarvis.global.auth.EnvelopeAccessDeniedHandler;
 import com.jarvis.global.auth.GuestCookieManager;
 import com.jarvis.global.auth.EnvelopeAuthenticationEntryPoint;
+import com.jarvis.global.auth.ClientIp;
 import com.jarvis.global.auth.JwtAuthenticationFilter;
 import com.jarvis.global.auth.JwtProperties;
 import com.jarvis.global.auth.JwtProvider;
@@ -35,11 +36,12 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(AuthController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtProvider.class,
         EnvelopeAuthenticationEntryPoint.class, EnvelopeAccessDeniedHandler.class,
-        RefreshCookieManager.class, GuestCookieManager.class})
+        RefreshCookieManager.class, GuestCookieManager.class, ClientIp.class})
 @TestPropertySource(properties = {
         "jwt.secret=test-hs256-secret-key-at-least-256-bits-long-0123456789",
         "jwt.access-token-minutes=30",
-        "jwt.refresh-token-days=14"
+        "jwt.refresh-token-days=14",
+        "app.client-ip.forwarded-depth=2"
 })
 class AuthControllerSecurityTest {
 
