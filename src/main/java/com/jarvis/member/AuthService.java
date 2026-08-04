@@ -6,6 +6,7 @@ import com.jarvis.chat.ChatSessionService;
 import com.jarvis.chat.SessionEndReason;
 import com.jarvis.global.auth.JwtProperties;
 import com.jarvis.global.auth.JwtProvider;
+import com.jarvis.global.auth.TokenEpoch;
 import com.jarvis.global.auth.TokenHasher;
 import com.jarvis.global.ratelimit.LoginRateLimiter;
 import com.jarvis.global.response.BusinessException;
@@ -39,6 +40,7 @@ public class AuthService {
     private final CartService cartService;
     private final ChatSessionService chatSessionService;
     private final LoginRateLimiter loginRateLimiter;
+    private final TokenEpoch tokenEpoch;
 
     /** A-1 — 가입 + 자동 로그인 + 게스트 구간 승계. guestId는 쿠키 유래(컨트롤러 주입) */
     @Transactional
@@ -107,6 +109,9 @@ public class AuthService {
         refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
                 .ifPresent(stored -> {
                     refreshTokenRepository.delete(stored);
+                    // RT를 지워도 이미 나가 있는 AT는 수명(30분)까지 살아 있다 — 탈취본이 있다면
+                    // 그동안 그대로 통한다. 무효화 마커로 즉시 끊는다(07 §3-2).
+                    tokenEpoch.invalidate(stored.getMemberId());
                     accountEventLogger.log(stored.getMemberId(), AccountEventType.LOGOUT, clientIp);
                     // 채팅 세션 정리 + I-20 통지 (05 §2-1 — 트리거: 로그아웃).
                     // 비동기 분리: 열린 DB 트랜잭션이 Redis 응답을 기다리며 커넥션·락을 쥐고 있지 않게.

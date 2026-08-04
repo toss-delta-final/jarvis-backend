@@ -2,6 +2,7 @@ package com.jarvis.member;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -19,6 +20,7 @@ import com.jarvis.global.auth.JwtAuthenticationFilter;
 import com.jarvis.global.auth.JwtProperties;
 import com.jarvis.global.auth.JwtProvider;
 import com.jarvis.global.auth.RefreshCookieManager;
+import com.jarvis.global.auth.TokenEpoch;
 import com.jarvis.global.config.SecurityConfig;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
@@ -52,6 +54,8 @@ class AuthControllerSecurityTest {
     @Autowired MockMvc mockMvc;
     @Autowired JwtProvider jwtProvider;
     @MockitoBean AuthService authService;
+    /** 무효화 마커는 Redis라 목으로 둔다 — 기본값 false(무효화 없음)로 통과 */
+    @MockitoBean TokenEpoch tokenEpoch;
 
     private String validToken(Role role) {
         return jwtProvider.createAccessToken(1L, role);
@@ -83,6 +87,19 @@ class AuthControllerSecurityTest {
         mockMvc.perform(get("/api/auth/me").cookie(accessCookie(expiredToken())))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("AUTH_TOKEN_EXPIRED"));
+    }
+
+    @Test
+    @DisplayName("무효화된 토큰으로 /me — 401 AUTH_TOKEN_EXPIRED (AUTH_REQUIRED 아님)")
+    void me_withRevokedToken_401TokenExpired() throws Exception {
+        // 서명·만료는 멀쩡하지만 로그아웃 등으로 무효화된 토큰 (07 §3-2)
+        when(tokenEpoch.isRevoked(eq(1L), any())).thenReturn(true);
+
+        // AUTH_REQUIRED로 내보내면 FE가 로그인 화면으로 튕겨, 정당한 사용자까지 로그아웃된다.
+        // EXPIRED여야 A-4 재발급을 시도해 자동 복구된다 — RT 없는 탈취자는 거기서 죽는다
+        mockMvc.perform(get("/api/auth/me").cookie(accessCookie(validToken(Role.USER))))
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("AUTH_TOKEN_EXPIRED"));
     }
 

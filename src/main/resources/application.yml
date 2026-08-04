@@ -74,6 +74,10 @@ app:
   # 따라 달라지므로 배포에서 실측값을 주입한다 — 2는 ALB+nginx 기준 임시값.
   client-ip:
     forwarded-depth: ${APP_CLIENT_IP_FORWARDED_DEPTH:2}
+  # 토큰 무효화 마커 유지 기간 (07 §3-2). AT 최대 수명(30분)보다 길기만 하면 된다 —
+  # 그 뒤엔 무효화 대상이던 토큰이 전부 자연 만료라 기억할 이유가 없다.
+  auth:
+    epoch-ttl-minutes: 35
   # 로그인·가입 요청 제한 (07 §3-4). 목적은 정밀 과금이 아니라 무차별 대입 차단이다.
   rate-limit:
     login:

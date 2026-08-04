@@ -13,6 +13,7 @@ import com.jarvis.chat.dto.ChatSessionResponse;
 import com.jarvis.global.auth.EnvelopeAccessDeniedHandler;
 import com.jarvis.global.auth.EnvelopeAuthenticationEntryPoint;
 import com.jarvis.global.auth.AccessCookieManager;
+import com.jarvis.global.auth.TokenEpoch;
 import com.jarvis.global.auth.GuestCookieManager;
 import com.jarvis.global.auth.JwtAuthenticationFilter;
 import com.jarvis.global.auth.JwtProvider;
@@ -45,6 +46,9 @@ import org.springframework.test.web.servlet.MockMvc;
 class ChatControllerTest {
 
     @Autowired MockMvc mockMvc;
+    /** 무효화 마커는 Redis라 목으로 둔다 — 기본값 false(무효화 없음)로 통과 */
+    @MockitoBean TokenEpoch tokenEpoch;
+
     @MockitoBean ChatSessionService chatSessionService;
     @MockitoBean RecommendationListService recommendationListService;
     @MockitoBean GuestService guestService;

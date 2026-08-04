@@ -48,6 +48,7 @@ public class JwtProvider {
                 .parseSignedClaims(token)
                 .getPayload();
         return new AuthUser(Long.valueOf(claims.getSubject()),
-                Role.valueOf(claims.get(CLAIM_ROLE, String.class)));
+                Role.valueOf(claims.get(CLAIM_ROLE, String.class)),
+                claims.getIssuedAt() == null ? null : claims.getIssuedAt().toInstant());
     }
 }

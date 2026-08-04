@@ -3,6 +3,7 @@ package com.jarvis.member;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -15,6 +16,7 @@ import com.jarvis.chat.ChatSessionService;
 import com.jarvis.global.auth.JwtProperties;
 import com.jarvis.global.ratelimit.LoginRateLimiter;
 import com.jarvis.global.auth.JwtProvider;
+import com.jarvis.global.auth.TokenEpoch;
 import com.jarvis.global.auth.TokenHasher;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
@@ -55,6 +57,7 @@ class AuthServiceTest {
 
     /** 시도 제한은 여기서 검증 대상이 아니다 — 통과시켜 인증 로직만 본다 (전용 테스트는 LoginRateLimiterTest) */
     @Mock LoginRateLimiter loginRateLimiter;
+    @Mock TokenEpoch tokenEpoch;
 
     private AuthService authService;
 
@@ -62,7 +65,7 @@ class AuthServiceTest {
     void setUp() {
         authService = new AuthService(memberRepository, guestRepository, refreshTokenRepository,
                 accountEventLogger, passwordEncoder, jwtProvider, jwtProperties,
-                cartService, chatSessionService, loginRateLimiter);
+                cartService, chatSessionService, loginRateLimiter, tokenEpoch);
     }
 
     private SignupRequest signupRequest() {
@@ -299,6 +302,8 @@ class AuthServiceTest {
 
             verify(refreshTokenRepository).delete(stored);
             verify(accountEventLogger).log(1L, AccountEventType.LOGOUT, IP);
+            // RT만 지우면 이미 나가 있는 AT가 30분간 살아남는다 — 탈취본이 그동안 통한다 (07 §3-2)
+            verify(tokenEpoch).invalidate(1L);
         }
 
         @Test
@@ -307,6 +312,7 @@ class AuthServiceTest {
             authService.logout(null, IP);
 
             verify(refreshTokenRepository, never()).delete(any());
+            verify(tokenEpoch, never()).invalidate(anyLong());
         }
     }
 
