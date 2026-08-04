@@ -29,6 +29,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     public static final String AUTH_ERROR_EXPIRED = "EXPIRED";
     private final JwtProvider jwtProvider;
     private final AccessCookieManager accessCookieManager;
+    private final TokenEpoch tokenEpoch;
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
@@ -40,6 +41,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (token != null && !token.isBlank()) {
             try {
                 AuthUser authUser = jwtProvider.parseAccessToken(token);
+                if (tokenEpoch.isRevoked(authUser.memberId(), authUser.issuedAt())) {
+                    // 만료와 같은 취급 — FE가 A-4로 재발급을 시도하게 만든다(07 §3-2).
+                    // AUTH_REQUIRED로 내보내면 로그인 화면으로 튕겨, 무효화가 정당한 사용자까지
+                    // 로그아웃시킨다. RT가 없는 탈취자는 어차피 재발급에서 죽는다.
+                    request.setAttribute(AUTH_ERROR_ATTRIBUTE, AUTH_ERROR_EXPIRED);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
                 var authentication = new UsernamePasswordAuthenticationToken(
                         authUser, null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + authUser.role().name())));
