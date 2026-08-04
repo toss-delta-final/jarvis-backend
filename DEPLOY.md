@@ -98,7 +98,11 @@ done
 
 ## 5. 헬스체크
 
-`GET /actuator/health` → `{"status":"UP"}`. ALB/오케스트레이터 헬스체크 타겟으로 사용.
+`GET /actuator/health` → `{"status":"UP"}` (db·redis 포함 — 운영자·모니터링용).
+
+⚠️ **ALB·오케스트레이터 헬스체크 타겟은 `GET /actuator/health/liveness`** 를 쓴다 (db만 확인 — 07 §4-1).
+집계 `/actuator/health`를 타겟으로 걸면 **Redis 장애가 인스턴스를 LB에서 제거해 상품·주문까지 중단**된다.
+쇼핑은 Redis 없이 동작하므로 트래픽 라우팅이 Redis에 걸리면 안 된다. Redis 상태는 집계 엔드포인트와 알람으로 본다.
 
 ## 6. 네트워킹 / CORS / 프론트엔드 연동
 
