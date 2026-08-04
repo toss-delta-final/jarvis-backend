@@ -242,7 +242,7 @@ com.jarvis
 | 빌드 | Gradle wrapper (`./gradlew`) | |
 | DB | MariaDB 11.x (로컬 docker-compose) | Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariadb://`). 포트 3306·utf8mb4 동일 |
 | ORM | Spring Data JPA + Hibernate. 복잡 집계(판매자 지표)만 JdbcTemplate 네이티브 쿼리 허용 | QueryDSL 미도입 — 동적 쿼리가 검색 1곳뿐이라 도입 비용>효용 |
-| Redis | spring-data-redis (채팅 세션 TTL 전용) | |
+| Redis | spring-data-redis — 채팅 세션 TTL·캐시·토큰 무효화·레이트리밋 | 무엇을 왜 담는지는 [07 Redis 설계](07-redis-design.md)가 원본 |
 | 분산 락 | ShedLock (Redis 기반) — 스케줄러 틱당 1대만 실행 (01 §6, D-분산5) | 단일 인스턴스에서도 무해 |
 | 인증 | spring-security + jjwt (OAuth 제외로 oauth2-client 미도입) | |
 | 문서화 | API 명세는 04 문서(노션)가 원본 — springdoc/Swagger 미도입 (팀 전원 미사용 + 운영 노출 회피, 2026-07-23 결정) | |

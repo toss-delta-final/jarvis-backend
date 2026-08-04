@@ -10,5 +10,6 @@
 | [04-api-spec.md](04-api-spec.md) | 전 REST 엔드포인트 (auth/카탈로그/장바구니/주문/마이페이지/채팅/판매자/관리자/internal) |
 | [05-llm-contract.md](05-llm-contract.md) | FastAPI 연동 계약 v0.3 — **SSE 직결(티켓) + 추천 목록 콜백/조회 + 판매자 HITL confirm(2026-07-17)**, 잔여 OPEN 있음 |
 | [06-implementation-plan.md](06-implementation-plan.md) | Phase 0~6 구현 순서와 단계별 완료 조건 |
+| [07-redis-design.md](07-redis-design.md) | Redis에 무엇을 왜 담는가 — 캐시·휘발 상태·조정·계수 4유형, **넣지 않기로 한 것과 그 근거** 포함 |
 
 모든 설계 결정은 각 문서의 "결정 로그"에 문제→선택지→기준→선택→트레이드오프 형식으로 기록돼 있다.
