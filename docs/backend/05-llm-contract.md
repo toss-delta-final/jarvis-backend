@@ -223,7 +223,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **`listType`**: `PICK_ONE`(목록 안 상품이 서로 대안 — 하나만 산다) / `BUY_ALL`(각자 다른 역할 — 전부 산다). `PICK_ONE`+목록 N개는 **니즈별 추천**("감자탕" → 감자 후보 9개·시래기 후보 9개·뼈 후보 9개), `BUY_ALL`+N개는 **세트 여러 안**. 판단 기준은 예산이 아니다.
 - **추천 이유 이원화(합의)**: SSE는 채팅 말풍선용(Spring 무관), 콜백 `reasons`는 우측 추천 카드용 — CH-5 카드에 `reason`으로 echo(없으면 null).
 - 검증: sessionId UUID / listId 영숫자·`-`·`_` ≤64(그 외 400 — Redis 키 안전) / **productIds 1~9개(목록당)** / **lists 1~10개**. `reasons`도 목록당 9개·`reason` 200자 상한.
-- **저장은 Redis + DB 양쪽**: Redis는 TTL 10분(생성 시점 고정, **CH-5 조회 전용**), DB는 **영구 보존이 정본**(E-1 귀속 검증 + 추천 품질 평가). DB에 남아 있어도 CH-5는 만료 후 404 — `listId`가 인증 없이 조회되는 열쇠라 노출 창을 10분으로 제한한다.
+- **저장은 Redis + DB 양쪽**: Redis는 TTL 10분(생성 시점 고정, **CH-5 조회 전용**), DB는 **영구 보존이 정본**(E-1 귀속 검증 + 추천 품질 평가). DB에 남아 있어도 CH-5는 만료 후 404 — 짧은 조회 창을 유지해 노출 표면을 좁힌다. *(2026-08-03 정정: 구 문구 "`listId`가 인증 없이 조회되는 열쇠라"는 낡았다 — CH-5에 **소유자 검증**이 들어가(불일치 404, 존재 은닉) `listId`만으로는 남의 목록을 볼 수 없다. TTL은 주 방어선이 아니라 심층 방어·메모리 관리 몫이며, 세션 TTL과 무관한 자체 값이다 — 07 §2-1)*
 - CH-5 응답은 `{listId, recommendationRequestId, listType, label?, itemsDropped, items[카드 완결 필드 + reason]}`(순서 보존, HIDDEN·품절 드롭, 만료 404). `BUY_ALL`이면 `totalBudget`·`sum`·`withinBudget`이 추가된다 — `sum`은 **드롭 후 남은 상품 기준 재계산**(화면 카드 합과 항상 일치), `withinBudget`은 드롭·예산 미발화면 판정 불가라 **null 리터럴**(키 생략 아님). PICK_ONE엔 세 키가 아예 없다.
 - **세션 만료 시**: 신원을 해소할 수 없어도 200으로 저장하되 **익명 저장**(`member_id`·`guest_id` 빈 값) — 그 목록은 CH-5에서 조회되지 않고(소유자 미기록 = fail-closed) `recommendation_generated`도 주체 없는 행으로 남는다.
 - **listId 엔트로피(2026-07-18 시큐리티 리뷰)**: CH-5는 게스트 허용 공개 조회라 listId가 사실상 bearer 키다 — FastAPI는 listId를 **UUID급 무작위(≥128bit)**로 생성해야 한다(순번·타임스탬프 등 추측 가능한 형식 금지).
