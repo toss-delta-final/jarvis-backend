@@ -24,7 +24,7 @@ public class BrandService {
 
     /** I-1 brandName 필터 해석 (05 §I-1) — 미존재 이름이면 empty(후보 0건) */
     public Optional<Long> findIdByName(String name) {
-        return brandRepository.findFirstByName(name).map(Brand::getId);
+        return brandRepository.findByName(name).map(Brand::getId);
     }
 
     /** 카드 조립용 브랜드명 배치 조회 (04 §2 카드 공통 모양) */

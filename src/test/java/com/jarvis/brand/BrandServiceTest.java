@@ -49,8 +49,8 @@ class BrandServiceTest {
     void findIdByName() {
         Brand brand = mock(Brand.class);
         when(brand.getId()).thenReturn(7L);
-        when(brandRepository.findFirstByName("려")).thenReturn(Optional.of(brand));
-        when(brandRepository.findFirstByName("없는브랜드")).thenReturn(Optional.empty());
+        when(brandRepository.findByName("려")).thenReturn(Optional.of(brand));
+        when(brandRepository.findByName("없는브랜드")).thenReturn(Optional.empty());
 
         assertThat(brandService.findIdByName("려")).contains(7L);
         assertThat(brandService.findIdByName("없는브랜드")).isEmpty();

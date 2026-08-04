@@ -1,9 +1,11 @@
 package com.jarvis.product;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.brand.BrandService;
 import com.jarvis.category.CategoryService;
+import com.jarvis.global.cache.RedisCache;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.product.dto.CandidateRow;
@@ -15,6 +17,7 @@ import com.jarvis.product.dto.ProductDetailResponse;
 import com.jarvis.product.dto.ProductChangesResponse;
 import com.jarvis.review.ReviewService;
 import com.jarvis.review.dto.RatingStats;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -45,9 +48,15 @@ public class ProductService {
     private static final int SYNC_MAX_LIMIT = 500; // I-17 페이지 상한 (05 §I-17)
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul"); // 응답 타임스탬프 관례 (I-19와 동일)
     private static final int CANDIDATE_OPTION_LIMIT = 20; // I-1 후보의 옵션 노출 상한 (05 §I-1 — 2026-08-03)
+    /** 07 §2 키 지도. `v1:`은 값 스키마가 바뀌면 버전만 올려 통째로 버리기 위한 프리픽스다 */
+    private static final String POPULAR_KEY = "v1:popular:ids";
+    private static final Duration POPULAR_TTL = Duration.ofMinutes(5);
+    /** P-4의 size 상한(@Max(50))과 같은 값 — 여기까지 계산해두면 모든 P-4 요청을 덮는다 */
+    private static final int POPULAR_CACHE_SIZE = 50;
     private static final Pattern REGEX_META = Pattern.compile("[\\\\^$.|?*+()\\[\\]{}]");
 
     private final ProductRepository productRepository;
+    private final RedisCache cache;
     private final ProductOptionRepository productOptionRepository;
     private final BrandService brandService;
     private final CategoryService categoryService;
@@ -223,8 +232,27 @@ public class ProductService {
         return productRepository.findCategoryIdsByBrand(brandId);
     }
 
-    /** P-4/I-3 공용 — 7일 판매수 → product_view 수 → 최신순 순으로 채운 인기 id */
+    /**
+     * P-4/I-3 공용 — 7일 판매수 → product_view 수 → 최신순 순으로 채운 인기 id.
+     *
+     * <p><b>캐시 대상</b>(07 §3-1) — 개인화가 없어 모두가 같은 값을 보고(적중률 100%),
+     * 7일치 주문을 전부 세는 계산이라 인덱스가 좁혀줄 대상이 없다. P-5(개인화 추천)가 실패하면
+     * 트래픽이 여기로 몰리므로 <b>LLM 장애가 DB 장애로 번지는 걸 막는 격리 장치</b>이기도 하다.
+     *
+     * <p>키를 하나로 두려고 <b>상한만큼 계산해 캐시하고 요청 size로 잘라 쓴다</b> — size별로 키를
+     * 나누면 키가 폭발한다. 원본이 7일 누적 집계라 5분 낡음이 순위를 바꾸지 못한다.
+     * I-3는 size 상한이 없어 상한을 넘는 요청은 캐시를 우회한다(그런 호출은 사실상 없다).
+     */
     private List<Long> popularIds(int size) {
+        if (size > POPULAR_CACHE_SIZE) {
+            return loadPopularIds(size);
+        }
+        List<Long> cached = cache.get(POPULAR_KEY, POPULAR_TTL, new TypeReference<>() { },
+                () -> loadPopularIds(POPULAR_CACHE_SIZE));
+        return cached.size() > size ? List.copyOf(cached.subList(0, size)) : cached;
+    }
+
+    private List<Long> loadPopularIds(int size) {
         LocalDateTime since = LocalDateTime.now().minusDays(POPULAR_DAYS);
         List<Long> ids = new ArrayList<>(productRepository.findPopularIdsBySales(since, size));
         if (ids.size() < size) {

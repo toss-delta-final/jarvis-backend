@@ -3,6 +3,7 @@ package com.jarvis.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -16,12 +17,14 @@ import static org.mockito.Mockito.withSettings;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.brand.BrandService;
 import com.jarvis.category.CategoryService;
+import com.jarvis.global.cache.RedisCache;
 import com.jarvis.product.dto.PopularCardResponse;
 import com.jarvis.product.dto.ProductCandidateResponse;
 import com.jarvis.review.ReviewService;
 import com.jarvis.review.dto.RatingStats;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -41,6 +44,13 @@ class ProductPopularServiceTest {
     @Mock CategoryService categoryService;
     @Mock ReviewService reviewService;
     @Mock ObjectMapper objectMapper;
+    @Mock RedisCache cache;
+
+    /**
+     * 인기 id는 요청 size가 아니라 <b>캐시 상한만큼</b> 계산해 캐시하고 잘라 쓴다(07 §3-1) —
+     * 그래서 리포지토리에 가는 size는 항상 이 값이다. ProductService.POPULAR_CACHE_SIZE와 같은 값.
+     */
+    private static final int CACHE_SIZE = 50;
 
     @InjectMocks ProductService productService;
 
@@ -49,6 +59,18 @@ class ProductPopularServiceTest {
         lenient().when(reviewService.getStats(anyCollection())).thenReturn(Map.of());
         lenient().when(brandService.getNames(anyCollection())).thenReturn(Map.of(20L, "브랜드"));
         lenient().when(categoryService.getNames(anyCollection())).thenReturn(Map.of(10L, "티셔츠"));
+        // 캐시는 여기서 검증 대상이 아니다 — 로더를 그대로 통과시켜 인기 집계 로직만 본다
+        lenient().when(cache.get(anyString(), any(), any(), any()))
+                .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(3)).get());
+    }
+
+    /** 앞자리는 지정한 id로, 나머지는 더미로 채워 캐시 상한을 만족시킨다 */
+    private static List<Long> fill(Long... head) {
+        List<Long> ids = new java.util.ArrayList<>(List.of(head));
+        while (ids.size() < CACHE_SIZE) {
+            ids.add(1000L + ids.size());
+        }
+        return ids;
     }
 
     private Product product(Long id) {
@@ -62,10 +84,10 @@ class ProductPopularServiceTest {
     }
 
     @Test
-    @DisplayName("P-4 — 판매수만으로 size가 차면 조회수·최신순 fallback 쿼리 생략, 판매순 보존")
+    @DisplayName("P-4 — 판매수만으로 캐시 상한이 차면 조회수·최신순 fallback 쿼리 생략, 판매순 보존")
     void salesFillsAllSkipsFallbacks() {
         List<Product> shuffled = List.of(product(10L), product(20L), product(30L)); // findAllById는 순서 미보장
-        when(productRepository.findPopularIdsBySales(any(), eq(3))).thenReturn(List.of(30L, 10L, 20L));
+        when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(fill(30L, 10L, 20L));
         when(productRepository.findAllById(List.of(30L, 10L, 20L))).thenReturn(shuffled);
 
         List<PopularCardResponse> cards = productService.getPopular(3);
@@ -79,10 +101,10 @@ class ProductPopularServiceTest {
     @DisplayName("P-4 — 판매수 부족분은 조회수 → 최신순으로 채움 (앞 단계 id 제외)")
     void fallbackFillsWithExclusions() {
         List<Product> products = List.of(product(1L), product(2L), product(3L), product(4L));
-        when(productRepository.findPopularIdsBySales(any(), eq(4))).thenReturn(List.of(1L));
-        when(productRepository.findPopularIdsByViews(any(), eq(List.of(1L)), eq(3)))
+        when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(List.of(1L));
+        when(productRepository.findPopularIdsByViews(any(), eq(List.of(1L)), eq(CACHE_SIZE - 1)))
                 .thenReturn(List.of(2L));
-        when(productRepository.findLatestIds(eq(List.of(1L, 2L)), eq(2))).thenReturn(List.of(3L, 4L));
+        when(productRepository.findLatestIds(eq(List.of(1L, 2L)), eq(CACHE_SIZE - 2))).thenReturn(List.of(3L, 4L));
         when(productRepository.findAllById(List.of(1L, 2L, 3L, 4L))).thenReturn(products);
 
         List<PopularCardResponse> cards = productService.getPopular(4);
@@ -94,11 +116,11 @@ class ProductPopularServiceTest {
     @Test
     @DisplayName("P-4 — 판매·조회 이력이 전혀 없으면 최신순만으로 채움 (NOT IN 센티널 -1)")
     void latestOnlyWithSentinelExclusion() {
-        when(productRepository.findPopularIdsBySales(any(), eq(2))).thenReturn(List.of());
-        when(productRepository.findPopularIdsByViews(any(), eq(List.of(-1L)), eq(2)))
+        when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(List.of());
+        when(productRepository.findPopularIdsByViews(any(), eq(List.of(-1L)), eq(CACHE_SIZE)))
                 .thenReturn(List.of());
         List<Product> products = List.of(product(5L), product(6L));
-        when(productRepository.findLatestIds(eq(List.of(-1L)), eq(2))).thenReturn(List.of(5L, 6L));
+        when(productRepository.findLatestIds(eq(List.of(-1L)), eq(CACHE_SIZE))).thenReturn(List.of(5L, 6L));
         when(productRepository.findAllById(List.of(5L, 6L))).thenReturn(products);
 
         List<PopularCardResponse> cards = productService.getPopular(2);
@@ -110,7 +132,7 @@ class ProductPopularServiceTest {
     @DisplayName("P-4 — 인기 id 중 실체가 조회되지 않는 상품은 드롭 (null 카드 방지)")
     void missingProductDropped() {
         List<Product> products = List.of(product(1L), product(3L)); // 2L 실체 없음
-        when(productRepository.findPopularIdsBySales(any(), eq(3))).thenReturn(List.of(1L, 2L, 3L));
+        when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(List.of(1L, 2L, 3L));
         when(productRepository.findAllById(List.of(1L, 2L, 3L))).thenReturn(products);
 
         List<PopularCardResponse> cards = productService.getPopular(3);
@@ -125,7 +147,7 @@ class ProductPopularServiceTest {
         when(product.getPrice()).thenReturn(29900);
         when(product.getOriginalPrice()).thenReturn(39000);
         when(product.getImageUrl()).thenReturn("https://cdn/7.jpg");
-        when(productRepository.findPopularIdsBySales(any(), eq(1))).thenReturn(List.of(7L));
+        when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(List.of(7L));
         when(productRepository.findAllById(List.of(7L))).thenReturn(List.of(product));
         when(reviewService.getStats(List.of(7L))).thenReturn(Map.of(7L, new RatingStats(2847, 4.8)));
 
@@ -139,7 +161,7 @@ class ProductPopularServiceTest {
     @DisplayName("I-3 — 인기 상품을 리랭킹용 최소필드 후보로 매핑 (응답 형식 I-1과 동일, 05 §I-3)")
     void popularCandidatesMapsMinimalFields() {
         List<Product> products = List.of(product(1L), product(2L));
-        when(productRepository.findPopularIdsBySales(any(), eq(2))).thenReturn(List.of(2L, 1L));
+        when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(List.of(2L, 1L));
         when(productRepository.findAllById(List.of(2L, 1L))).thenReturn(products);
 
         List<ProductCandidateResponse> result = productService.getPopularCandidates(2);
