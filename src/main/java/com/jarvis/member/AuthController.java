@@ -1,6 +1,7 @@
 package com.jarvis.member;
 
 import com.jarvis.global.auth.AuthUser;
+import com.jarvis.global.auth.AccessCookieManager;
 import com.jarvis.global.auth.ClientIp;
 import com.jarvis.global.auth.GuestCookieManager;
 import com.jarvis.global.auth.RefreshCookieManager;
@@ -9,7 +10,6 @@ import com.jarvis.member.dto.AuthResult;
 import com.jarvis.member.dto.LoginRequest;
 import com.jarvis.member.dto.LoginResponse;
 import com.jarvis.member.dto.MeResponse;
-import com.jarvis.member.dto.RefreshResponse;
 import com.jarvis.member.dto.SignupRequest;
 import com.jarvis.member.dto.SignupResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,6 +37,7 @@ public class AuthController {
     private final RefreshCookieManager refreshCookieManager;
     private final GuestCookieManager guestCookieManager;
     private final ClientIp clientIp;
+    private final AccessCookieManager accessCookieManager;
 
     @PostMapping("/signup")
     public ApiResponse<SignupResponse> signup(@Valid @RequestBody SignupRequest request,
@@ -44,9 +45,9 @@ public class AuthController {
                                               HttpServletResponse httpResponse) {
         String guestId = guestCookieManager.resolve(httpRequest).orElse(null);
         AuthResult result = authService.signup(request, clientIp.resolve(httpRequest), guestId);
-        refreshCookieManager.write(httpResponse, result.refreshToken());
+        writeTokens(httpResponse, result);
         retireGuest(httpResponse, guestId);
-        return ApiResponse.success(new SignupResponse(result.accessToken(), result.member()));
+        return ApiResponse.success(new SignupResponse(result.member()));
     }
 
     @PostMapping("/login")
@@ -55,9 +56,15 @@ public class AuthController {
                                             HttpServletResponse httpResponse) {
         String guestId = guestCookieManager.resolve(httpRequest).orElse(null);
         AuthResult result = authService.login(request, clientIp.resolve(httpRequest), guestId);
-        refreshCookieManager.write(httpResponse, result.refreshToken());
+        writeTokens(httpResponse, result);
         retireGuest(httpResponse, guestId);
-        return ApiResponse.success(new LoginResponse(result.accessToken(), result.member()));
+        return ApiResponse.success(new LoginResponse(result.member()));
+    }
+
+    /** AT·RT를 한 자리에서 내보낸다 — 한쪽만 갱신되는 실수를 막는다 */
+    private void writeTokens(HttpServletResponse httpResponse, AuthResult result) {
+        accessCookieManager.write(httpResponse, result.accessToken());
+        refreshCookieManager.write(httpResponse, result.refreshToken());
     }
 
     /**
@@ -74,16 +81,17 @@ public class AuthController {
     public ApiResponse<Void> logout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
         authService.logout(refreshCookieManager.resolve(httpRequest).orElse(null),
                 clientIp.resolve(httpRequest));
+        accessCookieManager.expire(httpResponse);
         refreshCookieManager.expire(httpResponse);
         return ApiResponse.success(null);
     }
 
     @PostMapping("/refresh")
-    public ApiResponse<RefreshResponse> refresh(HttpServletRequest httpRequest,
-                                                HttpServletResponse httpResponse) {
+    public ApiResponse<Void> refresh(HttpServletRequest httpRequest,
+                                     HttpServletResponse httpResponse) {
         AuthResult result = authService.refresh(refreshCookieManager.resolve(httpRequest).orElse(null));
-        refreshCookieManager.write(httpResponse, result.refreshToken());
-        return ApiResponse.success(new RefreshResponse(result.accessToken()));
+        writeTokens(httpResponse, result);
+        return ApiResponse.success(null);
     }
 
     @GetMapping("/me")

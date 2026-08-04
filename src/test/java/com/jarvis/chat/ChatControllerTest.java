@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jarvis.chat.dto.ChatSessionResponse;
 import com.jarvis.global.auth.EnvelopeAccessDeniedHandler;
 import com.jarvis.global.auth.EnvelopeAuthenticationEntryPoint;
+import com.jarvis.global.auth.AccessCookieManager;
 import com.jarvis.global.auth.GuestCookieManager;
 import com.jarvis.global.auth.JwtAuthenticationFilter;
 import com.jarvis.global.auth.JwtProvider;
@@ -35,7 +36,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(ChatController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtProvider.class,
         EnvelopeAuthenticationEntryPoint.class, EnvelopeAccessDeniedHandler.class,
-        GuestCookieManager.class})
+        GuestCookieManager.class, AccessCookieManager.class})
 @TestPropertySource(properties = {
         "jwt.secret=test-hs256-secret-key-at-least-256-bits-long-0123456789",
         "jwt.access-token-minutes=30",

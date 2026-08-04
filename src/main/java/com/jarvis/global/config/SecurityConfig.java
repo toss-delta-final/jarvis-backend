@@ -43,7 +43,11 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .csrf(csrf -> csrf.disable()) // RT 쿠키의 CSRF 표면은 SameSite=Strict로 봉쇄 (03 §3-1)
+                // CSRF 토큰을 두지 않는 근거 (2026-08-04 갱신 — 구 근거 "RT만 쿠키"는 AT도 쿠키가 되며 폐기).
+                // RT는 SameSite=Strict + Path=/api/auth, AT는 SameSite=Lax다. Lax는 크로스사이트
+                // POST·PUT·DELETE에 쿠키를 싣지 않으므로 상태를 바꾸는 요청은 막힌다. 전제는
+                // "GET으로 상태를 바꾸는 API를 만들지 않는 것" — 이 규칙이 깨지면 재검토해야 한다.
+                .csrf(csrf -> csrf.disable())
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
