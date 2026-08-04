@@ -1,11 +1,17 @@
 package com.jarvis.category;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import com.jarvis.category.dto.CategoryTreeResponse;
+import com.jarvis.global.cache.RedisCache;
 import java.util.List;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -17,8 +23,16 @@ import org.springframework.test.util.ReflectionTestUtils;
 class CategoryServiceTest {
 
     @Mock CategoryRepository categoryRepository;
+    @Mock RedisCache cache;
 
     @InjectMocks CategoryService categoryService;
+
+    /** 캐시는 여기서 검증 대상이 아니다 — 로더를 그대로 통과시켜 원본 조회 로직만 본다 */
+    @BeforeEach
+    void passThroughCache() {
+        lenient().when(cache.get(anyString(), any(), any(), any()))
+                .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(3)).get());
+    }
 
     private Category category(long id, Long parentId, String name) {
         Category c = new Category();
