@@ -27,17 +27,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String AUTH_ERROR_ATTRIBUTE = "jwtAuthError";
     public static final String AUTH_ERROR_EXPIRED = "EXPIRED";
-    private static final String BEARER_PREFIX = "Bearer ";
-
     private final JwtProvider jwtProvider;
+    private final AccessCookieManager accessCookieManager;
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                     @NonNull HttpServletResponse response,
                                     @NonNull FilterChain filterChain) throws ServletException, IOException {
-        String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith(BEARER_PREFIX)) {
-            String token = header.substring(BEARER_PREFIX.length());
+        // AT는 HttpOnly 쿠키로만 받는다 (03 D3 — 2026-08-04). 구 Authorization 헤더 경로는 폐기 —
+        // 두 경로를 함께 두면 "어느 쪽이 진실인지"가 흐려지고, 헤더는 JS가 채우는 자리라 XSS 표면이 남는다.
+        String token = accessCookieManager.resolve(request).orElse(null);
+        if (token != null && !token.isBlank()) {
             try {
                 AuthUser authUser = jwtProvider.parseAccessToken(token);
                 var authentication = new UsernamePasswordAuthenticationToken(

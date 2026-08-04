@@ -120,7 +120,10 @@ docker 내부망:  spring ─▶ mariadb:3306, redis:6379 / spring ◀▶ fastap
 ### D3. 인증은 JWT AT(30분) + RT(14일, DB 저장)
 
 - 일반(이메일) 로그인만. **OAuth는 MVP 제외**(2026-07-07 팀 결정, 고도화 후보) — 도입 시 Spring Security OAuth2 Client를 같은 JWT 발급 구조 위에 얹는다(토큰 체계 변경 없음).
-- AT는 `Authorization: Bearer`, RT는 HttpOnly 쿠키(`Path=/api/auth` — 전송 범위 최소화). 재발급: `POST /api/auth/refresh`. 로그아웃도 RT 쿠키 기준 — AT 만료 상태에서 로그아웃이 막히면 안 됨(04 A-3).
+- **AT도 HttpOnly 쿠키다 (2026-08-04 변경 — 구: `Authorization: Bearer`)**: `access_token`, `Path=/`, `SameSite=Lax`, 수명은 AT와 동일(30분). 헤더 경로는 **폐기** — 병행하지 않는다. 근거 세 가지 — ① JS가 읽을 수 없어 **XSS로 토큰이 새지 않는다**(헤더 방식은 어디든 저장해야 하고, 저장한 곳은 스크립트가 읽는다) ② FE의 **SSR 첫 진입**에서 브라우저 메모리에 토큰이 없어 로그인 상태를 못 살리던 제약이 풀린다 ③ 로그아웃 시 서버가 쿠키를 만료시켜 **확실히 끊을 수 있다**. RT는 HttpOnly 쿠키(`Path=/api/auth` — 전송 범위 최소화). 재발급: `POST /api/auth/refresh`(AT·RT 쿠키를 함께 회전). 로그아웃도 RT 쿠키 기준 — AT 만료 상태에서 로그아웃이 막히면 안 됨(04 A-3).
+- **AT와 RT의 속성이 다른 건 의도다**: RT는 `Strict`+`/api/auth`로 좁힌다(14일 장수명이라 노출 면적을 최소화). AT는 `Lax`+`/`여야 한다 — 모든 API가 인증을 읽고, 외부 링크로 들어오는 **첫 GET에 쿠키가 실려야** 로그인 상태가 유지된다(`Strict`면 그 진입에서 로그아웃으로 보인다).
+- **CSRF 토큰은 두지 않는다**: `Lax`는 크로스사이트 POST·PUT·DELETE에 쿠키를 싣지 않으므로 상태를 바꾸는 요청은 막힌다. **전제는 "GET으로 상태를 바꾸는 API를 만들지 않는 것"** — 이 규칙이 깨지면 재검토한다(`SecurityConfig`의 `csrf.disable()` 주석에 같은 근거를 남겨둠).
+- **응답 body에서 `accessToken`이 사라졌다** — A-1·A-2는 `member`만, A-4는 `data: null`. FE는 토큰을 만지지 않는다(jarvis-frontend PR #72와 동시 배포).
 - **쿠키 Secure 속성(2026-07-18 확정)**: `refresh_token`·`guest_id` 쿠키 모두 `Secure` 부여 — 14일 장수명 RT가 평문 HTTP로 전송돼 온-패스 공격자에게 탈취되는 경로를 차단(운영은 nginx HTTPS, D1-2). 값은 프로퍼티 `app.cookie.secure`(기본 `true`, env `APP_COOKIE_SECURE`)로 제어. `localhost`/`127.0.0.1`은 브라우저가 secure context로 취급해 http에서도 Secure 쿠키를 전송하므로 로컬 개발은 기본 `true` 그대로 동작하고, 비-localhost origin으로 테스트할 때만 `false`로 내린다. `SameSite`(RT=Strict, guest=Lax)는 CSRF 표면만 막고 네트워크 수동 탈취는 못 막으므로 Secure가 별도로 필요.
 - **RT 형식은 서명 토큰(JWT)이 아니라 불투명 랜덤 256bit** (2026-07-17 Phase 1 구현 결정): RT의 진실은 어차피 DB 행(02 D6·D17)이라 자체 서명 검증이 무의미하고, claim이 없어 유출 시 노출 정보도 없다. 검증은 SHA-256 해시 대조 + expires_at 확인으로만. 재발급 시 회전(기존 행 삭제 + 새 토큰 발급).
 - Spring Security 필터 체인: JWT 검증 필터 → 권한(Role) 검사. `/api/auth/**`, 상품 조회 계열(`/api/products/**`), `POST /api/chat/sessions`(CH-1 티켓 발급)·`POST /api/chat/tickets`(CH-1b)·`GET /api/chat/lists/**`(CH-5 추천 목록), `/api/cart/**`(게스트 쿠키 허용 — 02 D30), `POST /api/events`(E-1 수집 — 인증 선택: JWT 있으면 검증)는 permitAll. *채팅 SSE 자체는 Spring이 아니라 FastAPI가 티켓으로 검증(D5)이라 Spring permitAll 대상이 아님.*
@@ -303,7 +306,7 @@ com.jarvis
 
 **① 유저 직접 조회** — FE `GET /api/products` → nginx → Spring: 시큐리티 필터(상품조회는 permitAll 통과) → 컨트롤러 → 서비스 → 리포지토리 → MariaDB → envelope 응답. FastAPI 무관.
 
-**② 유저 직접 쓰기(담기)** — FE `POST /api/cart/items`(Bearer AT, 게스트는 guest_id 쿠키 — 02 D30) → 시큐리티 필터가 JWT 검증해 userId 확정(게스트는 쿠키가 주체) → CartController → **CartService.addItem** 검증(상품·옵션·수량 — 재고 차감은 결제 성공 시점, 02 D33) → INSERT → cartItemId envelope. (`add_to_cart` 행동 이벤트는 서버가 아니라 **FE가 성공 콜백에서 E-1로 전송** — 02 D31)
+**② 유저 직접 쓰기(담기)** — FE `POST /api/cart/items`(AT 쿠키, 게스트는 guest_id 쿠키 — 02 D30) → 시큐리티 필터가 JWT 검증해 userId 확정(게스트는 쿠키가 주체) → CartController → **CartService.addItem** 검증(상품·옵션·수량 — 재고 차감은 결제 성공 시점, 02 D33) → INSERT → cartItemId envelope. (`add_to_cart` 행동 이벤트는 서버가 아니라 **FE가 성공 콜백에서 E-1로 전송** — 02 D31)
 
 **③ 에이전트 조회 추천 (직결 + 2왕복 리랭킹, D5·05 §1)** — FE가 `POST /api/chat/sessions`(CH-1)로 세션과 함께 **스트림 티켓**을 받고(Spring이 신원 검증 후 RS256 서명·발급) → FE가 그 티켓으로 **FastAPI에 직접 SSE 연결** → FastAPI가 발화에서 **정형조건(가격·카테고리·색상·재고·판매상태)** 과 **의미조건(원룸에 적합·공부하기 좋은…)** 을 추출 →
   - **[1왕복 · 후보 조회]** 정형조건만 `GET /internal/products/search` 콜백 → InternalController가 ProductService 재사용해 MariaDB에서 후보 조회. **정형 진실(가격·재고·상태)은 여기서 확정** — 이후 벡터DB가 낡아도 살 수 없는 상품이 안 섞임. 응답은 **리랭킹용 최소필드(productId·name·summary·attributes·tags)**, **라운드1 LIMIT 상한**으로 후보 폭발(느슨한 대분류) 방지.
@@ -315,7 +318,7 @@ com.jarvis
 
 **④ 에이전트 쓰기(담기)** — ③처럼 FastAPI가 SSE를 붙든 채 상품·옵션·수량 확정 후 `POST /internal/cart/items` 콜백(`X-Internal-Token`, userId/guestId는 **티켓 `sub`의 메아리**) → InternalController가 **②와 같은 CartService.addItem** 호출 → 결과 3갈래: 성공→cartItemId→`action{CART_ADDED}` (게스트도 guestId로 담기 성공 — 02 D30, 로그인 유도는 결제 시점); 옵션필요→400 `CART_OPTION_REQUIRED`+options→"어떤 색?" 되물음; 그 외 검증 실패→사유 안내. 자동 재시도 없음(중복 담기 방지).
 
-**⑤ 판매자 조회(대시보드)** — FE `GET /api/seller/summary`(Bearer) → 시큐리티 필터가 JWT+`SELLER` 확인 → SellerController가 **토큰 memberId에서 brandId 유도**(주장받지 않음) → SellerService 집계(매출·주문수는 order_item, 조회/담김수는 behavior_events의 product_view·add_to_cart — 02 D31; 복잡 집계만 JdbcTemplate) → WHERE에 brandId 박혀 남의 데이터는 쿼리 단계에서 안 나옴 → envelope. (S-2도 동형.)
+**⑤ 판매자 조회(대시보드)** — FE `GET /api/seller/summary`(AT 쿠키) → 시큐리티 필터가 JWT+`SELLER` 확인 → SellerController가 **토큰 memberId에서 brandId 유도**(주장받지 않음) → SellerService 집계(매출·주문수는 order_item, 조회/담김수는 behavior_events의 product_view·add_to_cart — 02 D31; 복잡 집계만 JdbcTemplate) → WHERE에 brandId 박혀 남의 데이터는 쿼리 단계에서 안 나옴 → envelope. (S-2도 동형.)
 
 **⑥ 판매자 쓰기(상품수정/삭제)** — 판매자 직접 경로는 없다(구 S-5 폐기 2026-07-21). 챗봇 HITL만: FastAPI가 confirm된 draft를 `PATCH /internal/seller/{brandId}/products/{productId}`(I-11)·`DELETE`(I-12) 콜백(`X-Internal-Token`, brandId는 **티켓 claim의 메아리**) → SellerProductService가 **먼저 소유권 검사**(상품의 브랜드 == 티켓 brandId, 아니면 **404로 존재 은닉** — productId가 LLM 값) → UPDATE(`status=HIDDEN` 비노출 포함). ②엔 없던 소유권 스텝이 결정적.
 
