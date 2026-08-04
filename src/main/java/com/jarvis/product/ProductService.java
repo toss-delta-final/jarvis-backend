@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,8 @@ public class ProductService {
     private static final int SYNC_DEFAULT_LIMIT = 500; // I-17 기본 페이지 크기 (05 §I-17)
     private static final int SYNC_MAX_LIMIT = 500; // I-17 페이지 상한 (05 §I-17)
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul"); // 응답 타임스탬프 관례 (I-19와 동일)
+    private static final int CANDIDATE_OPTION_LIMIT = 20; // I-1 후보의 옵션 노출 상한 (05 §I-1 — 2026-08-03)
+    private static final Pattern REGEX_META = Pattern.compile("[\\\\^$.|?*+()\\[\\]{}]");
 
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
@@ -93,7 +96,7 @@ public class ProductService {
      */
     public List<ProductCandidateResponse> searchCandidates(String keyword, String categoryName,
                                                            Integer minPrice, Integer maxPrice,
-                                                           List<String> brandNames, String color) {
+                                                           List<String> brandNames, List<String> colors) {
         List<Long> categoryIds = null;
         if (hasText(categoryName)) {
             categoryIds = categoryService.resolveIdsByName(categoryName.trim()).orElse(List.of());
@@ -115,7 +118,27 @@ public class ProductService {
                 trimToNull(keyword),
                 categoryIds != null, categoryIds != null ? categoryIds : List.of(-1L),
                 brandIds != null, brandIds != null ? brandIds : List.of(-1L),
-                minPrice, maxPrice, trimToNull(color)));
+                minPrice, maxPrice, colorPattern(colors)));
+    }
+
+    /**
+     * 복수 색상을 정규식 하나로 합친다 — JPQL이 리스트에 대한 동적 OR을 표현하지 못해서다.
+     * 색상명은 사용자·LLM이 넘기는 자유 텍스트라 정규식 메타문자를 이스케이프한다(패턴 주입 차단).
+     */
+    private static String colorPattern(List<String> colors) {
+        if (colors == null) {
+            return null;
+        }
+        String pattern = colors.stream()
+                .filter(ProductService::hasText)
+                .map(color -> escapeRegex(color.trim().toLowerCase()))
+                .distinct()
+                .collect(Collectors.joining("|"));
+        return pattern.isEmpty() ? null : pattern;
+    }
+
+    private static String escapeRegex(String value) {
+        return REGEX_META.matcher(value).replaceAll("\\\\$0");
     }
 
     /**
@@ -219,21 +242,37 @@ public class ProductService {
         return ids.stream().map(products::get).filter(java.util.Objects::nonNull).toList();
     }
 
-    /** 카테고리·브랜드명은 배치 lookup으로 N+1 회피 — 평점은 행에 이미 실려 온다 */
+    /** 카테고리·브랜드명·옵션은 배치 lookup으로 N+1 회피 — 평점은 행에 이미 실려 온다 */
     private List<ProductCandidateResponse> toCandidates(List<CandidateRow> rows) {
         List<Product> products = rows.stream().map(CandidateRow::product).toList();
         Map<Long, String> categoryNames = categoryService.getNames(
                 products.stream().map(Product::getCategoryId).collect(Collectors.toSet()));
         Map<Long, String> brandNames = brandService.getNames(
                 products.stream().map(Product::getBrandId).collect(Collectors.toSet()));
+        Map<Long, List<String>> optionNames = candidateOptionNames(products);
         return rows.stream()
                 .map(row -> {
                     Product p = row.product();
+                    List<String> all = optionNames.getOrDefault(p.getId(), List.of());
+                    List<String> shown = all.size() > CANDIDATE_OPTION_LIMIT
+                            ? all.subList(0, CANDIDATE_OPTION_LIMIT) : all;
                     return ProductCandidateResponse.from(p, parseJson(p.getAttributes()),
                             categoryNames.get(p.getCategoryId()), brandNames.get(p.getBrandId()),
-                            RatingStats.of(row.reviewCount(), row.ratingAverage()));
+                            RatingStats.of(row.reviewCount(), row.ratingAverage()),
+                            shown, all.size());
                 })
                 .toList();
+    }
+
+    /** 후보 전체의 옵션명을 한 번에 — 빈 IN을 만들지 않도록 후보가 없으면 조회 자체를 건너뛴다 */
+    private Map<Long, List<String>> candidateOptionNames(List<Product> products) {
+        if (products.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = products.stream().map(Product::getId).toList();
+        return productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(ids).stream()
+                .collect(Collectors.groupingBy(ProductOption::getProductId,
+                        Collectors.mapping(ProductOption::getName, Collectors.toList())));
     }
 
     private static String trimToNull(String value) {

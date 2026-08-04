@@ -22,6 +22,8 @@ public class InternalProductController {
     /**
      * I-1 — 추천 라운드1 후보 조회 (05 §I-1). 2026-07-27 개정: 후보 수 상한 없음(정형조건 일치
      * 전체 반환), `brandName`은 반복 파라미터로 복수 지정 가능.
+     * 2026-08-03 개정: `color`도 반복 파라미터 — 같은 색의 표기가 789종이라(네이비 636 vs 남색 8)
+     * 문자열 하나로는 안 잡힌다. 동의어 확장은 LLM 팀 소관이고 BE는 받은 것들을 OR로 본다.
      */
     @GetMapping("/search")
     public ApiResponse<List<ProductCandidateResponse>> search(
@@ -30,7 +32,7 @@ public class InternalProductController {
             @RequestParam(required = false) Integer minPrice,
             @RequestParam(required = false) Integer maxPrice,
             @RequestParam(required = false) List<String> brandName,
-            @RequestParam(required = false) String color) {
+            @RequestParam(required = false) List<String> color) {
         return ApiResponse.success(productService.searchCandidates(
                 keyword, categoryName, minPrice, maxPrice, brandName, color));
     }
