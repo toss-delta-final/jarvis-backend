@@ -58,6 +58,8 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final RedisCache cache;
     private final ProductOptionRepository productOptionRepository;
+    private final ProductDetailImageRepository productDetailImageRepository;
+    private final ImageProperties imageProperties;
     private final BrandService brandService;
     private final CategoryService categoryService;
     private final ReviewService reviewService;
@@ -73,7 +75,19 @@ public class ProductService {
                 categoryService.getCategory(product.getCategoryId()),
                 brandService.getBrand(product.getBrandId()),
                 productOptionRepository.findAllByProductIdOrderByIdAsc(id),
-                reviewService.getStats(id));
+                reviewService.getStats(id),
+                detailImageUrls(id));
+    }
+
+    /**
+     * P-2 상세 이미지 (02 D42) — 자르지 않고 전량. 최대 179장이어도 URL 배열은 약 7KB라
+     * 응답 부담이 아니다. 실제 부하는 이미지 바이트(장당 평균 810KB)이며 접기·지연 로딩은 FE 소관.
+     * 상세 이미지가 없는 상품(131건)은 빈 리스트가 되어 응답에 `[]`로 나간다.
+     */
+    private List<String> detailImageUrls(Long productId) {
+        return productDetailImageRepository.findAllByProductIdOrderBySortOrderAsc(productId).stream()
+                .map(image -> imageProperties.toUrl(image.getImageKey()))
+                .toList();
     }
 
     /** P-4 — 7일 판매수 → product_view 수 → 최신순 순으로 채움 (04 §2). 품절은 집계 단계에서 이미 빠진다 */
