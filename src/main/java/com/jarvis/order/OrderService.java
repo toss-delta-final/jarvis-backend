@@ -107,13 +107,13 @@ public class OrderService {
                 .toList());
         statusChanger.logOrderCreated(order);
 
-        completePayment(order, items, aggregateQuantities(items), request.paymentMethod());
+        String failureReason = completePayment(order, items, aggregateQuantities(items), request.paymentMethod());
         // 장바구니 경유분만 삭제 — 바로 구매는 장바구니 미접촉 (04 §4)
         List<CartItem> purchasedCartLines = lines.stream().map(Line::cartItem).filter(Objects::nonNull).toList();
         if (order.getStatus() == OrderStatus.PAID && !purchasedCartLines.isEmpty()) {
             cartItemRepository.deleteAll(purchasedCartLines);
         }
-        return OrderCreateResponse.from(order);
+        return OrderCreateResponse.from(order, failureReason);
     }
 
     /** O-2 — 실패 주문 재결제. 성공 부수효과는 O-1의 PAID와 동일 (04 §4) */
@@ -129,11 +129,11 @@ public class OrderService {
         order.changePaymentMethod(request.paymentMethod());
         List<OrderItem> items = orderItemRepository.findAllByOrderId(orderId);
 
-        completePayment(order, items, aggregateQuantities(items), request.paymentMethod());
+        String failureReason = completePayment(order, items, aggregateQuantities(items), request.paymentMethod());
         if (order.getStatus() == OrderStatus.PAID) {
             removeMatchingCartLines(memberId, items);
         }
-        return OrderCreateResponse.from(order);
+        return OrderCreateResponse.from(order, failureReason);
     }
 
     /** O-3 — 대표 상태는 enum 코드 8종 (01 §4) */
@@ -292,19 +292,21 @@ public class OrderService {
 
     // ---- 결제 (O-1·O-2 공통) ----
 
-    private void completePayment(Order order, List<OrderItem> items,
-                                 Map<Long, Integer> quantitiesByProduct, String paymentMethod) {
+    /** 실패 사유 코드를 돌려준다(성공이면 null) — 로그에만 남기던 값을 응답 failureReason으로도 내보내기 위해 */
+    private String completePayment(Order order, List<OrderItem> items,
+                                   Map<Long, Integer> quantitiesByProduct, String paymentMethod) {
         PaymentResult result = paymentService.pay(paymentMethod, order.getTotalAmount());
         if (!result.success()) {
             statusChanger.paymentFailed(order, result.failureCode());
-            return;
+            return result.failureCode();
         }
         // 재고 차감은 결제 성공 처리와 같은 트랜잭션의 조건부 UPDATE (02 D33) — 실패 시 OUT_OF_STOCK 결제 실패
         if (!deductStock(quantitiesByProduct)) {
             statusChanger.paymentFailed(order, OUT_OF_STOCK);
-            return;
+            return OUT_OF_STOCK;
         }
         statusChanger.paymentSucceeded(order, items, LocalDateTime.now());
+        return null;
     }
 
     private Map<Long, Integer> aggregateQuantities(List<OrderItem> items) {
