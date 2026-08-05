@@ -2,6 +2,7 @@ package com.jarvis.order;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -25,6 +26,7 @@ import com.jarvis.order.dto.OrderCreateResponse;
 import com.jarvis.order.dto.OrderDetailResponse;
 import com.jarvis.order.dto.OrderListResponse;
 import com.jarvis.order.dto.RetryPaymentRequest;
+import com.jarvis.order.dto.UnavailableItemDetail;
 import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
@@ -32,6 +34,7 @@ import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -94,6 +97,8 @@ class OrderServiceTest {
         when(p.getOriginalPrice()).thenReturn(originalPrice);
         when(p.getName()).thenReturn("상품" + id);
         when(p.getStatus()).thenReturn(com.jarvis.product.ProductStatus.ON_SALE);
+        // 시드 기본 재고(04 §3) — O-1 선검증을 통과시키기 위한 값. 재고 시나리오는 각 테스트가 덮어쓴다
+        when(p.getStockQuantity()).thenReturn(100);
         return p;
     }
 
@@ -144,6 +149,61 @@ class OrderServiceTest {
         verify(productRepository, never()).deductStock(anyLong(), anyInt());
         verify(orderItemRepository).saveAll(itemsCaptor.capture());
         assertThat(itemsCaptor.getValue()).allMatch(i -> i.getStatus() == OrderItemStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("O-1 선검증 — 품절·HIDDEN을 첫 건에서 끊지 않고 전량 수집해 400 detail로 내린다")
+    void createCollectsAllUnavailableItems() {
+        com.jarvis.product.Product soldOut = product(20L, 5000, 5000);
+        com.jarvis.product.Product hidden = product(30L, 7000, 7000);
+        when(soldOut.getStockQuantity()).thenReturn(0);
+        when(hidden.getStatus()).thenReturn(com.jarvis.product.ProductStatus.HIDDEN);
+        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productRepository.findById(20L)).thenReturn(Optional.of(soldOut));
+        when(productRepository.findById(30L)).thenReturn(Optional.of(hidden));
+
+        OrderCreateRequest request = new OrderCreateRequest(null,
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1),
+                        new OrderCreateRequest.OrderLine(20L, null, 1),
+                        new OrderCreateRequest.OrderLine(30L, null, 1)),
+                null,
+                new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
+                null, "MOCK_CARD");
+
+        BusinessException thrown = catchThrowableOfType(
+                BusinessException.class, () -> orderService.create(1L, request));
+
+        assertThat(thrown.getErrorCode()).isEqualTo(ErrorCode.ORDER_PRODUCT_UNAVAILABLE);
+        @SuppressWarnings("unchecked")
+        List<UnavailableItemDetail> unavailable =
+                (List<UnavailableItemDetail>) ((Map<String, Object>) thrown.getDetail()).get("unavailableItems");
+        // 불량 2건이 한 번에 나와야 FE가 "빼고 결제"를 한 번에 만든다 — 첫 건만 오면 재시도가 반복된다
+        assertThat(unavailable).containsExactly(
+                new UnavailableItemDetail(20L, "상품20", "SOLD_OUT"),
+                new UnavailableItemDetail(30L, "상품30", "HIDDEN"));
+        // 주문 행 자체가 생기지 않는다
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    @DisplayName("O-1 선검증 — 같은 상품이 여러 줄로 오면 합산해서 재고와 비교한다")
+    void createSumsQuantityPerProductBeforeStockCheck() {
+        when(product.getStockQuantity()).thenReturn(3);
+        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+
+        // 줄 단위로는 각 2개라 재고 3을 안 넘지만, 상품 단위 합계는 4라 넘는다
+        OrderCreateRequest request = new OrderCreateRequest(null,
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 2),
+                        new OrderCreateRequest.OrderLine(10L, null, 2)),
+                null,
+                new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
+                null, "MOCK_CARD");
+
+        BusinessException thrown = catchThrowableOfType(
+                BusinessException.class, () -> orderService.create(1L, request));
+
+        assertThat(thrown.getErrorCode()).isEqualTo(ErrorCode.ORDER_PRODUCT_UNAVAILABLE);
+        verify(orderRepository, never()).save(any(Order.class));
     }
 
     @Test
