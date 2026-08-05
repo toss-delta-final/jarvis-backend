@@ -211,6 +211,19 @@ class SellerProductServiceTest {
     }
 
     @Test
+    @DisplayName("I-11 — status=DELETED 지정은 400 VALIDATION_ERROR (삭제는 I-12 전용 전이)")
+    void updateRejectsDeletedStatusValue() {
+        Product product = ownProduct();
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
+                updateRequest(null, null, null, ProductStatus.DELETED, null, null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+        assertThat(product.getStatus()).isEqualTo(ProductStatus.ON_SALE);
+    }
+
+    @Test
     @DisplayName("I-11 — 삭제된 상품은 수정 불가 409 PRODUCT_DELETED (판매자에게 보이지 않는 걸 되살릴 수 없다)")
     void updateRejectsDeletedProduct() {
         Product product = ownProduct();
