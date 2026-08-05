@@ -68,7 +68,8 @@ public class CartService {
                     brand.getId(), brand.getName(),
                     option == null ? null : option.getId(), option == null ? null : option.getName(),
                     cartItem.getQuantity(), product.getPrice() + extra, product.getOriginalPrice() + extra,
-                    product.getImageUrl(), product.isPurchasable());
+                    product.getImageUrl(), product.isPurchasable(),
+                    Math.min(product.getStockQuantity(), CartItem.MAX_QUANTITY));
         }).toList();
         return CartResponse.of(items);
     }
