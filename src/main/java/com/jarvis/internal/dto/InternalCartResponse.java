@@ -13,7 +13,7 @@ public record InternalCartResponse(List<Item> items, int totalOriginal, int tota
                        Long brandId, String brandName,
                        Long optionId, String optionName,
                        int quantity, int price, int originalPrice,
-                       String imageUrl, boolean purchasable, int maxQuantity) {
+                       String imageUrl, String purchaseState, int maxQuantity) {
     }
 
     public static InternalCartResponse from(CartResponse cart) {
@@ -22,7 +22,7 @@ public record InternalCartResponse(List<Item> items, int totalOriginal, int tota
                 item.brandId(), item.brandName(),
                 item.optionId(), item.optionName(),
                 item.quantity(), item.price(), item.originalPrice(),
-                item.imageUrl(), item.purchasable(), item.maxQuantity())).toList();
+                item.imageUrl(), item.purchaseState(), item.maxQuantity())).toList();
         return new InternalCartResponse(items, cart.totalOriginal(), cart.totalSale(), cart.discount());
     }
 }

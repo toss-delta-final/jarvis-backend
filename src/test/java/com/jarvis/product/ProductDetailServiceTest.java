@@ -32,7 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.quality.Strictness;
 
-/** P-2 상품 상세 — HIDDEN도 404 아닌 응답(purchasable=false), 평점 실시간 집계 (04 §2) */
+/** P-2 상품 상세 — HIDDEN도 404 아닌 응답(purchaseState=HIDDEN), 평점 실시간 집계 (04 §2) */
 @ExtendWith(MockitoExtension.class)
 class ProductDetailServiceTest {
 
@@ -69,7 +69,6 @@ class ProductDetailServiceTest {
         when(product.getOriginalPrice()).thenReturn(12900);
         when(product.getStockQuantity()).thenReturn(10);
         when(product.getStatus()).thenReturn(status);
-        when(product.isPurchasable()).thenReturn(status == ProductStatus.ON_SALE);
         when(product.getImageUrl()).thenReturn("img.jpg");
         when(product.getSummary()).thenReturn("요약");
         when(product.getDescription()).thenReturn("설명");
@@ -105,7 +104,7 @@ class ProductDetailServiceTest {
         assertThat(res.name()).isEqualTo("상품1");
         assertThat(res.price()).isEqualTo(8900);
         assertThat(res.originalPrice()).isEqualTo(12900);
-        assertThat(res.purchasable()).isTrue();
+        assertThat(res.purchaseState()).isEqualTo("AVAILABLE");
         assertThat(res.status()).isEqualTo("ON_SALE");
         assertThat(res.attributes()).isSameAs(attrs);
         assertThat(res.category().name()).isEqualTo("티셔츠");
@@ -117,7 +116,7 @@ class ProductDetailServiceTest {
     }
 
     @Test
-    @DisplayName("P-2 — HIDDEN도 404가 아니라 응답(purchasable=false) — 장바구니 유지(C-1) 링크 보호")
+    @DisplayName("P-2 — HIDDEN도 404가 아니라 응답(purchaseState=HIDDEN) — 장바구니 유지(C-1) 링크 보호")
     void hiddenProductStillResponds() {
         Product product = product(2L, ProductStatus.HIDDEN, null);
         when(productRepository.findById(2L)).thenReturn(Optional.of(product));
@@ -125,7 +124,7 @@ class ProductDetailServiceTest {
         ProductDetailResponse res = productService.getDetail(2L);
 
         assertThat(res.status()).isEqualTo("HIDDEN");
-        assertThat(res.purchasable()).isFalse();
+        assertThat(res.purchaseState()).isEqualTo("HIDDEN");
         assertThat(res.attributes()).isNull();
     }
 

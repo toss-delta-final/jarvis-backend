@@ -297,7 +297,7 @@ FastAPI의 **회원 프로필 버퍼(승격 전 발화)를 지금 프로필로 �
 - [ ] **라운드1 LIMIT·top-K 기준치**(§1-2-1): I-1 후보 상한(기본 50/최대 200 제안)과 LLM 투입 top-K(20~30 제안)의 실측 튜닝
 - [ ] **프로필 추출 저장 시점** (세션 만료 시? 매 N턴?) — 기능 정의에도 미확정
 - [ ] 카테고리 진입을 message 관성으로 갈지 전용 필드로 갈지
-- [ ] P-5 개인화 추천(메인) API: `GET {LLM_BASE_URL}/recommendations?userId=` 형태 제안 — 응답이 상품 ID 목록이면 BE가 카드 데이터 조립(P-4 카드와 동형 — `purchasable` 없음, 04 2026-07-28 결정). BE 측 타임아웃 연결 2s/응답 3s(04 P-5, 초과 시 인기 상품 fallback)
+- [ ] P-5 개인화 추천(메인) API: `GET {LLM_BASE_URL}/recommendations?userId=` 형태 제안 — 응답이 상품 ID 목록이면 BE가 카드 데이터 조립(P-4 카드와 동형 — `purchaseState` 없음, 04 2026-07-28 결정. 구 이름은 `purchasable`). BE 측 타임아웃 연결 2s/응답 3s(04 P-5, 초과 시 인기 상품 fallback)
 - [ ] 채팅 남용 방어(rate limit) 기준치 — 소유는 FastAPI로 확정(§3, 직결 공개 진입점), 수치만 OPEN
 - [ ] 상세페이지 연관 추천 2종(함께 구매/대체)의 소스: LLM 생성 vs BE 규칙 기반(같은 카테고리 인기순) — MVP는 BE 규칙 기반 제안
 - [ ] **confirm 전송 형식**(§1-3): 전용 필드 `{action:"confirm", draftId}` vs 특수 메시지 — LLM 확정 대기 (draft 이벤트 필드 자체는 §1-3으로 확정)

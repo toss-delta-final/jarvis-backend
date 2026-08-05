@@ -20,6 +20,7 @@ import com.jarvis.internal.dto.RecommendationCallbackRequest;
 import com.jarvis.internal.dto.RecommendationCallbackRequest.ListEntry;
 import com.jarvis.internal.dto.RecommendationCallbackRequest.Reason;
 import com.jarvis.product.ProductService;
+import com.jarvis.product.PurchaseState;
 import com.jarvis.product.dto.ProductCardResponse;
 import com.jarvis.recommendation.RecommendationEventRecorder;
 import com.jarvis.recommendation.RecommendationList;
@@ -560,6 +561,6 @@ class RecommendationListServiceTest {
 
     private static ProductCardResponse card(Long id, int price, boolean purchasable) {
         return new ProductCardResponse(id, "상품" + id, "브랜드", price, price + 1000, "img", 0.0, 0,
-                purchasable);
+                purchasable ? PurchaseState.AVAILABLE.name() : PurchaseState.SOLD_OUT.name());
     }
 }
