@@ -4,6 +4,8 @@ import com.jarvis.order.Order;
 import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemStatus;
 import com.jarvis.order.RepresentativeStatus;
+import com.jarvis.product.Product;
+import com.jarvis.product.PurchaseState;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -27,22 +29,30 @@ public record OrderDetailResponse(Long orderId, String orderNo, String status, S
                                   String address1, String address2) {
     }
 
+    /**
+     * status는 주문 아이템의 배송 상태, purchaseState는 그 상품이 지금 살 수 있는 상태인지다 —
+     * 이름은 비슷하지만 다른 축이다. FE는 purchaseState=HIDDEN이면 상세 링크를 걸지 않고
+     * "판매 종료"로 표시한다(상품 자체는 스냅샷이라 행은 그대로 보인다).
+     */
     public record Item(Long orderItemId, Long productId, String productName, String optionName,
                        int price, int originalPrice, int quantity, String status, String imageUrl,
+                       String purchaseState,
                        boolean canCancel, boolean canReturn, boolean canReview) {
 
-        public static Item from(OrderItem item, String imageUrl, boolean reviewWritten) {
+        public static Item from(OrderItem item, Product product, boolean reviewWritten) {
             OrderItemStatus status = item.getStatus();
             return new Item(item.getId(), item.getProductId(), item.getProductName(),
                     item.getOptionName(), item.getPrice(), item.getOriginalPrice(),
-                    item.getQuantity(), status.name(), imageUrl,
+                    item.getQuantity(), status.name(),
+                    product == null ? null : product.getImageUrl(),
+                    product == null ? null : PurchaseState.of(product).name(),
                     status.canCancel(), status.canReturn(),
                     status.canReview() && !reviewWritten);
         }
     }
 
     public static OrderDetailResponse from(Order order, List<OrderItem> orderItems,
-                                           Map<Long, String> imageUrlByProduct,
+                                           Map<Long, Product> productById,
                                            Predicate<Long> reviewWritten) {
         List<OrderItemStatus> statuses = orderItems.stream().map(OrderItem::getStatus).toList();
         return new OrderDetailResponse(order.getId(), order.orderNo(), order.getStatus().name(),
@@ -54,7 +64,7 @@ public record OrderDetailResponse(Long orderId, String orderNo, String status, S
                         order.getAddress1(), order.getAddress2()),
                 order.getDeliveryRequest(),
                 orderItems.stream()
-                        .map(item -> Item.from(item, imageUrlByProduct.get(item.getProductId()),
+                        .map(item -> Item.from(item, productById.get(item.getProductId()),
                                 reviewWritten.test(item.getId())))
                         .toList());
     }

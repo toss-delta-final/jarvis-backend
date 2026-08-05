@@ -145,7 +145,7 @@ public class OrderService {
                 : orderItemRepository.findAllByOrderIdIn(orderIds).stream()
                         .collect(Collectors.groupingBy(OrderItem::getOrderId));
         return OrderListResponse.from(orders, itemsByOrder,
-                imageUrls(itemsByOrder.values().stream().flatMap(List::stream).toList()));
+                productsById(itemsByOrder.values().stream().flatMap(List::stream).toList()));
     }
 
     /** I-4 — 최근 주문 상태 요약 (05 §I-4) — 문의 챗봇 전용, I-19(목록)와 역할 분담 */
@@ -219,7 +219,7 @@ public class OrderService {
         List<OrderItem> items = orderItemRepository.findAllByOrderId(orderId);
         Set<Long> reviewedItemIds = new HashSet<>(reviewRepository.findOrderItemIdsIn(
                 items.stream().map(OrderItem::getId).toList()));
-        return OrderDetailResponse.from(order, items, imageUrls(items), reviewedItemIds::contains);
+        return OrderDetailResponse.from(order, items, productsById(items), reviewedItemIds::contains);
     }
 
     // ---- 라인 해석 (O-1 두 경로) ----
@@ -396,9 +396,10 @@ public class OrderService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
     }
 
-    private Map<Long, String> imageUrls(List<OrderItem> items) {
+    /** 표시용 현재 상품 — 이미지와 purchaseState(상세 링크 가능 여부)를 같은 조회로 얻는다 */
+    private Map<Long, Product> productsById(List<OrderItem> items) {
         return productRepository
                 .findAllById(items.stream().map(OrderItem::getProductId).distinct().toList())
-                .stream().collect(Collectors.toMap(Product::getId, Product::getImageUrl));
+                .stream().collect(Collectors.toMap(Product::getId, p -> p));
     }
 }

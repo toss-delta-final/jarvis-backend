@@ -308,6 +308,18 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **트레이드오프**: 같은 `listId`로 의도적으로 다시 적재하는 건 불가능해진다 — 이 이벤트의 정의가 "목록 1개당 1행"이라 그게 맞는 동작이다. 홈 추천(I-22·P-5)을 붙일 때도 `listId`가 키라 같은 방식이 그대로 쓰인다.
 - **과거 행**: 백필은 무작위 `UUID()`를 쓴다(`scripts/migrate-2026-07-31-...`) — 이미 적재가 끝난 행에는 "무엇의 중복인지" 판별할 원본 키가 없고, 재전송될 일도 없다.
 
+### D41. 판매자의 "삭제"는 `HIDDEN`과 다른 상태다 — `ProductStatus.DELETED` 신설 (2026-08-05)
+
+- **문제**: `product.status`가 `ON_SALE`/`HIDDEN` 2종뿐이라 **"판매자가 숨긴 것"과 "판매자가 삭제한 것"이 같은 값**이었다. 결과로 ① 삭제한 상품이 판매자 목록(S-3)의 HIDDEN 탭에 계속 남고 ② `softDelete`가 이미 HIDDEN이면 409를 던져 **숨겨둔 상품을 삭제할 수 없었다**.
+- **빠진 축은 가시성**: `ON_SALE`(둘 다 보임) / `HIDDEN`(소비자 X·판매자 O) / `DELETED`(둘 다 X). 세 번째를 표현할 값이 없었다.
+- **선택지**: (A) `status`에 `DELETED` 추가 (B) `deleted_at` 별도 컬럼
+- **선택**: (A). (B)의 이점은 "삭제 후 이전 상태로 복구"인데 **이 시스템에 삭제 복구 기능이 없고 계획도 없다**. 판매자의 삭제는 상품이 처한 상태이지 별개 축이 아니다.
+- **DDL 변경 없음** — `status`가 `VARCHAR(20)`(ENUM 아님)이라 마이그레이션 SQL이 필요 없다. 주석만 갱신.
+- **새 값이 대부분 자동 흡수된다**: 소비자 조회는 전부 `status = 'ON_SALE'` **화이트리스트**라 자동 제외되고, I-17 AI 동기화는 `!= ON_SALE` 조건이라 자동으로 "인덱스에서 제거" 신호로 나간다(05 계약 무변경). 손대야 하는 곳은 **판매자 경로뿐**이다 — S-3 목록·I-9·I-11·I-12.
+- **집계는 삭제분을 포함한다**: `findAllByBrandId`는 S-1 대시보드·S-4 통계가 함께 쓰므로 **건드리지 않는다**(지난 매출·이벤트가 사라지면 안 됨). S-3 목록만 `findAllByBrandIdAndStatusNot`으로 갈랐다.
+- **하드 삭제는 여전히 없다** — 주문 내역·매출 통계가 상품을 계속 참조하고, 상세 링크도 살아 있어야 한다. 주문 내역은 `purchaseState`를 함께 내려 FE가 링크를 끄고 "판매 종료"로 표시한다(P-2는 404가 아니라 정상 응답 유지).
+- **트레이드오프**: 409 어휘가 `ALREADY_HIDDEN` → `ALREADY_DELETED`로 바뀐다(노션 I-12 개정 필요). 삭제된 상품 수정은 409 `PRODUCT_DELETED`.
+
 > **피그마 검토로 "디자인 수정" 확정된 항목 (스키마 무변경, 2026-07-09)**: 옵션 2축(컬러×사이즈) UI → 단일 옵션 선택으로 수정(D2 유지) · 이미지 썸네일 갤러리 → 단일 이미지(D14 유지) · 리뷰 "도움이 됐어요" 제거 · 배송비 표기 제거(배송비 미모델링 — 전 주문 무료, D36으로 명문화) · 모의 결제 "테스트: 결제 실패" 트리거 UI 추가 예정(01 D7). 문의 챗봇·판매자 페이지 등 미디자인 화면은 디자인 백로그.
 
 ---
@@ -365,7 +377,7 @@ erDiagram
         varchar summary
         json attributes "축의 값(D7/D11)"
         text description
-        varchar status "ON_SALE/HIDDEN"
+        varchar status "ON_SALE/HIDDEN/DELETED(D41)"
     }
     product_option {
         bigint id PK
@@ -614,7 +626,7 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 | summary | VARCHAR(500) | NULL | 주요 특징 요약 |
 | attributes | JSON | NULL | 카테고리 속성 축의 값 — 키 축은 `category.attribute_schema`(D11), 값은 자유 텍스트(D7) |
 | description | TEXT | NULL | 상세 설명 |
-| status | VARCHAR(20) | NOT NULL | `ON_SALE` / `HIDDEN` — 판매자 상세 수정·비노출용 |
+| status | VARCHAR(20) | NOT NULL | `ON_SALE` / `HIDDEN`(소비자 X·판매자 O) / `DELETED`(둘 다 X, I-12 전용 전이·복구 없음 — D41) |
 
 - `updated_at`은 예외적으로 **NOT NULL**(생성 시 created_at과 동일 값으로 초기화) — AI 상품 동기화 배치(I-17)의 증분 커서용 (D33).
 - 인덱스: `(category_id)`, `(brand_id)`, `(updated_at, id)`(I-17 증분 커서 — D33), FULLTEXT 없음(LIKE 검색으로 시작, D7).
