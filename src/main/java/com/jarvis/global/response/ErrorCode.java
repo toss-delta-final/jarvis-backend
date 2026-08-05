@@ -45,6 +45,7 @@ public enum ErrorCode {
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "주문을 찾을 수 없습니다."),
     ORDER_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "주문 상품을 찾을 수 없습니다."),
     ADDRESS_NOT_FOUND(HttpStatus.NOT_FOUND, "배송지를 찾을 수 없습니다."),
+    // 미판매/HIDDEN 또는 재고 부족 — detail.unavailableItems[{productId,name,reason}] 동반 (04 §4, 2026-08-05 재고 포함으로 확장)
     ORDER_PRODUCT_UNAVAILABLE(HttpStatus.BAD_REQUEST, "구매할 수 없는 상품이 포함되어 있습니다."),
     ORDER_INVALID_TRANSITION(HttpStatus.BAD_REQUEST, "현재 상태에서 처리할 수 없는 요청입니다."),
     CLAIM_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "현재 상태에서 취소/반품을 신청할 수 없습니다."),

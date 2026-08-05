@@ -17,6 +17,7 @@ import com.jarvis.order.dto.OrderCreateResponse;
 import com.jarvis.order.dto.OrderDetailResponse;
 import com.jarvis.order.dto.OrderListResponse;
 import com.jarvis.order.dto.RetryPaymentRequest;
+import com.jarvis.order.dto.UnavailableItemDetail;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductChangeLog;
 import com.jarvis.product.ProductChangeLogRepository;
@@ -24,11 +25,11 @@ import com.jarvis.product.ProductChangeType;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
-import com.jarvis.product.ProductStatus;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -230,10 +231,17 @@ public class OrderService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     "cartItemIds 또는 items 중 정확히 하나만 보내야 합니다.");
         }
-        return fromCart ? linesFromCart(memberId, request.cartItemIds()) : linesFromBody(request.items());
+        List<LineSpec> specs = fromCart ? specsFromCart(memberId, request.cartItemIds())
+                : specsFromBody(request.items());
+        Map<Long, Product> products = requireAllAvailable(specs);
+        return specs.stream().map(spec -> buildLine(spec, products.get(spec.productId()))).toList();
     }
 
-    private List<Line> linesFromCart(Long memberId, List<Long> cartItemIds) {
+    /** 옵션 검증 전의 원시 주문 라인 — 두 출처(장바구니/바로 구매)를 같은 모양으로 모은다 */
+    private record LineSpec(Long productId, Long optionId, int quantity, CartItem cartItem) {
+    }
+
+    private List<LineSpec> specsFromCart(Long memberId, List<Long> cartItemIds) {
         List<CartItem> cartItems = cartItemRepository.findAllById(cartItemIds);
         boolean allOwned = cartItems.stream()
                 .allMatch(item -> memberId.equals(item.getMemberId()));
@@ -241,34 +249,58 @@ public class OrderService {
             throw new BusinessException(ErrorCode.CART_ITEM_NOT_FOUND);
         }
         return cartItems.stream()
-                .map(item -> buildLine(item.getProductId(), item.getOptionId(), item.getQuantity(), item))
+                .map(item -> new LineSpec(item.getProductId(), item.getOptionId(), item.getQuantity(), item))
                 .toList();
     }
 
-    private List<Line> linesFromBody(List<OrderCreateRequest.OrderLine> orderLines) {
+    private List<LineSpec> specsFromBody(List<OrderCreateRequest.OrderLine> orderLines) {
         return orderLines.stream()
-                .map(line -> buildLine(line.productId(), line.optionId(), line.quantity(), null))
+                .map(line -> new LineSpec(line.productId(), line.optionId(), line.quantity(), null))
                 .toList();
     }
 
-    /** 검증은 두 경로 공통 (04 §4) — ON_SALE 아니면 400, 옵션 소속 검증 (02 D26①) */
-    private Line buildLine(Long productId, Long optionId, int quantity, CartItem cartItem) {
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
-        if (product.getStatus() != ProductStatus.ON_SALE) {
-            throw new BusinessException(ErrorCode.ORDER_PRODUCT_UNAVAILABLE);
+    /**
+     * 상태·재고를 주문 생성 전에 전량 검증한다 (04 §4, 2026-08-05 FE 요청).
+     *
+     * <p>불량을 만나도 첫 건에서 끊지 않고 모아서 한 번에 400으로 내린다 — 끊으면 사용자가
+     * "A 빼고 재시도 → B도 품절 → 또 재시도"를 불량 개수만큼 반복해야 한다.
+     *
+     * <p>재고는 상품 단위라(02 D33) 같은 상품의 다른 옵션이 여러 줄로 올 수 있다. 줄 단위로 비교하면
+     * 합계가 재고를 넘는 걸 놓치므로 상품 단위로 합산해 비교한다.
+     */
+    private Map<Long, Product> requireAllAvailable(List<LineSpec> specs) {
+        Map<Long, Product> products = new LinkedHashMap<>();
+        for (LineSpec spec : specs) {
+            products.computeIfAbsent(spec.productId(), id -> productRepository.findById(id)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND)));
         }
-        List<ProductOption> options = productOptionRepository.findAllByProductIdOrderByIdAsc(productId);
+        Map<Long, Integer> quantities = specs.stream().collect(Collectors.groupingBy(
+                LineSpec::productId, Collectors.summingInt(LineSpec::quantity)));
+        List<UnavailableItemDetail> unavailable = products.values().stream()
+                .map(product -> UnavailableItemDetail.of(product, quantities.get(product.getId())))
+                .filter(Objects::nonNull)
+                .toList();
+        if (!unavailable.isEmpty()) {
+            throw new BusinessException(ErrorCode.ORDER_PRODUCT_UNAVAILABLE,
+                    Map.of("unavailableItems", unavailable));
+        }
+        return products;
+    }
+
+    /** 옵션 소속 검증 (02 D26①) — 상태·재고는 requireAllAvailable에서 이미 걸렀다 */
+    private Line buildLine(LineSpec spec, Product product) {
+        List<ProductOption> options = productOptionRepository
+                .findAllByProductIdOrderByIdAsc(spec.productId());
         ProductOption option = null;
-        if (optionId == null) {
+        if (spec.optionId() == null) {
             if (!options.isEmpty()) {
                 throw new BusinessException(ErrorCode.CART_OPTION_REQUIRED);
             }
         } else {
-            option = options.stream().filter(o -> o.getId().equals(optionId)).findFirst()
+            option = options.stream().filter(o -> o.getId().equals(spec.optionId())).findFirst()
                     .orElseThrow(() -> new BusinessException(ErrorCode.CART_OPTION_INVALID));
         }
-        return new Line(product, option, quantity, cartItem);
+        return new Line(product, option, spec.quantity(), spec.cartItem());
     }
 
     private Shipping resolveShipping(Long memberId, OrderCreateRequest request) {
