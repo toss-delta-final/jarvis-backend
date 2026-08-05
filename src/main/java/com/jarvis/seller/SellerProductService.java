@@ -196,9 +196,11 @@ public class SellerProductService {
         if (product.getStatus() == ProductStatus.DELETED) {
             throw new BusinessException(ErrorCode.PRODUCT_DELETED);
         }
-        // 삭제는 I-12 전용 전이 — 수정으로 도달하면 재삭제 검사(ALREADY_DELETED)를 건너뛴다
+        // 삭제는 I-12 전용 전이 — 수정으로 도달하면 재삭제 검사(ALREADY_DELETED)를 건너뛴다.
+        // 어휘는 VALIDATION_ERROR — 이 API가 허용하지 않는 status 값이라는 점에서 SOLD_OUT과 같은 부류다
+        // (PRODUCT_INVALID_PARAM은 S-3·I-9의 query 파라미터 전용)
         if (request.status() == ProductStatus.DELETED) {
-            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         validateStock(request.stockQuantity());
         validatePriceRange(
@@ -257,7 +259,7 @@ public class SellerProductService {
         requireFields(request);
         // 삭제 상태로 상품을 만드는 건 의미가 없다 — 만들자마자 아무에게도 안 보인다
         if (request.status() == ProductStatus.DELETED) {
-            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         validateStock(request.stockQuantity());
         int originalPrice = request.originalPrice() != null ? request.originalPrice() : request.price();
