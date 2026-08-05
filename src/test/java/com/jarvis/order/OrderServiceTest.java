@@ -117,6 +117,7 @@ class OrderServiceTest {
         OrderCreateResponse response = orderService.create(1L, directRequest("MOCK_CARD", 2));
 
         assertThat(response.orderNo()).isEqualTo("ORD-20260717-1");
+        assertThat(response.failureReason()).isNull();
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         verify(orderRepository).save(orderCaptor.capture());
         assertThat(orderCaptor.getValue().getTotalAmount()).isEqualTo(24000);
@@ -134,8 +135,10 @@ class OrderServiceTest {
         when(paymentService.pay(eq("MOCK_FAIL"), anyInt()))
                 .thenReturn(PaymentResult.declined("MOCK_DECLINED"));
 
-        orderService.create(1L, directRequest("MOCK_FAIL", 1));
+        OrderCreateResponse response = orderService.create(1L, directRequest("MOCK_FAIL", 1));
 
+        // 카드 거절은 재결제(O-2)로 회복 가능 — 재고 부족과 갈라 보이려면 응답에 사유가 실려야 한다
+        assertThat(response.failureReason()).isEqualTo("MOCK_DECLINED");
         verify(statusChanger).paymentFailed(any(Order.class), eq("MOCK_DECLINED"));
         verify(statusChanger, never()).paymentSucceeded(any(), anyList(), any());
         verify(productRepository, never()).deductStock(anyLong(), anyInt());
@@ -161,10 +164,11 @@ class OrderServiceTest {
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
                 null, "MOCK_CARD");
-        orderService.create(1L, request);
+        OrderCreateResponse response = orderService.create(1L, request);
 
         verify(productRepository).restoreStock(10L, 1);
         verify(statusChanger).paymentFailed(any(Order.class), eq("OUT_OF_STOCK"));
+        assertThat(response.failureReason()).isEqualTo("OUT_OF_STOCK");
     }
 
     @Test
@@ -243,6 +247,27 @@ class OrderServiceTest {
 
         verify(orderRepository).findByIdForUpdate(1L);
         verify(orderRepository, never()).findById(anyLong());
+    }
+
+    @Test
+    @DisplayName("O-2 재고 부족 재실패 — 응답 failureReason이 OUT_OF_STOCK (재결제로는 회복 불가 신호)")
+    void retryOutOfStockExposesReason() {
+        // O-2에는 O-1 같은 재고 선검증이 없다 — 몇 번을 눌러도 같은 결과라, 이 필드가 루프를 끊는 유일한 수단이다
+        Order order = Order.create(1L, "MOCK_CARD", 24000, "r", "p", "z", "a1", null, null);
+        ReflectionTestUtils.setField(order, "id", 1L);
+        ReflectionTestUtils.setField(order, "createdAt", LocalDateTime.of(2026, 7, 17, 12, 0));
+        ReflectionTestUtils.setField(order, "status", OrderStatus.PAYMENT_FAILED);
+        OrderItem item = OrderItem.pending(1L, 10L, "린넨 셔츠", null, 12000, 15000, 2,
+                LocalDateTime.of(2026, 7, 17, 12, 0));
+        when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findAllByOrderId(1L)).thenReturn(List.of(item));
+        when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
+        when(productRepository.deductStock(10L, 2)).thenReturn(0);
+
+        OrderCreateResponse response = orderService.retryPayment(1L, 1L, new RetryPaymentRequest("MOCK_CARD"));
+
+        assertThat(response.failureReason()).isEqualTo("OUT_OF_STOCK");
+        verify(cartItemRepository, never()).findAllByMemberId(anyLong());
     }
 
     @Test
