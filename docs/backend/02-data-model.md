@@ -254,7 +254,7 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 ### D33. 재고를 모델링한다 — product.stock_quantity (D8 폐기 — 2026-07-17)
 
 - **문제**: D8(재고 미모델링)의 근거는 "재고의 소비처가 없다"였는데 소비처가 생겼다 — 판매자 에이전트의 재고 조정(internal I-11)과 재고 변경 로그(D32 STOCK)가 재고 실체를 요구.
-- **선택**: `stock_quantity INT NOT NULL DEFAULT 0` + `CHECK (stock_quantity >= 0)`. **결제 성공(PAID 전이)과 같은 트랜잭션**에서 조건부 UPDATE(`SET stock_quantity = stock_quantity - n WHERE stock_quantity >= n`)로 차감(2026-07-17 확정 — 미결제 주문이 재고를 점유하지 않게), 차감 실패 시 결제 실패(PAYMENT_FAILED, reason OUT_OF_STOCK) 처리 — D8 트레이드오프가 예고한 확장 패턴 그대로(01 §6과 동일, 분산 3대에서도 안전). 차감으로 0 도달 시 STOCK 로그(new_value 0) 1행(D32). 취소/반품 시 복원은 MVP 미구현(감수 — 시드 재고 100).
+- **선택**: `stock_quantity INT NOT NULL DEFAULT 0` + `CHECK (stock_quantity >= 0)`. **결제 성공(PAID 전이)과 같은 트랜잭션**에서 조건부 UPDATE(`SET stock_quantity = stock_quantity - n WHERE stock_quantity >= n`)로 차감(2026-07-17 확정 — 미결제 주문이 재고를 점유하지 않게), 차감 실패 시 결제 실패(PAYMENT_FAILED, reason OUT_OF_STOCK) 처리 — D8 트레이드오프가 예고한 확장 패턴 그대로(01 §6과 동일, 분산 3대에서도 안전). 차감으로 0 도달 시 STOCK 로그(new_value 0) 1행(D32). **2026-08-05** — O-1이 주문 생성 전에 재고를 선검증해 대부분을 400으로 걸러내지만(04 §4), 이 조건부 UPDATE가 최종 방어선이라는 점은 변하지 않는다. 선검증은 경합 구간을 좁힐 뿐 없애지 못한다. 취소/반품 시 복원은 MVP 미구현(감수 — 시드 재고 100).
 - **함께 확정**: `product.updated_at`을 NOT NULL로(생성 시 created_at과 동일 값으로 초기화) + `KEY idx_product_updated (updated_at, id)` — AI 상품 동기화 배치(I-17)의 증분 커서용. 커서 방식은 `(updated_at, id)` Base64URL keyset로 확정(2026-07-23, 05 §I-17).
 - **트레이드오프**: D8이 피하려던 리스크 부활 — 추천 상품이 품절이면 핵심 데모 플로우(추천→담기→구매)가 막힘 → 시드에서 재고를 넉넉히 초기화해 완화. 초기 재고: 크롤링 1만 개+ 상품 전부 **일괄 100** (2026-07-17 확정) — 시드 파이프라인이 INSERT 시 채운다. 크롤링 원본 재고는 신뢰할 수 없어 베이스라인으로 쓰지 않음.
 

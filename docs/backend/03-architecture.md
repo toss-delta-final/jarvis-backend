@@ -113,7 +113,7 @@ docker 내부망:  spring ─▶ mariadb:3306, redis:6379 / spring ◀▶ fastap
 - 에러 `code`는 `<도메인>_<사유>` 대문자 스네이크. message는 사용자 노출 가능한 한국어 문장.
 - **필드 검증 실패(400)는 `VALIDATION_ERROR` + `fields` 배열** — `error.fields: [{field, message}]`로 어느 필드가 왜 틀렸는지 명시 (2026-07-17 FE 요청, A-1 등 폼 API 공통).
 - **401 코드 2종 분리** (2026-07-17 FE 요청): `AUTH_REQUIRED`(토큰 없음 — FE는 로그인 유도) / `AUTH_TOKEN_EXPIRED`(만료 — FE는 refresh 후 1회 재시도). 구분 없이 쓰던 기존 표기는 폐기.
-- **에러 부가 데이터 `error.detail`** (2026-07-18 Phase 5 추가): 에러 응답에 구조화 데이터가 필요한 경우 `error.detail` 객체로 동반(없으면 필드 생략). 현재 사용처: `CART_OPTION_REQUIRED`의 `detail.options[{optionId, name, extraPrice}]` — LLM 되물음용(05 §I-2), FE도 동일 수신.
+- **에러 부가 데이터 `error.detail`** (2026-07-18 Phase 5 추가): 에러 응답에 구조화 데이터가 필요한 경우 `error.detail` 객체로 동반(없으면 필드 생략). 현재 사용처: `CART_OPTION_REQUIRED`의 `detail.options[{optionId, name, extraPrice}]` — LLM 되물음용(05 §I-2), FE도 동일 수신. `CART_STOCK_INSUFFICIENT`의 `detail.availableStock`(남은 재고 — 04 §3). `ORDER_PRODUCT_UNAVAILABLE`의 `detail.unavailableItems[{productId, name, reason}]` (2026-08-05 — 불량 품목 전량. `reason`은 목록의 `purchaseState`와 같은 어휘 `SOLD_OUT`/`HIDDEN`이라 주문 화면과 장바구니가 다른 말을 하지 않는다).
 - **날짜 직렬화**: 모든 날짜·시각 필드는 ISO 8601 + 타임존 오프셋(`2026-07-10T14:23:00+09:00`) — Jackson 직렬화 설정으로 전역 적용 (2026-07-17 FE 요청, 아래 타임존 항 참조).
 - HTTP 상태: 400(검증/전이 위반) 401(미인증) 403(권한) 404(없음) 409(중복: 이메일, 재신청 등) 500.
 
