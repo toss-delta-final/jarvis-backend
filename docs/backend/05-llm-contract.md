@@ -230,6 +230,18 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **세션 만료 시**: 신원을 해소할 수 없어도 200으로 저장하되 **익명 저장**(`member_id`·`guest_id` 빈 값) — 그 목록은 CH-5에서 조회되지 않고(소유자 미기록 = fail-closed) `recommendation_generated`도 주체 없는 행으로 남는다.
 - **listId 엔트로피(2026-07-18 시큐리티 리뷰)**: CH-5는 게스트 허용 공개 조회라 listId가 사실상 bearer 키다 — FastAPI는 listId를 **UUID급 무작위(≥128bit)**로 생성해야 한다(순번·타임스탬프 등 추측 가능한 형식 금지).
 
+### I-24. 챗봇 장바구니 삭제 `DELETE /internal/cart/items/{cartItemId}` (신설 2026-08-05 — AI 이슈 #285)
+- 신원은 query `userId`/`guestId` XOR 메아리(게스트 허용) — 위반 시 400 `CART_QUERY_INVALID`(I-18과 같은 코드). 성공은 `data: null`이며 `cartItemId`를 응답에 싣지 않는다(C-4 실측).
+- **AI가 I-18로 해소한 id는 인가 근거가 아니다.** 해소와 실행 사이 상태가 바뀔 수 있고 `cartItemId`가 연속 BIGINT라 열거 가능하므로, 소유자 재검증은 실행 시점에 `CartService`가 한다 — 남의 항목이면 403 `AUTH_FORBIDDEN`, 없으면 404 `CART_ITEM_NOT_FOUND`(두 번째 삭제도 404 — **멱등하지 않음**).
+- 삭제는 재고·상품 상태를 보지 않는다 — HIDDEN·품절도 삭제되며 `PRODUCT_NOT_FOUND`·`CART_STOCK_INSUFFICIENT`는 발생하지 않는다.
+- **복수 삭제는 항목별 반복 호출** — C-4가 bulk API를 두지 않기로 한 것을 internal도 따른다.
+
+### I-25. 챗봇 장바구니 수량 변경 `PATCH /internal/cart/items/{cartItemId}` (신설 2026-08-05 — AI 이슈 #285)
+- body `{ "quantity": 3 }`(1~99), 신원은 I-24와 같은 query XOR. 응답은 `{cartItemId, quantity}`(C-3 실측).
+- **"3개로 바꿔줘"는 치환이라 I-25, "하나 더 담아줘"는 합산이라 I-2**다. C-3는 보낸 값 자체를 재고와 비교하지만 I-2는 기존+이번 합산을 검증하므로 두 발화를 섞으면 재고 판정이 어긋난다. 합산 권위는 Spring에 있고 I-18 조회는 해석·안내용이다.
+- 재고 초과는 400 `CART_STOCK_INSUFFICIENT` + `error.detail.availableStock` → LLM은 "재고가 N개뿐이에요"로 안내. 수량 범위 위반은 400 `VALIDATION_ERROR` + `fields`. 소유권·not-found는 I-24와 동일.
+- SSE `action` 확장(`CART_REMOVED`·`CART_QUANTITY_CHANGED` 등)은 **BE 소관이 아니다** — 채팅 스트림은 FE↔FastAPI 직결이라 이벤트 어휘는 AI·FE가 CH-2에서 정한다(2026-08-05 합의).
+
 ## 2-1. 아웃바운드: Spring → FastAPI
 
 ### I-20. 세션 종료 통지 `POST {LLM_BASE_URL}/events/session-end` — **방향 예외(Spring→FastAPI)**
