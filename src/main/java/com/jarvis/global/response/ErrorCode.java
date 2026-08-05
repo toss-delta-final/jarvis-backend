@@ -92,7 +92,11 @@ public enum ErrorCode {
     MISSING_FIELD(HttpStatus.UNPROCESSABLE_ENTITY, "필수 입력값이 누락되었습니다."),
     INVALID_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "판매가는 정가를 넘을 수 없습니다."),
     INVALID_STOCK(HttpStatus.UNPROCESSABLE_ENTITY, "재고 수량이 올바르지 않습니다."),
-    ALREADY_HIDDEN(HttpStatus.CONFLICT, "이미 숨김 처리된 상품입니다.");
+    // I-12 재삭제. 숨김(HIDDEN)에서 삭제로 가는 건 정상 전이라 막지 않는다 — 이미 DELETED일 때만 충돌
+    ALREADY_DELETED(HttpStatus.CONFLICT, "이미 삭제된 상품입니다."),
+    // I-10·I-11 — 삭제된 상품은 판매자에게 보이지 않으므로 수정·복구 대상이 아니다. 404가 아닌 이유는
+    // 상품이 실제로 존재하고 주문 내역에도 남아 있어서다(에이전트가 "없는 상품"이라 답하면 사실과 다름)
+    PRODUCT_DELETED(HttpStatus.CONFLICT, "삭제된 상품은 변경할 수 없습니다.");
 
     private final HttpStatus status;
     private final String message;

@@ -61,8 +61,16 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Product> findChangesSince(@Param("cursorUpdatedAt") LocalDateTime cursorUpdatedAt,
                                    @Param("cursorId") Long cursorId, Pageable pageable);
 
-    /** S-1 상품별 지표 조인용 — 판매자 브랜드는 시드 규모가 작아 전건 로드 (04 §7) */
+    /**
+     * S-1 상품별 지표 조인용 — 판매자 브랜드는 시드 규모가 작아 전건 로드 (04 §7).
+     *
+     * <p><b>삭제분을 포함한다.</b> 대시보드·통계(S-1·S-4)는 과거 집계라 삭제된 상품의 지난 매출·이벤트가
+     * 사라지면 안 된다. 판매자 상품 <i>목록</i>(S-3)만 삭제분을 빼야 하므로 아래 별도 메서드를 쓴다.
+     */
     List<Product> findAllByBrandId(Long brandId);
+
+    /** S-3 판매자 상품 목록 전용 — 삭제분 제외 (status &lt;&gt; DELETED). 집계 경로와 갈라놓은 이유는 위 참조 */
+    List<Product> findAllByBrandIdAndStatusNot(Long brandId, ProductStatus status);
 
     /** S-1 재고 부족 알림 — ON_SALE 중 재고 ≤ threshold, 재고 오름차순 (노션 S-1) */
     @Query("""
@@ -197,10 +205,14 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     /**
      * S-3/I-9 자사 상품 목록 (04 §7·§10) — HIDDEN도 노출(본인 화면), 정렬은 Pageable
      * (latest=id desc / price_asc / price_desc). 표시 판매량은 별도 집계 부착.
+     *
+     * <p>DELETED는 status 미지정(전량)에서도 빠진다 — 판매자에게 보이지 않는 것이 삭제의 정의라
+     * status=DELETED를 명시로 넘겨도 빈 결과다(별도 400을 두지 않는 이유: 존재를 노출하지 않는다).
      */
     @Query("""
             select p from Product p
             where p.brandId = :brandId
+              and p.status <> com.jarvis.product.ProductStatus.DELETED
               and (:status is null or p.status = :status)
               and (:q is null or lower(p.name) like lower(concat('%', :q, '%')))
             """)

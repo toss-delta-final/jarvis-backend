@@ -78,7 +78,7 @@ public class SellerProductService {
         SellerDisplayStatus filter = parseDisplayStatus(statusParam);
         String sortKey = parseProductSort(sort);
 
-        List<Product> all = productRepository.findAllByBrandId(brandId);
+        List<Product> all = productRepository.findAllByBrandIdAndStatusNot(brandId, ProductStatus.DELETED);
         Map<Long, Long> salesById = paidQuantities(all);
         Map<String, Long> tabCounts = productTabCounts(all);
 
@@ -193,6 +193,13 @@ public class SellerProductService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         Product product = ownedProduct(brandId, productId);
+        if (product.getStatus() == ProductStatus.DELETED) {
+            throw new BusinessException(ErrorCode.PRODUCT_DELETED);
+        }
+        // 삭제는 I-12 전용 전이 — 수정으로 도달하면 재삭제 검사(ALREADY_DELETED)를 건너뛴다
+        if (request.status() == ProductStatus.DELETED) {
+            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+        }
         validateStock(request.stockQuantity());
         validatePriceRange(
                 request.price() != null ? request.price() : product.getPrice(),
@@ -248,6 +255,10 @@ public class SellerProductService {
     @Transactional
     public SellerProductCreateResponse create(Long brandId, SellerProductCreateRequest request) {
         requireFields(request);
+        // 삭제 상태로 상품을 만드는 건 의미가 없다 — 만들자마자 아무에게도 안 보인다
+        if (request.status() == ProductStatus.DELETED) {
+            throw new BusinessException(ErrorCode.PRODUCT_INVALID_PARAM);
+        }
         validateStock(request.stockQuantity());
         int originalPrice = request.originalPrice() != null ? request.originalPrice() : request.price();
         validatePriceRange(request.price(), originalPrice);
@@ -266,17 +277,20 @@ public class SellerProductService {
         return new SellerProductCreateResponse(saved.getId(), saved.getStatus().name());
     }
 
-    /** I-12 — soft delete(HIDDEN 전환)만, hard delete 문 없음. 이미 HIDDEN이면 409 (노션 I-12) */
+    /**
+     * I-12 — soft delete(DELETED 전환)만, hard delete 문 없음. 이미 DELETED면 409 (노션 I-12).
+     * HIDDEN에서 DELETED로 가는 건 정상 전이다 — 숨겨둔 상품을 나중에 지우는 흐름을 막지 않는다.
+     */
     @Transactional
     public SellerProductDeleteResponse softDelete(Long brandId, Long productId) {
         Product product = ownedProduct(brandId, productId);
-        if (product.getStatus() == ProductStatus.HIDDEN) {
-            throw new BusinessException(ErrorCode.ALREADY_HIDDEN);
+        if (product.getStatus() == ProductStatus.DELETED) {
+            throw new BusinessException(ErrorCode.ALREADY_DELETED);
         }
         productChangeLogRepository.save(ProductChangeLog.of(productId, ProductChangeType.STATUS,
-                product.getStatus().name(), ProductStatus.HIDDEN.name()));
-        product.changeStatus(ProductStatus.HIDDEN);
-        return new SellerProductDeleteResponse(productId, ProductStatus.HIDDEN.name());
+                product.getStatus().name(), ProductStatus.DELETED.name()));
+        product.changeStatus(ProductStatus.DELETED);
+        return new SellerProductDeleteResponse(productId, ProductStatus.DELETED.name());
     }
 
     /**

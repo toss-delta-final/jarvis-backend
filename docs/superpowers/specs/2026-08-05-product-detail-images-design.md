@@ -32,8 +32,8 @@
 CREATE TABLE product_detail_image (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
     product_id  BIGINT       NOT NULL,
-    sort_order  INT          NOT NULL,               -- 0-based 노출 순서. 파일명이 아니라 이 값이 정렬 기준 (D41)
-    image_key   VARCHAR(255) NOT NULL,               -- 버킷 내 경로만: products/{productId}/detail/000.jpg — 호스트는 앱 설정 (D41)
+    sort_order  INT          NOT NULL,               -- 0-based 노출 순서. 파일명이 아니라 이 값이 정렬 기준 (D42)
+    image_key   VARCHAR(255) NOT NULL,               -- 버킷 내 경로만: products/{productId}/detail/000.jpg — 호스트는 앱 설정 (D42)
     created_at  DATETIME     NOT NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uk_product_detail_image (product_id, sort_order),
@@ -181,7 +181,7 @@ P-2에 아웃바운드 호출이 붙어 캐시가 필수가 된다. [07-redis-de
 |---|---|
 | **ERD (불변 기준)** | `docs/backend/schema.sql` — 테이블 추가 + §7 주석의 "상품 이미지 테이블(D14 — image_url 단일)" 줄 |
 | **노션 (불변 기준)** | 📡 API 명세서 **P-2** 응답에 `detailImages`, 「기능 정의」의 "상품 이미지(단일)" |
-| 내부 문서 | 02 — **D41 신설** + D14에 "2026-08-05 재도입" 주석, ERD 다이어그램, §4 화면별 표(4 상품 상세), §7 / 04 — P-2 행 |
+| 내부 문서 | 02 — **D42 신설** + D14에 "2026-08-05 재도입" 주석, ERD 다이어그램, §4 화면별 표(4 상품 상세), §7 / 04 — P-2 행 |
 | 코드 | `ProductDetailResponse`(필드 + `from` 시그니처 + 클래스 주석의 D14 인용), `ProductService`, 신규 `ProductDetailImage`·Repository·`ImageProperties`, `application.yml` |
 | 시드·인프라 | `scripts/migrate-2026-08-05-product-detail-image.sql`, `.gitignore`, `scripts/setup-frontend-dev.sh` |
 | 테스트 | 0장 / 1장 / 179장, `sort_order` 정렬, base-url 슬래시 정규화 |
@@ -205,7 +205,7 @@ FE의 어느 선택이든 수용한다.
 | Phase | 내용 |
 |---|---|
 | **0** | **상품 상태 설계(별건, §9)** — 상세 이미지와 무관하나 먼저 진행하기로 함 |
-| **1** | 스키마·설정: `schema.sql` + `migrate-*.sql`, `ImageProperties` + `application.yml`, 02 D41 신설, `.gitignore`·`setup-frontend-dev.sh` |
+| **1** | 스키마·설정: `schema.sql` + `migrate-*.sql`, `ImageProperties` + `application.yml`, 02 D42 신설, `.gitignore`·`setup-frontend-dev.sh` |
 | **2** | 조회 구현: 엔티티·Repository·Service, P-2에 `detailImages`, 04 P-2 갱신, 테스트 |
 | **3** | 배포 담당 실 데이터 적재 (배포 DB) |
 

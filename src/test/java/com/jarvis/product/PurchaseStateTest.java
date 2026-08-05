@@ -28,6 +28,13 @@ class PurchaseStateTest {
     }
 
     @Test
+    @DisplayName("삭제도 소비자에겐 HIDDEN — 숨김이든 삭제든 '판매자가 내림'이고 살 수 없다")
+    void deletedCollapsesIntoHidden() {
+        assertThat(PurchaseState.of(product(ProductStatus.DELETED, 10))).isEqualTo(PurchaseState.HIDDEN);
+        assertThat(PurchaseState.of(product(ProductStatus.DELETED, 0))).isEqualTo(PurchaseState.HIDDEN);
+    }
+
+    @Test
     @DisplayName("주문(O-1)은 주문 수량 기준 — 재고보다 많이 주문하면 SOLD_OUT")
     void comparesAgainstRequestedQuantity() {
         Product product = product(ProductStatus.ON_SALE, 3);

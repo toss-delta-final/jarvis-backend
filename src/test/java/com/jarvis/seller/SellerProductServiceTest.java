@@ -170,30 +170,57 @@ class SellerProductServiceTest {
     }
 
     @Test
-    @DisplayName("I-12 soft delete — HIDDEN 전환 + STATUS 로그, {productId, HIDDEN} 응답 (노션 I-12)")
-    void softDeleteHidesAndLogsStatus() {
+    @DisplayName("I-12 soft delete — DELETED 전환 + STATUS 로그, {productId, DELETED} 응답 (노션 I-12)")
+    void softDeleteMarksDeletedAndLogsStatus() {
         Product product = ownProduct();
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
         SellerProductDeleteResponse response = service.softDelete(BRAND_ID, 1L);
 
-        assertThat(product.getStatus()).isEqualTo(ProductStatus.HIDDEN);
+        assertThat(product.getStatus()).isEqualTo(ProductStatus.DELETED);
         assertThat(response.productId()).isEqualTo(1L);
-        assertThat(response.status()).isEqualTo("HIDDEN");
+        assertThat(response.status()).isEqualTo("DELETED");
         verify(productChangeLogRepository).save(any());
     }
 
     @Test
-    @DisplayName("I-12 — 이미 HIDDEN이면 409 ALREADY_HIDDEN (노션 계약, 2026-07-18 결정)")
-    void softDeleteRejectsAlreadyHidden() {
+    @DisplayName("I-12 — 숨김(HIDDEN) 상품 삭제는 정상 전이 (구 ALREADY_HIDDEN 409 폐기)")
+    void softDeleteAcceptsHiddenProduct() {
         Product product = ownProduct();
         product.changeStatus(ProductStatus.HIDDEN);
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
+        SellerProductDeleteResponse response = service.softDelete(BRAND_ID, 1L);
+
+        assertThat(product.getStatus()).isEqualTo(ProductStatus.DELETED);
+        assertThat(response.status()).isEqualTo("DELETED");
+        verify(productChangeLogRepository).save(any());
+    }
+
+    @Test
+    @DisplayName("I-12 — 이미 DELETED면 409 ALREADY_DELETED")
+    void softDeleteRejectsAlreadyDeleted() {
+        Product product = ownProduct();
+        product.changeStatus(ProductStatus.DELETED);
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+
         assertThatThrownBy(() -> service.softDelete(BRAND_ID, 1L))
                 .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.ALREADY_HIDDEN);
+                .extracting("errorCode").isEqualTo(ErrorCode.ALREADY_DELETED);
         verify(productChangeLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("I-11 — 삭제된 상품은 수정 불가 409 PRODUCT_DELETED (판매자에게 보이지 않는 걸 되살릴 수 없다)")
+    void updateRejectsDeletedProduct() {
+        Product product = ownProduct();
+        product.changeStatus(ProductStatus.DELETED);
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
+                updateRequest("새 이름", null, null, null, null, null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.PRODUCT_DELETED);
     }
 
     @Test
@@ -355,7 +382,8 @@ class SellerProductServiceTest {
         Product onSale = product(1L, ProductStatus.ON_SALE, 5, 10000, 20L);
         Product soldOut = product(2L, ProductStatus.ON_SALE, 0, 20000, 20L);
         Product hidden = product(3L, ProductStatus.HIDDEN, 0, 30000, 20L);
-        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of(onSale, soldOut, hidden));
+        when(productRepository.findAllByBrandIdAndStatusNot(BRAND_ID, ProductStatus.DELETED))
+                .thenReturn(List.of(onSale, soldOut, hidden));
         when(orderItemRepository.sumPaidQuantityByProduct(any())).thenReturn(List.of());
         Category leaf = mock(Category.class);
         lenient().when(leaf.getId()).thenReturn(20L);
@@ -380,7 +408,8 @@ class SellerProductServiceTest {
         Product onSale = product(1L, ProductStatus.ON_SALE, 5, 10000, 20L);
         Product soldOut = product(2L, ProductStatus.ON_SALE, 0, 20000, 20L);
         Product hidden = product(3L, ProductStatus.HIDDEN, 0, 30000, 20L);
-        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of(onSale, soldOut, hidden));
+        when(productRepository.findAllByBrandIdAndStatusNot(BRAND_ID, ProductStatus.DELETED))
+                .thenReturn(List.of(onSale, soldOut, hidden));
         when(orderItemRepository.sumPaidQuantityByProduct(any())).thenReturn(List.of());
         when(categoryRepository.findAllById(any())).thenReturn(List.of());
 

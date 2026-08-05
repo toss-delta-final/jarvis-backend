@@ -85,7 +85,10 @@ public class InternalSellerController {
                 sellerAnalyticsService.accountEvents(groupBy, eventType, AnalysisPeriod.of(from, to)));
     }
 
-    /** I-9 — 자사 상품 목록(수정 draft의 읽기 소스, S-3과 같은 서비스) — {rows, total} (노션 I-9) */
+    /**
+     * I-9 — 자사 상품 목록(수정 draft의 읽기 소스, S-3과 같은 서비스) — {rows, total} (노션 I-9).
+     * DELETED는 status 미지정에서도 빠지고, status=DELETED로 물어도 빈 결과다.
+     */
     @GetMapping("/seller/{brandId}/products")
     public ApiResponse<SellerProductInternalListResponse> products(
             @PathVariable Long brandId,
@@ -105,7 +108,10 @@ public class InternalSellerController {
         return ApiResponse.success(sellerProductService.create(brandId, request));
     }
 
-    /** I-11 — 상품 수정 통합(HITL confirm 후) — 가격·설명·상태·재고, 소유 아님 404 (노션 I-11) */
+    /**
+     * I-11 — 상품 수정 통합(HITL confirm 후) — 가격·설명·상태·재고, 소유 아님 404 (노션 I-11).
+     * 삭제된 상품은 409 PRODUCT_DELETED, status=DELETED 지정도 거부(삭제는 I-12 전용 경로).
+     */
     @PatchMapping("/seller/{brandId}/products/{productId}")
     public ApiResponse<SellerProductUpdateResponse> updateProduct(
             @PathVariable Long brandId,
@@ -114,7 +120,7 @@ public class InternalSellerController {
         return ApiResponse.success(sellerProductService.updateInternal(brandId, productId, request));
     }
 
-    /** I-12 — soft delete(HIDDEN 전환)만, 이미 HIDDEN이면 409 ALREADY_HIDDEN (노션 I-12, 2026-07-18 결정) */
+    /** I-12 — soft delete(DELETED 전환)만, 이미 DELETED면 409 ALREADY_DELETED. HIDDEN→DELETED는 정상 전이 */
     @DeleteMapping("/seller/{brandId}/products/{productId}")
     public ApiResponse<SellerProductDeleteResponse> deleteProduct(
             @PathVariable Long brandId, @PathVariable Long productId) {

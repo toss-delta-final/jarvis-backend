@@ -105,7 +105,7 @@ CREATE TABLE product (
     summary           VARCHAR(500) NULL,                   -- 주요 특징 요약
     attributes        JSON         NULL,                   -- 축은 category.attribute_schema, 값은 자유 텍스트 (D7·D11)
     description       TEXT         NULL,
-    status            VARCHAR(20)  NOT NULL,               -- ON_SALE / HIDDEN
+    status            VARCHAR(20)  NOT NULL,               -- ON_SALE / HIDDEN(판매자 목록엔 남음) / DELETED(판매자에게도 숨김, I-12 전용·복구 없음 — D41)
     created_at        DATETIME     NOT NULL,
     updated_at        DATETIME     NOT NULL,               -- 예외적 NOT NULL — 생성 시 created_at과 동일 값 초기화, I-17 증분 커서 (D33)
     PRIMARY KEY (id),
