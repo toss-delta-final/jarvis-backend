@@ -133,6 +133,20 @@ CREATE TABLE product_option (
         REFERENCES product (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE product_detail_image (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    product_id  BIGINT       NOT NULL,
+    sort_order  INT          NOT NULL,               -- 0-based 노출 순서. 파일명이 아니라 이 값이 정렬 기준 — 확장자가 섞여(000.jpg+001.png) 문자열 정렬이 어긋난다 (D42)
+    image_key   VARCHAR(255) NOT NULL,               -- 버킷 내 경로만: products/{productId}/detail/000.jpg — 호스트는 app.image.base-url (D42)
+    created_at  DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_product_detail_image (product_id, sort_order),  -- 순서 중복 적재 방어 (어긋나면 노출 순서가 조용히 틀어진다)
+    CONSTRAINT fk_product_detail_image_product FOREIGN KEY (product_id)
+        REFERENCES product (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 상세페이지 하단 나열 전용(P-2 detailImages) — 쓰기는 시드 적재뿐이라 updated_at 없음.
+-- 이미지 없는 상품(131건)은 행을 만들지 않고 응답에서 빈 배열로 나간다.
+
 -- ------------------------------------------------------------
 -- 장바구니 / 배송지
 -- ------------------------------------------------------------
@@ -446,6 +460,7 @@ CREATE TABLE recommendation_list_item (
 -- ============================================================
 -- ERD에 없는 것들은 누락이 아니라 결정 (02 §7):
 --   평점 평균/리뷰 수 컬럼(D9) · 개인화 프로필(D13 — LLM팀 소유)
---   채팅 세션(D12 존속분 — Redis TTL 휘발) · 상품 이미지 테이블(D14 — image_url 단일)
+--   채팅 세션(D12 존속분 — Redis TTL 휘발)
+--   상품 이미지: 대표 1장은 product.image_url(D14 유지), 상세 이미지는 product_detail_image(D42 — 2026-08-05 재도입)
 --   재고는 D33으로 도입됨(D8 폐기) — product.stock_quantity
 -- ============================================================

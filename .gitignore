@@ -8,6 +8,9 @@ bin/
 .env
 src/main/resources/application-local.yml
 
+# 로컬 전용 시드 (개인 테스트 데이터 — 배포 DB에 갈 일이 없어야 한다)
+scripts/seed-*-local.sql
+
 # IDE
 .idea/
 *.iml

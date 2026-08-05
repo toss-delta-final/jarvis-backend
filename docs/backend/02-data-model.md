@@ -124,8 +124,9 @@
 
 - **문제**: 기능 정의 4번은 "상품 이미지(복수)"인데, 시드·크롤링 부담 대비 복수 이미지의 데모 가치를 재평가.
 - **기준**: ① 소비처 — 카드·목록·상세 전부 대표 이미지 1장으로 성립하고, 복수의 유일 소비처는 상세 이미지 슬라이더 UI뿐 ② 비용 — 상품 300+개 × 복수 이미지 수집·검수는 시드 작업의 최대 비용 축 ③ 되돌림 비용이 낮은가.
-- **선택**: 단일. `product.image_url` 컬럼으로 흡수, product_image 테이블 삭제(테이블 17개).
+- **선택**: 단일. `product.image_url` 컬럼으로 흡수, product_image 테이블 삭제(당시 테이블 17개).
 - **트레이드오프**: 상세 슬라이더 불가 — 감수. 복수가 다시 필요해지면 product_image(1:N) 재도입 + image_url을 0번 행으로 옮기는 기계적 마이그레이션.
+- **⚠️ 2026-08-05 부분 개정 (D41 아님 — D42 참조)**: 여기 적어둔 되돌림 경로대로 **상세 이미지는 `product_detail_image`(1:N)로 재도입**했다. 기각 근거였던 시드·크롤링 비용이 해소됐기 때문이다(배포 담당이 S3에 55,887장 적재 완료). **단, `image_url`(대표 1장)은 그대로 유지**한다 — 0번 행으로 옮기지 않았다. 상단 대표 1장과 하단 상세 N장은 화면에서 역할이 달라 합칠 이유가 없고, 합치면 목록·카드가 쓰는 대표 이미지를 조인해서 꺼내야 한다. 즉 D14의 **결론(대표는 단일 컬럼)은 살아 있고 범위만 좁아졌다**.
 - **정합 확인(2026-07-20)**: 노션 반영 완료 — 「기능 정의」가 "상품 이미지(단일 — 2026-07-09 팀 합의: 대표 이미지 1장, 시드·크롤링 비용으로 복수 제외)", API 명세서 P-2(상품 상세)가 `imageUrl` 단수 + "대표 이미지 단일(02 D14)" 명기. **더는 기능 정의와 상이하지 않음**(구 ⚠️ 미해결 표기 제거). I-11(상품 수정)의 `imageUrl` "로그 없음"도 노션과 일치.
 
 ### D15. 가격 컬럼은 `price`(판매가) + `original_price`(정가) (2026-07-09 ERD 리뷰)
@@ -320,6 +321,19 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **하드 삭제는 여전히 없다** — 주문 내역·매출 통계가 상품을 계속 참조하고, 상세 링크도 살아 있어야 한다. 주문 내역은 `purchaseState`를 함께 내려 FE가 링크를 끄고 "판매 종료"로 표시한다(P-2는 404가 아니라 정상 응답 유지).
 - **트레이드오프**: 409 어휘가 `ALREADY_HIDDEN` → `ALREADY_DELETED`로 바뀐다(노션 I-12 개정 필요). 삭제된 상품 수정은 409 `PRODUCT_DELETED`, I-10·I-11에 `status=DELETED`를 지정하면 400 `VALIDATION_ERROR`(허용 밖 status 값 — `SOLD_OUT`과 같은 부류. `PRODUCT_INVALID_PARAM`은 query 파라미터 전용이라 쓰지 않는다).
 
+### D42. 상세 이미지는 별도 테이블 — `product_detail_image` (2026-08-05, D14 부분 개정)
+
+- **문제**: 상품 상세페이지 하단에 상세 이미지를 순서대로 나열해야 한다(쿠팡식). D14가 이를 기각했던 근거는 **시드·크롤링 비용**이었는데, 배포 담당이 그 비용을 이미 치러 **S3에 55,887장이 적재 완료**됐다. 전제가 바뀌었으므로 D14가 미리 적어둔 되돌림 경로를 따른다.
+- **규모**: 상세 이미지 보유 6,428건 / **없는 상품 131건**(응답은 빈 배열) / 상품당 최소 1·중앙값 6·**최대 179**장. 확장자가 상품 내에서도 섞인다(jpg·png·gif·jpeg·webp).
+- **선택지**: (A) 별도 1:N 테이블 (B) `product`에 JSON 컬럼 (C) S3에 manifest.json을 두고 FE가 직접 읽기
+- **선택**: (A). (B)는 `product`가 서비스에서 가장 자주 읽히는 테이블인데 **상세 이미지를 쓰는 곳은 상세페이지뿐**이라, 최대 179장(약 6KB)을 목록·검색·카드 조회가 전부 행에 달고 다니게 된다(JPA는 엔티티 전 컬럼을 읽고, 컬럼 단위 지연 로딩은 실효성이 낮다). 장수 편차가 179배라 행으로 펴는 것이 맞다 — `recommendation_list_item`과 같은 판단이다. `attributes`가 JSON인 것과는 다르다: attributes는 D7 검색의 **필터 축**이라 상품을 읽을 때 실제로 필요하지만 상세 이미지는 목록에서 쓸 일이 없다. (C)는 정합성이 공짜라는 장점이 뚜렷했으나 **"FE가 S3 경로 규칙을 안다"는 암묵 계약**이 문서화되지 않고 별도 repo로 숨으며, 131건의 404와 실제 장애를 구분할 수 없고 CORS 설정이 새로 필요해진다.
+- **순서는 `sort_order` 정수 컬럼**: 파일명이 `000`·`001`로 순서를 담지만 확장자가 섞여(`000.jpg`+`001.png`) **문자열 정렬이 어긋난다.** 순서를 분리하면 `image_key`는 파싱 대상이 아닌 불투명한 문자열이 되어 파일명 규칙이 바뀌어도 정렬이 안 깨진다. `UNIQUE(product_id, sort_order)`로 중복 적재를 DB가 막는다.
+- **값은 전체 URL이 아니라 버킷 내 경로(key)**: 이미지가 Cloudflare 뒤로 이전될 예정이라 URL을 저장하면 5만여 행 UPDATE가 따라온다. 호스트는 `app.image.base-url`(`APP_IMAGE_BASE_URL`)로 붙인다. **`product.image_url`이 전체 URL인데 이 컬럼만 key인 것은 의도** — 대표 이미지는 현재 11번가 CDN의 외부 자원이고 상세 이미지는 우리 S3 자원이라 호스트가 실제로 다르다. 컬럼명을 `image_key`로 둔 것도 같은 이유다.
+- **`ON DELETE RESTRICT`**: 하드 삭제 경로가 없고(D41 — soft delete만), **DB CASCADE는 S3까지 가지 않아** DB 행만 조용히 지워지고 파일은 남는다. 절반만 자동인 정리는 다 된 것처럼 보여 더 위험하다.
+- **`updated_at` 없음**: 쓰기가 시드 적재뿐이고 개별 행 갱신 개념이 없다.
+- **연관관계를 JPA로 매핑하지 않는다**: 상품을 여러 건 조회하는 경로(P-4·P-6·CH-5)에서 컬렉션을 건드리면 N+1이 난다. 매핑 자체를 두지 않으면 접근 경로가 없어 사고가 원천 차단된다.
+- **API는 전량 반환**: 최대 179장이어도 URL 배열은 약 7KB다. 실제 부하는 이미지 바이트(장당 평균 810KB)이며 이는 반환 개수가 아니라 지연 로딩으로 다룰 문제다 — 접기·`loading="lazy"`는 FE 소관(노션 P-2).
+
 > **피그마 검토로 "디자인 수정" 확정된 항목 (스키마 무변경, 2026-07-09)**: 옵션 2축(컬러×사이즈) UI → 단일 옵션 선택으로 수정(D2 유지) · 이미지 썸네일 갤러리 → 단일 이미지(D14 유지) · 리뷰 "도움이 됐어요" 제거 · 배송비 표기 제거(배송비 미모델링 — 전 주문 무료, D36으로 명문화) · 모의 결제 "테스트: 결제 실패" 트리거 UI 추가 예정(01 D7). 문의 챗봇·판매자 페이지 등 미디자인 화면은 디자인 백로그.
 
 ---
@@ -372,7 +386,7 @@ erDiagram
         int original_price "정가"
         int price "판매가(D15)"
         int stock_quantity "재고(D33 — D8 폐기)"
-        varchar image_url "대표 1장(D14)"
+        varchar image_url "대표 1장(D14) — 상세 이미지는 product_detail_image(D42)"
         int base_sales_count "크롤링 누적판매량(D18)"
         varchar summary
         json attributes "축의 값(D7/D11)"
@@ -384,6 +398,12 @@ erDiagram
         bigint product_id FK
         varchar name
         int extra_price
+    }
+    product_detail_image {
+        bigint id PK
+        bigint product_id FK
+        int sort_order "0-based 노출 순서(D42)"
+        varchar image_key "버킷 내 경로만(D42)"
     }
     cart_item {
         bigint id PK
@@ -547,6 +567,7 @@ erDiagram
     category ||--o{ category : "대분류>소분류(D20)"
     category ||--o{ product : "소분류가 classifies"
     product ||--o{ product_option : has
+    product ||--o{ product_detail_image : has
     product ||--o{ cart_item : in
     product ||--o{ wishlist : in
     product ||--o{ order_item : "링크(값은 스냅샷)"
@@ -621,7 +642,7 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 | original_price | INT | NOT NULL | 정가 (KRW, 원 단위 정수) |
 | price | INT | NOT NULL | 판매가 (D15). `price ≤ original_price` 서비스 검증(D28). 할인율은 파생 계산(저장 금지) |
 | stock_quantity | INT | NOT NULL DEFAULT 0, CHECK ≥ 0 | 재고 (D33 — D8 폐기). 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행(D32). 복원 MVP 미구현 |
-| image_url | VARCHAR(500) | NOT NULL | 대표 이미지 1장 (D14 — 단일 확정) |
+| image_url | VARCHAR(500) | NOT NULL | 대표 이미지 1장, 전체 URL (D14). 상세페이지 하단 나열용 상세 이미지는 `product_detail_image` (D42) |
 | base_sales_count | INT | NOT NULL DEFAULT 0 | 크롤링 시점 누적 판매량, 시드 후 불변 (D18). 표시 판매량 = 이 값 + order_item 집계 |
 | summary | VARCHAR(500) | NULL | 주요 특징 요약 |
 | attributes | JSON | NULL | 카테고리 속성 축의 값 — 키 축은 `category.attribute_schema`(D11), 값은 자유 텍스트(D7) |
@@ -637,6 +658,17 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 | product_id | BIGINT | FK(product), NOT NULL | |
 | name | VARCHAR(100) | NOT NULL | 예: "화이트", "블랙/M" (D2) |
 | extra_price | INT | NOT NULL DEFAULT 0 | 옵션 추가금 |
+
+### product_detail_image
+| 컬럼 | 타입 | 제약 | 비고 |
+|---|---|---|---|
+| product_id | BIGINT | FK(product) RESTRICT, NOT NULL | |
+| sort_order | INT | NOT NULL, UNIQUE(product_id, sort_order) | 0-based 노출 순서. **파일명이 아니라 이 값이 정렬 기준** — 확장자가 상품 내에서도 섞여 문자열 정렬이 어긋난다 (D42) |
+| image_key | VARCHAR(255) | NOT NULL | 버킷 내 경로만: `products/{productId}/detail/000.jpg`. 호스트는 `app.image.base-url` (D42) |
+| created_at | DATETIME | NOT NULL | `updated_at` 없음 — 쓰기가 시드 적재뿐 |
+
+상세페이지 하단 나열 전용(P-2 `detailImages`). 이미지 없는 상품(131건)은 **행을 만들지 않고** 응답에서 빈 배열로 나간다.
+JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경로의 N+1을 원천 차단 (D42).
 
 ### cart_item
 | 컬럼 | 타입 | 제약 | 비고 |
@@ -889,7 +921,7 @@ FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommenda
 | 1 로그인/회원가입 | member, refresh_token, guest(가입 시 승계 D5) |
 | 2 메인(홈) | category(해시태그), 개인화 추천=FastAPI(D13) + 인기 상품=behavior_events(product_view/add_to_cart)·order_item 집계(D31), 예시 칩=정적 |
 | 3 챗봇(검색) | 대화=Redis 세션(비영속, 03) — 테이블 없음(의도), attributes 2단 검색(D7·D11), 챗봇 담기=cart_item (CHAT_QUERY 이벤트는 D31로 소멸) |
-| 4 상품 상세 | product(이미지=image_url 단일, D14), product_option, review(평점 통계는 파생 D9), 연관 추천=05 OPEN(BE 규칙 기반이면 category+집계로 충분) |
+| 4 상품 상세 | product(대표 이미지=image_url 단일, D14) + **product_detail_image**(하단 상세 이미지 N장, D42), product_option, review(평점 통계는 파생 D9), 연관 추천=05 OPEN(BE 규칙 기반이면 category+집계로 충분) |
 | 5 브랜드 홈 | brand, product(정렬은 집계 파생 D9), category 소분류 필터(D20) |
 | 6 장바구니 | cart_item(현재가 표시 — 스냅샷 없음, 의도. 게스트 담기 지원 — D30, 가입 시 병합 승계) |
 | 7 결제 | orders(배송지·금액 스냅샷 D1, 상태 01 §2-1), order_item(01 §2-2), 모의 결제(01 D7). 장바구니 결제·바로 구매 둘 다 O-1(cartItemIds[] 또는 items[]) — 스냅샷이라 스키마 공통 |

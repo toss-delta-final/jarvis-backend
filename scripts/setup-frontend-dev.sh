@@ -91,6 +91,14 @@ for f in scripts/seed-accounts.sql scripts/seed-catalog.sql scripts/seed-commerc
   say "시드 적용: $f"
   MDB -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$f"
 done
+# 로컬 전용 시드 (gitignore — 개인 테스트 데이터, 없으면 skip).
+# 커밋되지 않으므로 DEPLOY.md의 배포 시드 목록에도 없다 — 배포 DB로 흘러갈 경로가 없다.
+for f in scripts/seed-*-local.sql; do
+  [ -e "$f" ] || continue
+  say "로컬 전용 시드 적용: $f"
+  MDB -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$f"
+done
+
 say "문의 데모는 seed-commerce-demo.sql에 포함 — user@jarvis.shop 가입 후 재실행하면 채워짐(없으면 skip)"
 
 # ── 5) Redis: 실행 확인 → 없으면 winget 설치 (Windows 서비스로 등록됨) ──
