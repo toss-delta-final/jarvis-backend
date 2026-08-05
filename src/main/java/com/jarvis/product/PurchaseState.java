@@ -1,0 +1,40 @@
+package com.jarvis.product;
+
+/**
+ * 상품을 지금 살 수 있는지, 못 산다면 왜 못 사는지 (04 §2·§3, 2026-08-05 FE 요청).
+ *
+ * <p>구 {@code purchasable} boolean은 품절과 숨김을 하나로 뭉개서, 같은 false가 화면마다 다른 문구로
+ * 나갔다(찜은 "판매 중지", 브랜드 목록은 "품절"). 둘은 사용자가 해야 할 행동이 다르다 — 품절은
+ * 기다리면 되고 숨김은 다른 걸 찾아야 한다.
+ *
+ * <p>파생 규칙을 여기 한 곳에 둬서 화면·API별로 갈리지 않게 한다.
+ */
+public enum PurchaseState {
+
+    AVAILABLE,
+    /** 재고 부족 — 재입고되면 다시 살 수 있다 */
+    SOLD_OUT,
+    /** 판매자가 내림 — 돌아오지 않는다 */
+    HIDDEN;
+
+    /**
+     * 숨김이 품절보다 우선한다 — 숨김은 돌아오지 않는 상품이라 "재입고되면 알려드릴게요"로 안내하면 안 된다.
+     *
+     * @param requestedQuantity 이만큼 살 수 있는지 — 목록·상세는 1(하나라도 살 수 있나), 주문(O-1)은 주문 수량
+     */
+    public static PurchaseState of(Product product, int requestedQuantity) {
+        if (product.getStatus() != ProductStatus.ON_SALE) {
+            return HIDDEN;
+        }
+        return product.getStockQuantity() < requestedQuantity ? SOLD_OUT : AVAILABLE;
+    }
+
+    /** 목록·상세용 — 하나라도 살 수 있으면 AVAILABLE */
+    public static PurchaseState of(Product product) {
+        return of(product, 1);
+    }
+
+    public boolean isAvailable() {
+        return this == AVAILABLE;
+    }
+}

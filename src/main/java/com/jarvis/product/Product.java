@@ -68,10 +68,6 @@ public class Product extends BaseTimeEntity {
     @Column(nullable = false, length = 20)
     private ProductStatus status;
 
-    public boolean isPurchasable() {
-        return status == ProductStatus.ON_SALE && stockQuantity > 0;
-    }
-
     /** I-10 등록 (04 §10) — base_sales_count는 크롤링 전용이라 0 고정 (02 D18) */
     public static Product create(Long brandId, Long categoryId, String name, int originalPrice,
                                  int price, int stockQuantity, String imageUrl, String summary,

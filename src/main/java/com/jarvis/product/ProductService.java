@@ -64,7 +64,7 @@ public class ProductService {
     private final ObjectMapper objectMapper;
 
     /**
-     * P-2 — HIDDEN도 응답한다(purchasable=false): 장바구니가 HIDDEN 아이템을 유지(C-1)하므로
+     * P-2 — HIDDEN도 응답한다(purchaseState=HIDDEN): 장바구니가 HIDDEN 아이템을 유지(C-1)하므로
      * 상세 링크가 404가 되면 안 됨. 목록(P-4/P-6/CH-5)에서는 제외.
      */
     public ProductDetailResponse getDetail(Long id) {
@@ -215,7 +215,7 @@ public class ProductService {
     }
 
     /**
-     * 카드 다건 조회 — 입력 id 순서 보존. HIDDEN도 유지(purchasable=false) —
+     * 카드 다건 조회 — 입력 id 순서 보존. HIDDEN·품절도 유지(purchaseState로 이유 표시) —
      * 찜·최근 본 상품은 개인 목록이라 장바구니(C-1)와 같은 원칙, 공개 목록(P-4/P-6/CH-5)과 다름.
      */
     public List<ProductCardResponse> getCardsByIds(List<Long> ids) {

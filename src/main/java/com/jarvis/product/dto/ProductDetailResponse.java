@@ -5,12 +5,13 @@ import com.jarvis.brand.Brand;
 import com.jarvis.category.Category;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductOption;
+import com.jarvis.product.PurchaseState;
 import com.jarvis.review.dto.RatingStats;
 import java.util.List;
 
 /** P-2 (04 §2) — 대표 이미지 단일(02 D14), 평점은 실시간 집계(02 D9) */
 public record ProductDetailResponse(Long id, String name, int price, int originalPrice,
-                                    int stockQuantity, boolean purchasable, String status,
+                                    int stockQuantity, String purchaseState, String status,
                                     String imageUrl, String summary, JsonNode attributes,
                                     String description, CategorySummary category,
                                     BrandSummary brand, List<OptionResponse> options,
@@ -44,7 +45,7 @@ public record ProductDetailResponse(Long id, String name, int price, int origina
                                              Category category, Brand brand,
                                              List<ProductOption> options, RatingStats stats) {
         return new ProductDetailResponse(product.getId(), product.getName(), product.getPrice(),
-                product.getOriginalPrice(), product.getStockQuantity(), product.isPurchasable(),
+                product.getOriginalPrice(), product.getStockQuantity(), PurchaseState.of(product).name(),
                 product.getStatus().name(), product.getImageUrl(), product.getSummary(),
                 attributes, product.getDescription(), CategorySummary.from(category),
                 BrandSummary.from(brand), options.stream().map(OptionResponse::from).toList(),

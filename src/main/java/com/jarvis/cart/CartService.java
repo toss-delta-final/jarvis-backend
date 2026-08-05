@@ -13,6 +13,7 @@ import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.product.ProductStatus;
+import com.jarvis.product.PurchaseState;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -68,7 +69,7 @@ public class CartService {
                     brand.getId(), brand.getName(),
                     option == null ? null : option.getId(), option == null ? null : option.getName(),
                     cartItem.getQuantity(), product.getPrice() + extra, product.getOriginalPrice() + extra,
-                    product.getImageUrl(), product.isPurchasable(),
+                    product.getImageUrl(), PurchaseState.of(product).name(),
                     Math.min(product.getStockQuantity(), CartItem.MAX_QUANTITY));
         }).toList();
         return CartResponse.of(items);

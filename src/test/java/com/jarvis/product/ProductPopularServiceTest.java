@@ -141,8 +141,8 @@ class ProductPopularServiceTest {
     }
 
     @Test
-    @DisplayName("P-4 — 카드는 공통 카드에서 purchasable만 뺀 동형 (노션 P-4 2026-07-28)")
-    void popularCardMapsCommonFieldsWithoutPurchasable() {
+    @DisplayName("P-4 — 카드는 공통 카드에서 purchaseState만 뺀 동형 (노션 P-4 2026-07-28)")
+    void popularCardMapsCommonFieldsWithoutPurchaseState() {
         Product product = product(7L);
         when(product.getPrice()).thenReturn(29900);
         when(product.getOriginalPrice()).thenReturn(39000);

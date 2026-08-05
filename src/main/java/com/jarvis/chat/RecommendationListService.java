@@ -225,7 +225,7 @@ public class RecommendationListService {
                 .stream().collect(Collectors.toMap(ProductCardResponse::productId, Function.identity()));
         List<RecommendedCardResponse> items = stored.productIds().stream()
                 .map(cards::get)
-                .filter(card -> card != null && card.purchasable())
+                .filter(card -> card != null && card.available())
                 .map(card -> RecommendedCardResponse.of(card, stored.reasons().get(card.productId())))
                 .toList();
         // 드롭 = 콜백에 실렸으나 지금은 못 파는 것(품절·HIDDEN) + 그 사이 사라진 상품.

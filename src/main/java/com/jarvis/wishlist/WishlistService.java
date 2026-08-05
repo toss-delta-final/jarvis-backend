@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * M-4~6 (04 §5) — 찜 이벤트 적재 없음(E-1 8종 미포함).
- * 목록은 카드 공통 모양 — HIDDEN도 유지(purchasable=false), 장바구니(C-1)와 동일 원칙.
+ * 목록은 카드 공통 모양 — HIDDEN·품절도 유지(purchaseState로 이유 표시), 장바구니(C-1)와 동일 원칙.
  */
 @Service
 @RequiredArgsConstructor

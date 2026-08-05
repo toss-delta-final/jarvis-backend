@@ -57,7 +57,7 @@ class BrandControllerTest {
         when(categoryService.getSummaries(List.of(11L, 12L))).thenReturn(summaries);
         ProductCardPageResponse products = new ProductCardPageResponse(
                 List.of(new ProductCardResponse(10L, "려 자양윤모 샴푸", "려",
-                        15000, 20000, "https://cdn/p10.png", 4.5, 12, true)),
+                        15000, 20000, "https://cdn/p10.png", 4.5, 12, "AVAILABLE")),
                 0, 20, 21, 2);
         when(productService.getBrandProducts(1L, null, "popular", 0, 20)).thenReturn(products);
 
