@@ -242,6 +242,16 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - 재고 초과는 400 `CART_STOCK_INSUFFICIENT` + `error.detail.availableStock` → LLM은 "재고가 N개뿐이에요"로 안내. 수량 범위 위반은 400 `VALIDATION_ERROR` + `fields`. 소유권·not-found는 I-24와 동일.
 - SSE `action` 확장(`CART_REMOVED`·`CART_QUANTITY_CHANGED` 등)은 **BE 소관이 아니다** — 채팅 스트림은 FE↔FastAPI 직결이라 이벤트 어휘는 AI·FE가 CH-2에서 정한다(2026-08-05 합의).
 
+### I-26~I-28. 챗봇 찜 추가·해제·목록 (신설 2026-08-05 — AI 이슈 #285)
+- `POST /internal/wishlist`(body `{userId, productId}`) · `DELETE /internal/wishlist/{productId}?userId=` · `GET /internal/wishlist?userId=`. M-4~6과 같은 `WishlistService`를 재사용한다.
+- **역할 검사는 하지 않는다**(§0-1). FE용 M-4~6의 403은 `/api/wishlist/**`에 걸린 `hasRole("USER")` 가드가 만들어내는 값이라 internal 레인에는 대응물이 없다 — 찜은 위험 3축(금전·타인 영향·권한 변경) 어디에도 걸리지 않으므로 검사할 문 자체를 만들지 않는다. 초안의 `403 AUTH_FORBIDDEN` 조항은 이 근거로 삭제하기로 합의했다(2026-08-05).
+- **게스트 찜은 존재하지 않는다**(M-4). `guestId`를 받지 않으며 게스트 발화는 internal 호출 없이 AI가 로그인 안내로 degrade한다 — 폐기된 `GUEST_NOT_ALLOWED`를 되살리지 않는다.
+- 신원 검증 코드는 **입구에 따라 갈린다**: query 신원(I-27·I-28) 누락은 400 `WISHLIST_QUERY_INVALID`(I-18의 자원별 query code 전례), body 신원(I-26) 누락은 400 `VALIDATION_ERROR` + `fields`(I-2 전례).
+- **추가와 해제는 비대칭이다.** I-26은 상품을 조회해 없으면 404 `PRODUCT_NOT_FOUND`지만, I-27은 상품을 보지 않고 찜 행만 찾으므로 **없는 상품과 안 찜한 상품이 모두 404 `WISHLIST_NOT_FOUND`**다 — AI는 응답만으로 둘을 구별할 수 없으니 "찜 목록에 없어요"로 안내를 통일한다. 두 번째 해제도 404(비멱등).
+- **HIDDEN·품절도 찜할 수 있다**(M-5) — 재입고를 기다리는 정상 패턴이라 담기(I-2)의 재고 검증과 다르다. 중복 찜은 409 `WISHLIST_DUPLICATE`, 그 앞단 검증을 빠져나간 경합은 409 `RESOURCE_CONFLICT`(AI 처리는 동일).
+- I-28은 I-27의 지칭 해소용("어제 찜한 이어폰")이며 조회이므로 `action` 이벤트가 없다 — I-18과 같이 `token` 텍스트로 답한다. 찜이 없어도 200 + 빈 배열이고, 찜한 뒤 HIDDEN·품절이 된 상품도 목록에 남아 "찜해 둔 상품이지만 지금은 담을 수 없어요" 안내에 쓸 수 있다. 페이징 없이 MVP 전량 반환.
+- **IDOR 표면은 장바구니보다 작다.** 키가 `(userId, productId)`라 타인의 찜 행을 직접 지목할 수 없고, I-24의 별도 소유자 재검증이 여기서는 "그 회원의 찜 행이 있는가" 판정으로 흡수된다. 단 이 성질은 `userId`를 AI가 검증한 티켓 `sub`에서만 도출한다는 전제(§0-1)가 유지될 때만 성립한다.
+
 ## 2-1. 아웃바운드: Spring → FastAPI
 
 ### I-20. 세션 종료 통지 `POST {LLM_BASE_URL}/events/session-end` — **방향 예외(Spring→FastAPI)**
