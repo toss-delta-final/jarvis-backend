@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.quality.Strictness;
 
@@ -42,6 +43,9 @@ class ProductDetailServiceTest {
     @Mock CategoryService categoryService;
     @Mock ReviewService reviewService;
     @Mock ObjectMapper objectMapper;
+    @Mock ProductDetailImageRepository productDetailImageRepository;
+    /** 실제 조립 규칙을 그대로 태운다 — 목킹하면 슬래시 정규화가 검증에서 빠진다 */
+    @Spy ImageProperties imageProperties = new ImageProperties("https://cdn.test");
 
     @InjectMocks ProductService productService;
 
@@ -59,6 +63,16 @@ class ProductDetailServiceTest {
         lenient().when(productOptionRepository.findAllByProductIdOrderByIdAsc(anyLong()))
                 .thenReturn(List.of());
         lenient().when(reviewService.getStats(anyLong())).thenReturn(RatingStats.EMPTY);
+        lenient().when(productDetailImageRepository.findAllByProductIdOrderBySortOrderAsc(anyLong()))
+                .thenReturn(List.of());
+    }
+
+    private ProductDetailImage detailImage(int sortOrder, String imageKey) {
+        ProductDetailImage image = mock(ProductDetailImage.class,
+                withSettings().strictness(Strictness.LENIENT));
+        when(image.getSortOrder()).thenReturn(sortOrder);
+        when(image.getImageKey()).thenReturn(imageKey);
+        return image;
     }
 
     private Product product(Long id, ProductStatus status, String attributes) {
@@ -126,6 +140,55 @@ class ProductDetailServiceTest {
         assertThat(res.status()).isEqualTo("HIDDEN");
         assertThat(res.purchaseState()).isEqualTo("HIDDEN");
         assertThat(res.attributes()).isNull();
+    }
+
+    @Test
+    @DisplayName("P-2 — 상세 이미지: sort_order 순서 그대로, key에 호스트를 붙여 전체 URL로 (02 D42)")
+    void detailImagesAreOrderedAndPrefixed() {
+        Product product = product(4L, ProductStatus.ON_SALE, null);
+        when(productRepository.findById(4L)).thenReturn(Optional.of(product));
+        // 확장자가 섞여 있어도 파일명이 아니라 sort_order가 순서를 정한다.
+        // 목 생성을 when(...) 인자 안에서 하면 중첩 스터빙이라 리스트를 먼저 만든다
+        List<ProductDetailImage> images = List.of(
+                detailImage(0, "products/4/detail/000.jpg"),
+                detailImage(1, "products/4/detail/001.png"));
+        when(productDetailImageRepository.findAllByProductIdOrderBySortOrderAsc(4L)).thenReturn(images);
+
+        ProductDetailResponse res = productService.getDetail(4L);
+
+        assertThat(res.detailImages()).containsExactly(
+                "https://cdn.test/products/4/detail/000.jpg",
+                "https://cdn.test/products/4/detail/001.png");
+        // 대표 이미지는 배열에 섞이지 않는다 — 상단 1장과 하단 N장은 역할이 다르다
+        assertThat(res.imageUrl()).isEqualTo("img.jpg");
+        assertThat(res.detailImages()).doesNotContain("img.jpg");
+    }
+
+    @Test
+    @DisplayName("P-2 — 상세 이미지가 없는 상품(131건)은 null이 아니라 빈 배열")
+    void detailImagesEmptyWhenNone() {
+        Product product = product(5L, ProductStatus.ON_SALE, null);
+        when(productRepository.findById(5L)).thenReturn(Optional.of(product));
+
+        ProductDetailResponse res = productService.getDetail(5L);
+
+        assertThat(res.detailImages()).isNotNull().isEmpty();
+    }
+
+    @Test
+    @DisplayName("P-2 — 179장짜리 상품도 서버가 자르지 않고 전량 반환 (접기는 FE 소관)")
+    void detailImagesAreNotTruncated() {
+        Product product = product(6L, ProductStatus.ON_SALE, null);
+        when(productRepository.findById(6L)).thenReturn(Optional.of(product));
+        List<ProductDetailImage> images = java.util.stream.IntStream.range(0, 179)
+                .mapToObj(i -> detailImage(i, String.format("products/6/detail/%03d.jpg", i)))
+                .toList();
+        when(productDetailImageRepository.findAllByProductIdOrderBySortOrderAsc(6L)).thenReturn(images);
+
+        ProductDetailResponse res = productService.getDetail(6L);
+
+        assertThat(res.detailImages()).hasSize(179);
+        assertThat(res.detailImages().get(178)).isEqualTo("https://cdn.test/products/6/detail/178.jpg");
     }
 
     @Test
