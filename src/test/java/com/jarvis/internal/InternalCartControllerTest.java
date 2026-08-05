@@ -1,0 +1,89 @@
+package com.jarvis.internal;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import com.jarvis.cart.CartService;
+import com.jarvis.cart.dto.CartItemResponse;
+import com.jarvis.cart.dto.CartQuantityRequest;
+import com.jarvis.global.response.ApiResponse;
+import com.jarvis.global.response.BusinessException;
+import com.jarvis.global.response.ErrorCode;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+/**
+ * I-24·I-25 — 컨트롤러가 지는 유일한 판단은 신원 XOR 검증이다.
+ * 소유권·재고·not-found는 CartService(C-3·C-4와 같은 코드) 소관이라 CartServiceTest가 덮는다.
+ */
+@ExtendWith(MockitoExtension.class)
+class InternalCartControllerTest {
+
+    @Mock CartService cartService;
+
+    @InjectMocks InternalCartController controller;
+
+    @Test
+    @DisplayName("I-25 — 회원 신원으로 수량 치환을 CartService에 위임한다")
+    void changeQuantityDelegatesForMember() {
+        when(cartService.changeQuantity(123L, null, 55L, 3))
+                .thenReturn(new CartItemResponse(55L, 3));
+
+        ApiResponse<CartItemResponse> response =
+                controller.changeQuantity(55L, new CartQuantityRequest(3), 123L, null);
+
+        assertThat(response.success()).isTrue();
+        assertThat(response.data()).isEqualTo(new CartItemResponse(55L, 3));
+    }
+
+    @Test
+    @DisplayName("I-25 — 게스트도 수량을 바꿀 수 있다 (02 D30)")
+    void changeQuantityDelegatesForGuest() {
+        String guestId = "550e8400-e29b-41d4-a716-446655440000";
+        when(cartService.changeQuantity(null, guestId, 55L, 2))
+                .thenReturn(new CartItemResponse(55L, 2));
+
+        ApiResponse<CartItemResponse> response =
+                controller.changeQuantity(55L, new CartQuantityRequest(2), null, guestId);
+
+        assertThat(response.data().quantity()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("I-24 — 삭제 성공은 data null (C-4와 동일 — cartItemId를 싣지 않는다)")
+    void removeItemReturnsNullData() {
+        ApiResponse<Void> response = controller.removeItem(55L, 123L, null);
+
+        assertThat(response.success()).isTrue();
+        assertThat(response.data()).isNull();
+        verify(cartService).removeItem(123L, null, 55L);
+    }
+
+    @Test
+    @DisplayName("I-24 — 신원이 둘 다 없으면 CART_QUERY_INVALID (서비스 호출 없음)")
+    void removeItemRejectsMissingIdentity() {
+        assertThatThrownBy(() -> controller.removeItem(55L, null, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CART_QUERY_INVALID);
+        verifyNoInteractions(cartService);
+    }
+
+    @Test
+    @DisplayName("I-25 — 신원을 둘 다 주장하면 CART_QUERY_INVALID (서비스 호출 없음)")
+    void changeQuantityRejectsAmbiguousIdentity() {
+        assertThatThrownBy(() ->
+                controller.changeQuantity(55L, new CartQuantityRequest(3), 123L, "guest-uuid"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CART_QUERY_INVALID);
+        verifyNoInteractions(cartService);
+    }
+}
