@@ -59,6 +59,32 @@ class CartServiceTest {
     }
 
     @Test
+    @DisplayName("C-1 — maxQuantity는 재고와 담기 상한 99 중 작은 값 (FE가 99를 다시 계산하지 않도록)")
+    void getCartExposesMaxQuantity() {
+        com.jarvis.brand.Brand brand = mock(com.jarvis.brand.Brand.class, withSettings().strictness(Strictness.LENIENT));
+        when(brand.getId()).thenReturn(3L);
+        when(product.getBrandId()).thenReturn(3L);
+        when(product.getStockQuantity()).thenReturn(3);
+        CartItem line = CartItem.forMember(1L, 10L, null, 2);
+        when(cartItemRepository.findAllByMemberIdOrderByIdDesc(1L)).thenReturn(List.of(line));
+        when(productRepository.findAllById(List.of(10L))).thenReturn(List.of(product));
+        when(productOptionRepository.findAllById(List.of())).thenReturn(List.of());
+        when(brandRepository.findAllById(List.of(3L))).thenReturn(List.of(brand));
+
+        assertThat(cartService.getCart(1L, null).items())
+                .singleElement()
+                .extracting(com.jarvis.cart.dto.CartResponse.Item::maxQuantity)
+                .isEqualTo(3);
+
+        // 재고가 상한보다 넉넉하면 99에서 잘린다 — 재고 숫자를 그대로 내리면 FE가 스테퍼를 100까지 열어버린다
+        when(product.getStockQuantity()).thenReturn(500);
+        assertThat(cartService.getCart(1L, null).items())
+                .singleElement()
+                .extracting(com.jarvis.cart.dto.CartResponse.Item::maxQuantity)
+                .isEqualTo(CartItem.MAX_QUANTITY);
+    }
+
+    @Test
     @DisplayName("C-2 — 옵션 있는 상품에 optionId 누락은 CART_OPTION_REQUIRED, 남의 옵션은 CART_OPTION_INVALID")
     void optionValidation() {
         ProductOption option = mock(ProductOption.class);
