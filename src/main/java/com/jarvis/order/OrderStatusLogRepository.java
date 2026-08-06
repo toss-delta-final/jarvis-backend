@@ -16,6 +16,8 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
 
     interface OrderEventRow {
         Long getOrderId();
+        /** 아이템 상태 전이면 값, 주문 상태 전이면 null (2026-08-06 — I-14 개정) */
+        Long getOrderItemId();
         String getFromStatus();
         String getToStatus();
         String getActorType();
@@ -48,13 +50,20 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
 
     /**
      * S-1 평균 배송 소요(초) — 자사 주문의 SHIPPING→DELIVERED 전이 시각 차 평균. 전이 로그가 없으면 null.
-     * 로그는 주문 단위 1행(D32)이라 order_id 자기조인으로 SHIPPING·DELIVERED 시각을 짝짓는다. 모의 배송 값.
+     * 모의 배송 값.
+     *
+     * <p>[2026-08-06] 짝짓기 키를 order_id → order_item_id로 바꿨다. 로그가 아이템 단위가 되면서
+     * (D32 개정) order_id 자기조인은 아이템 수만큼 카테시안이 되고, 아이템마다 발송 시각이 달라
+     * 엉뚱한 SHIPPING·DELIVERED 짝까지 섞여 평균이 망가진다. 아이템으로 짝지으면 오히려 정확해진다.
+     * order_item_id가 NULL인 구 데이터(주문 단위 배치)는 조인에서 자연 제외된다 — 개정 이전 기간의
+     * 값이 null로 나올 수 있으나, 그 구간은 애초에 아이템별 배송 시간을 복원할 수 없는 데이터다.
      */
     @Query(value = """
             SELECT AVG(TIMESTAMPDIFF(SECOND, s.created_at, d.created_at))
             FROM order_status_logs s
-            JOIN order_status_logs d ON d.order_id = s.order_id AND d.to_status = 'DELIVERED'
+            JOIN order_status_logs d ON d.order_item_id = s.order_item_id AND d.to_status = 'DELIVERED'
             WHERE s.to_status = 'SHIPPING'
+              AND s.order_item_id IS NOT NULL
               AND s.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
                                  JOIN product p ON p.id = oi.product_id
                                  WHERE p.brand_id = :brandId)
@@ -66,14 +75,19 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
      * buyerMemberId는 orders 조인으로 부착. applyToStatus=false면 toStatuses는 센티널(빈 IN 방지).
      */
     @Query(value = """
-            SELECT l.order_id AS orderId, l.from_status AS fromStatus, l.to_status AS toStatus,
+            SELECT l.order_id AS orderId, l.order_item_id AS orderItemId,
+                   l.from_status AS fromStatus, l.to_status AS toStatus,
                    l.actor_type AS actorType, l.reason AS reason, o.member_id AS buyerMemberId,
                    l.created_at AS createdAt
             FROM order_status_logs l
             JOIN orders o ON o.id = l.order_id
-            WHERE l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
-                                 JOIN product p ON p.id = oi.product_id
-                                 WHERE p.brand_id = :brandId)
+            WHERE ((l.order_item_id IS NULL
+                    AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                       JOIN product p ON p.id = oi.product_id
+                                       WHERE p.brand_id = :brandId))
+                   OR l.order_item_id IN (SELECT oi.id FROM order_item oi
+                                          JOIN product p ON p.id = oi.product_id
+                                          WHERE p.brand_id = :brandId))
               AND (:applyToStatus = false OR l.to_status IN (:toStatuses))
               AND (:actorType IS NULL OR l.actor_type = :actorType)
               AND l.created_at >= :from AND l.created_at < :to
@@ -92,9 +106,13 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
     @Query(value = """
             SELECT COUNT(*)
             FROM order_status_logs l
-            WHERE l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
-                                 JOIN product p ON p.id = oi.product_id
-                                 WHERE p.brand_id = :brandId)
+            WHERE ((l.order_item_id IS NULL
+                    AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                       JOIN product p ON p.id = oi.product_id
+                                       WHERE p.brand_id = :brandId))
+                   OR l.order_item_id IN (SELECT oi.id FROM order_item oi
+                                          JOIN product p ON p.id = oi.product_id
+                                          WHERE p.brand_id = :brandId))
               AND (:applyToStatus = false OR l.to_status IN (:toStatuses))
               AND (:actorType IS NULL OR l.actor_type = :actorType)
               AND l.created_at >= :from AND l.created_at < :to
@@ -110,9 +128,13 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
     @Query(value = """
             SELECT l.to_status AS bucket, COUNT(*) AS cnt
             FROM order_status_logs l
-            WHERE l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
-                                 JOIN product p ON p.id = oi.product_id
-                                 WHERE p.brand_id = :brandId)
+            WHERE ((l.order_item_id IS NULL
+                    AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                       JOIN product p ON p.id = oi.product_id
+                                       WHERE p.brand_id = :brandId))
+                   OR l.order_item_id IN (SELECT oi.id FROM order_item oi
+                                          JOIN product p ON p.id = oi.product_id
+                                          WHERE p.brand_id = :brandId))
               AND (:applyToStatus = false OR l.to_status IN (:toStatuses))
               AND (:actorType IS NULL OR l.actor_type = :actorType)
               AND l.created_at >= :from AND l.created_at < :to
@@ -129,9 +151,13 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
     @Query(value = """
             SELECT l.reason AS reason, COUNT(*) AS cnt
             FROM order_status_logs l
-            WHERE l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
-                                 JOIN product p ON p.id = oi.product_id
-                                 WHERE p.brand_id = :brandId)
+            WHERE ((l.order_item_id IS NULL
+                    AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                       JOIN product p ON p.id = oi.product_id
+                                       WHERE p.brand_id = :brandId))
+                   OR l.order_item_id IN (SELECT oi.id FROM order_item oi
+                                          JOIN product p ON p.id = oi.product_id
+                                          WHERE p.brand_id = :brandId))
               AND l.to_status IN ('CANCEL_REQUESTED', 'CANCELLED', 'RETURN_REQUESTED', 'RETURNED')
               AND l.reason IS NOT NULL
               AND l.created_at >= :from AND l.created_at < :to
@@ -151,9 +177,13 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
                    COUNT(DISTINCT CASE WHEN l.to_status = 'CANCELLED' THEN l.order_id END) AS cancelCount
             FROM order_status_logs l
             JOIN orders o ON o.id = l.order_id
-            WHERE l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
-                                 JOIN product p ON p.id = oi.product_id
-                                 WHERE p.brand_id = :brandId)
+            WHERE ((l.order_item_id IS NULL
+                    AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                       JOIN product p ON p.id = oi.product_id
+                                       WHERE p.brand_id = :brandId))
+                   OR l.order_item_id IN (SELECT oi.id FROM order_item oi
+                                          JOIN product p ON p.id = oi.product_id
+                                          WHERE p.brand_id = :brandId))
               AND (:applyToStatus = false OR l.to_status IN (:toStatuses))
               AND (:actorType IS NULL OR l.actor_type = :actorType)
               AND l.created_at >= :from AND l.created_at < :to
@@ -177,9 +207,13 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
                          COUNT(DISTINCT l.order_id) AS cnt
                   FROM order_status_logs l
                   JOIN orders o ON o.id = l.order_id
-                  WHERE l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
-                                       JOIN product p ON p.id = oi.product_id
-                                       WHERE p.brand_id = :brandId)
+                  WHERE ((l.order_item_id IS NULL
+                          AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                             JOIN product p ON p.id = oi.product_id
+                                             WHERE p.brand_id = :brandId))
+                         OR l.order_item_id IN (SELECT oi.id FROM order_item oi
+                                                JOIN product p ON p.id = oi.product_id
+                                                WHERE p.brand_id = :brandId))
                     AND (:applyToStatus = false OR l.to_status IN (:toStatuses))
                     AND (:actorType IS NULL OR l.actor_type = :actorType)
                     AND l.created_at >= :from AND l.created_at < :to

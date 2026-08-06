@@ -534,9 +534,9 @@ public class SellerAnalyticsService {
     }
 
     private static SellerOrderEventsResponse.Row toRow(OrderStatusLogRepository.OrderEventRow row) {
-        return new SellerOrderEventsResponse.Row(row.getOrderId(), row.getFromStatus(),
-                row.getToStatus(), row.getActorType(), row.getReason(), row.getBuyerMemberId(),
-                toOffset(row.getCreatedAt()));
+        return new SellerOrderEventsResponse.Row(row.getOrderId(), row.getOrderItemId(),
+                row.getFromStatus(), row.getToStatus(), row.getActorType(), row.getReason(),
+                row.getBuyerMemberId(), toOffset(row.getCreatedAt()));
     }
 
     private static SellerOrderEventsResponse.MemberRow toMemberRow(
