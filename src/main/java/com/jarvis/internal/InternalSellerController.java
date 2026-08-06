@@ -4,6 +4,7 @@ import com.jarvis.global.response.ApiResponse;
 import com.jarvis.product.ProductStatus;
 import com.jarvis.seller.AnalysisPeriod;
 import com.jarvis.seller.SellerAnalyticsService;
+import com.jarvis.seller.SellerOrderService;
 import com.jarvis.seller.SellerProductService;
 import com.jarvis.seller.SellerSalesService;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
@@ -11,6 +12,7 @@ import com.jarvis.seller.dto.SellerChurnResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
 import com.jarvis.seller.dto.SellerOrderEventsResponse;
+import com.jarvis.seller.dto.SellerOrderInternalResponse;
 import com.jarvis.seller.dto.SellerProductChangesResponse;
 import com.jarvis.seller.dto.SellerProductCreateRequest;
 import com.jarvis.seller.dto.SellerProductCreateResponse;
@@ -22,6 +24,7 @@ import com.jarvis.seller.dto.SellerSalesResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
@@ -52,6 +55,7 @@ public class InternalSellerController {
     private final SellerSalesService sellerSalesService;
     private final SellerProductService sellerProductService;
     private final SellerAnalyticsService sellerAnalyticsService;
+    private final SellerOrderService sellerOrderService;
 
     /** I-6 — 매출 시계열(granularity daily|weekly|monthly|summary, 이상 감지 포함) */
     @GetMapping("/seller/{brandId}/sales")
@@ -97,6 +101,27 @@ public class InternalSellerController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(200) int limit,
             @RequestParam(defaultValue = "0") @Min(0) int offset) {
         return ApiResponse.success(sellerProductService.listInternal(brandId, status, q, limit, offset));
+    }
+
+    /**
+     * I-29 — 자사 주문 조회, 현재 상태 스냅샷 (노션 I-29). S-2의 internal 판이며 발송 대상
+     * orderItemId 해소 경로다. 기간은 선택 — 생략하면 전체 주문이다(현재 상태 Q&A라 기간 개념이 없고,
+     * 잘라내면 오래된 미발송 주문이 빠져 I-30 대상 해소가 막힌다).
+     * status·limit·offset 검증은 아래 애노테이션이 맡아 VALIDATION_ERROR로 떨어진다 — S-2의
+     * ORDER_INVALID_PARAM과 코드가 다르다(노션 I-29 결정 1).
+     */
+    @GetMapping("/seller/{brandId}/orders")
+    public ApiResponse<SellerOrderInternalResponse> orders(
+            @PathVariable Long brandId,
+            @RequestParam(required = false)
+            @Pattern(regexp = "ORDERED|SHIPPING|DELIVERED|CLAIM") String status,
+            @RequestParam(required = false) Long orderId,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit,
+            @RequestParam(defaultValue = "0") @Min(0) long offset) {
+        return ApiResponse.success(sellerOrderService.listInternal(
+                brandId, status, orderId, AnalysisPeriod.optional(from, to), limit, offset));
     }
 
     /** I-10 — 상품 등록(HITL confirm 후) — 등록은 change log 미기록, 201 {productId, status} (노션 I-10) */

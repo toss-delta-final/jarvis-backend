@@ -10,6 +10,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.jarvis.brand.BrandRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.Order;
@@ -19,6 +20,7 @@ import com.jarvis.order.OrderItemStatus;
 import com.jarvis.order.OrderRepository;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.seller.dto.SellerOrderInternalResponse;
 import com.jarvis.seller.dto.SellerOrderListResponse;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -38,6 +40,7 @@ class SellerOrderServiceTest {
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private OrderRepository orderRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private BrandRepository brandRepository;
 
     @InjectMocks private SellerOrderService service;
 
@@ -50,6 +53,7 @@ class SellerOrderServiceTest {
 
     private static OrderItem item(long orderId, long productId, OrderItemStatus status, int price, int qty) {
         OrderItem i = mock(OrderItem.class);
+        lenient().when(i.getId()).thenReturn(5000L + productId); // I-29 orderItemId 확인용
         lenient().when(i.getOrderId()).thenReturn(orderId);
         lenient().when(i.getProductId()).thenReturn(productId);
         lenient().when(i.getStatus()).thenReturn(status);
@@ -93,10 +97,10 @@ class SellerOrderServiceTest {
                 item(11L, 4L, OrderItemStatus.RETURN_REQUESTED, 10000, 1));
         List<Product> products = List.of(product(1L), product(2L), product(3L), product(4L));
 
-        when(orderItemRepository.countSellerOrderTabs(BRAND_ID))
+        when(orderItemRepository.countSellerOrderTabs(eq(BRAND_ID), any(), any(), any()))
                 .thenReturn(List.of(tab("ORDERED", 2), tab("CLAIM", 1)));
-        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), anyInt(), anyLong()))
-                .thenReturn(List.of(10L, 11L));
+        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), any(), any(), any(),
+                anyInt(), anyLong())).thenReturn(List.of(10L, 11L));
         when(orderRepository.findAllById(any())).thenReturn(List.of(o10, o11));
         when(orderItemRepository.findSellerItemsByOrderIds(eq(BRAND_ID), any())).thenReturn(items);
         when(productRepository.findAllById(any())).thenReturn(products);
@@ -130,9 +134,10 @@ class SellerOrderServiceTest {
                 item(20L, 2L, OrderItemStatus.CANCELLED, 20000, 1));
         List<Product> products = List.of(product(1L), product(2L));
 
-        when(orderItemRepository.countSellerOrderTabs(BRAND_ID)).thenReturn(List.of(tab("CLAIM", 1)));
-        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), anyInt(), anyLong()))
-                .thenReturn(List.of(20L));
+        when(orderItemRepository.countSellerOrderTabs(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(tab("CLAIM", 1)));
+        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), any(), any(), any(),
+                anyInt(), anyLong())).thenReturn(List.of(20L));
         when(orderRepository.findAllById(any())).thenReturn(List.of(o20));
         when(orderItemRepository.findSellerItemsByOrderIds(eq(BRAND_ID), any())).thenReturn(items);
         when(productRepository.findAllById(any())).thenReturn(products);
@@ -153,5 +158,110 @@ class SellerOrderServiceTest {
         assertThatThrownBy(() -> service.list(BRAND_ID, null, 0, 101))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.ORDER_INVALID_PARAM);
+    }
+
+    // ── I-29 (노션 I-29) — S-2와 같은 파생 + items 배열 ──
+
+    @Test
+    @DisplayName("I-29: items에 orderItemId·status·activeClaimStatus를 싣고 S-2 파생을 상속한다")
+    void listInternalCarriesItems() {
+        Order o10 = order(10L);
+        List<OrderItem> items = List.of(
+                item(10L, 1L, OrderItemStatus.ORDERED, 30000, 1),
+                item(10L, 2L, OrderItemStatus.CANCEL_REQUESTED, 50000, 1));
+        List<Product> products = List.of(product(1L), product(2L));
+
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(orderItemRepository.countSellerOrderTabs(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(tab("CLAIM", 1)));
+        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), any(), any(), any(),
+                anyInt(), anyLong())).thenReturn(List.of(10L));
+        when(orderRepository.findAllById(any())).thenReturn(List.of(o10));
+        when(orderItemRepository.findSellerItemsByOrderIds(eq(BRAND_ID), any())).thenReturn(items);
+        when(productRepository.findAllById(any())).thenReturn(products);
+
+        SellerOrderInternalResponse res = service.listInternal(
+                BRAND_ID, null, null, AnalysisPeriod.optional(null, null), 20, 0);
+
+        assertThat(res.total()).isEqualTo(1L);
+        assertThat(res.tabCounts()).containsEntry("ALL", 1L).containsEntry("CLAIM", 1L)
+                .containsEntry("ORDERED", 0L); // 0건 탭도 키가 있어야 한다
+        SellerOrderInternalResponse.Row row = res.rows().get(0);
+        assertThat(row.status()).isEqualTo("ORDERED");           // 가장 뒤진 단계 (S-2 파생 상속)
+        assertThat(row.claimStatus()).isEqualTo("CANCEL_REQUESTED");
+        assertThat(row.myItemsAmount()).isEqualTo(80000);
+        assertThat(row.items()).hasSize(2);
+        assertThat(row.items().get(0).orderItemId()).isEqualTo(5001L);
+        assertThat(row.items().get(0).name()).isEqualTo("상품1");  // 현재 상품명 우선
+        assertThat(row.items().get(0).activeClaimStatus()).isNull();
+        assertThat(row.items().get(1).status()).isEqualTo("CANCEL_REQUESTED");
+        assertThat(row.items().get(1).activeClaimStatus()).isEqualTo("CANCEL_REQUESTED");
+    }
+
+    @Test
+    @DisplayName("I-29: 종결된 클레임은 activeClaimStatus가 null이다 — status에 이미 드러나므로")
+    void listInternalActiveClaimExcludesTerminal() {
+        Order o20 = order(20L);
+        List<OrderItem> items = List.of(item(20L, 1L, OrderItemStatus.CANCELLED, 30000, 1));
+        List<Product> products = List.of(product(1L));
+
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(orderItemRepository.countSellerOrderTabs(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(tab("CLAIM", 1)));
+        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), any(), any(), any(),
+                anyInt(), anyLong())).thenReturn(List.of(20L));
+        when(orderRepository.findAllById(any())).thenReturn(List.of(o20));
+        when(orderItemRepository.findSellerItemsByOrderIds(eq(BRAND_ID), any())).thenReturn(items);
+        when(productRepository.findAllById(any())).thenReturn(products);
+
+        SellerOrderInternalResponse res = service.listInternal(
+                BRAND_ID, null, null, AnalysisPeriod.optional(null, null), 20, 0);
+
+        SellerOrderInternalResponse.Item item = res.rows().get(0).items().get(0);
+        assertThat(item.status()).isEqualTo("CANCELLED");
+        assertThat(item.activeClaimStatus()).isNull();
+    }
+
+    @Test
+    @DisplayName("I-29: 자사 주문 0건도 200 + 빈 rows·total 0·tabCounts 전부 0 (노션 I-29)")
+    void listInternalEmptyIsNormal() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(orderItemRepository.countSellerOrderTabs(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of());
+        when(orderItemRepository.findSellerOrderIdsByTab(eq(BRAND_ID), any(), any(), any(), any(),
+                anyInt(), anyLong())).thenReturn(List.of());
+
+        SellerOrderInternalResponse res = service.listInternal(
+                BRAND_ID, null, 999L, AnalysisPeriod.optional(null, null), 20, 0);
+
+        assertThat(res.rows()).isEmpty();
+        assertThat(res.total()).isZero();
+        assertThat(res.tabCounts()).containsEntry("ALL", 0L).containsEntry("ORDERED", 0L)
+                .containsEntry("SHIPPING", 0L).containsEntry("DELIVERED", 0L).containsEntry("CLAIM", 0L);
+    }
+
+    @Test
+    @DisplayName("I-29: 없는 brandId는 404 BRAND_NOT_FOUND")
+    void listInternalRejectsUnknownBrand() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.listInternal(
+                BRAND_ID, null, null, AnalysisPeriod.optional(null, null), 20, 0))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.BRAND_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("I-29: 기간은 선택 — 누락은 통과하고 역전·형식 오류만 INVALID_PERIOD")
+    void optionalPeriodRejectsOnlyMalformed() {
+        assertThat(AnalysisPeriod.optional(null, null).from()).isNull();
+        assertThat(AnalysisPeriod.optional("2026-08-01", null).to()).isNull();
+
+        assertThatThrownBy(() -> AnalysisPeriod.optional("2026-08-05", "2026-08-01"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PERIOD);
+        assertThatThrownBy(() -> AnalysisPeriod.optional("08/01/2026", null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PERIOD);
     }
 }
