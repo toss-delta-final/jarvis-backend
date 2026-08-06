@@ -268,6 +268,23 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
   - S-2·I-19가 쓰는 `ORDER_INVALID_PARAM`이 **아니다** — I-24~I-28 internal 전례를 따른다(2026-08-06 결정).
 - **자사 주문 0건도 200 + 빈 `rows`·`total: 0`·`tabCounts` 전부 0**이고, `orderId` 직조회가 타사·미존재여도 **404가 아니라 200 + 빈 `rows`**로 존재를 은닉한다 — 에이전트는 "해당 주문이 없습니다"로 안내한다.
 
+### I-31. 자사 상품 리뷰 조회 `GET /internal/seller/{brandId}/reviews` (신설 2026-08-06 — 판매자 챗봇 `get_reviews`)
+
+- 읽기 전용이라 **HITL 불필요**(S-4 analysis 레인). "이번 주 리뷰 요약해줘"·"평점 낮은 리뷰 뭐가 문제야"·sales_anomaly 교차(매출 급락일 리뷰 확인)에 쓴다.
+- query: `productId?` · `rating?`(1–5 콤마 복수) · `sort`(`latest` 기본 | **`ratingAsc`**) · `from`/`to`? · `limit`(기본 20, 1~100) · `offset`(기본 0) · `stats?`.
+- **`status=VISIBLE`만 반환한다** — 신고로 숨겨진 리뷰를 에이전트가 인용하면 사고이므로 구매자 노출(P-3)과 같은 진실만 보게 한다. 숨김 리뷰 열람은 admin 소관.
+- **크롤링 리뷰(`member_id IS NULL`, 02 D19)도 포함**한다 — 구매자에게 P-3로 노출되고 있어 판매자에게만 감출 이유가 없다. `authorNickname` = `COALESCE(member.nickname, review.author_name)`.
+- **`sort=ratingAsc`는 낮은 순이다. P-3의 `sort=rating`은 높은 순(`order by rating desc`)이라 이름을 갈랐다** — 같은 이름 반대 방향은 사고를 부른다(2026-08-06 확정). 높은 별점만 보려면 `rating=4,5` 필터를 쓴다. 나중에 높은 순이 필요하면 `ratingDesc`를 더한다.
+- **기간은 선택이고 생략하면 최근 7일**(`to`=오늘, `from`=6일 전) — I-29가 "전체 기간"인 것과 반대인데 의도된 차이다(리뷰는 기간 질의가 본령이라 전체면 무의미하다). 한쪽만 주면 나머지를 그 값 기준으로 채운다(`to`만 주면 그 날로 끝나는 7일). `to`는 그날을 포함한다.
+- 목록 응답 `{rows[{reviewId, productId, productName, rating, content, authorNickname, createdAt}], total}` — id는 숫자 그대로.
+- **`stats=true`면 응답 shape 자체가 갈린다**: `{totalCount, averageRating, distribution{"5".."1"}, byProduct[{productId, productName, count, averageRating}]}`이고 `rows`·`total`은 없다.
+  - `from`/`to`·`rating`·`productId` 필터는 **집계에도 전부 적용**된다 — 그래야 "1–2점이 어느 상품에 몰렸어?"가 성립한다.
+  - `distribution`은 **5~1 키를 항상 전부 담는다**(0 포함) — P-3와 같은 모양이라 LLM이 키 부재를 처리할 필요가 없다.
+  - **리뷰 0건이면 `averageRating: null`**(0이 아니다 — I-16 `churnRate` 규칙과 같은 이유로 "평점 0점" 오독 금지), `distribution` 전부 0, `byProduct: []`.
+  - `byProduct`는 `count` 내림차순, 동률이면 `productId` 오름차순(I-13 전례), 평균은 소수 1자리 반올림.
+- 실패: 400 `INVALID_PERIOD`(형식 오류·역전. **누락은 오류가 아니다**) · 400 `VALIDATION_ERROR`(`rating`이 1–5 밖·숫자 아님 / `sort` 어휘 밖 / `limit` 1–100 밖) · 401 `INTERNAL_TOKEN_INVALID` · 404 `BRAND_NOT_FOUND` · 404 `PRODUCT_NOT_FOUND`(**타 브랜드 소유도 404 — 존재 은닉**, I-11 규칙) · 500 `INTERNAL_ERROR`. **403은 없다**(§0-1).
+- **리뷰 0건도 200 + 빈 `rows`·`total: 0`** — 전부 숨김이어도 같다.
+
 ## 2-1. 아웃바운드: Spring → FastAPI
 
 ### I-20. 세션 종료 통지 `POST {LLM_BASE_URL}/events/session-end` — **방향 예외(Spring→FastAPI)**
