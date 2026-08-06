@@ -22,6 +22,8 @@ import com.jarvis.seller.dto.SellerProductInternalListResponse;
 import com.jarvis.seller.dto.SellerProductUpdateRequest;
 import com.jarvis.seller.dto.SellerProductUpdateResponse;
 import com.jarvis.seller.dto.SellerSalesResponse;
+import com.jarvis.seller.dto.SellerShipRequest;
+import com.jarvis.seller.dto.SellerShipResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -150,6 +152,19 @@ public class InternalSellerController {
         return ApiResponse.success(stats
                 ? sellerReviewService.stats(brandId, productId, rating, period)
                 : sellerReviewService.list(brandId, productId, rating, sort, period, limit, offset));
+    }
+
+    /**
+     * I-30 — 발송 처리, 주문 아이템 상태 전이 (노션 I-30). **HITL confirm 후에만 호출**된다(I-12와 같은 등급).
+     * MVP 허용 전이는 ORDERED→SHIPPING 하나뿐이고, 이 API가 그 전이의 유일한 트리거다(01 D4 개정).
+     * 복수 발송은 항목별 반복 호출 — bulk 없음(C-4·I-24 전례).
+     */
+    @PatchMapping("/seller/{brandId}/order-items/{orderItemId}/status")
+    public ApiResponse<SellerShipResponse> shipOrderItem(
+            @PathVariable Long brandId,
+            @PathVariable Long orderItemId,
+            @Valid @RequestBody SellerShipRequest request) {
+        return ApiResponse.success(sellerOrderService.shipItem(brandId, orderItemId, request));
     }
 
     /** I-10 — 상품 등록(HITL confirm 후) — 등록은 change log 미기록, 201 {productId, status} (노션 I-10) */

@@ -18,12 +18,16 @@ import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemRepository;
 import com.jarvis.order.OrderItemStatus;
 import com.jarvis.order.OrderRepository;
+import com.jarvis.order.OrderStatusChanger;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.SellerOrderInternalResponse;
 import com.jarvis.seller.dto.SellerOrderListResponse;
+import com.jarvis.seller.dto.SellerShipRequest;
+import com.jarvis.seller.dto.SellerShipResponse;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +45,7 @@ class SellerOrderServiceTest {
     @Mock private OrderRepository orderRepository;
     @Mock private ProductRepository productRepository;
     @Mock private BrandRepository brandRepository;
+    @Mock private OrderStatusChanger statusChanger;
 
     @InjectMocks private SellerOrderService service;
 
@@ -249,6 +254,96 @@ class SellerOrderServiceTest {
                 BRAND_ID, null, null, AnalysisPeriod.optional(null, null), 20, 0))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.BRAND_NOT_FOUND);
+    }
+
+    // ── I-30 (노션 I-30) — 발송 처리. 판정 순서가 계약이다 ──
+
+    private static OrderItem shippableItem(OrderItemStatus status) {
+        OrderItem i = mock(OrderItem.class);
+        lenient().when(i.getId()).thenReturn(5551L);
+        lenient().when(i.getOrderId()).thenReturn(500L);
+        lenient().when(i.getStatus()).thenReturn(status);
+        return i;
+    }
+
+    @Test
+    @DisplayName("I-30: ORDERED 아이템을 SHIPPING으로 전이하고 fromStatus를 함께 돌려준다")
+    void shipItemTransitions() {
+        OrderItem target = shippableItem(OrderItemStatus.ORDERED);
+
+        when(orderItemRepository.findOwnedByBrand(5551L, BRAND_ID)).thenReturn(Optional.of(target));
+        when(statusChanger.shipBySeller(eq(target), any(), any())).thenReturn(true);
+
+        SellerShipResponse res = service.shipItem(BRAND_ID, 5551L,
+                new SellerShipRequest("SHIPPING", "오늘 출고"));
+
+        assertThat(res.orderItemId()).isEqualTo(5551L);
+        assertThat(res.fromStatus()).isEqualTo("ORDERED");
+        assertThat(res.toStatus()).isEqualTo("SHIPPING");
+        assertThat(res.changedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("I-30: 이미 SHIPPING이면 409 — 멱등 200을 내지 않는다")
+    void shipItemRejectsAlreadyShipped() {
+        OrderItem target = shippableItem(OrderItemStatus.SHIPPING);
+
+        when(orderItemRepository.findOwnedByBrand(5551L, BRAND_ID)).thenReturn(Optional.of(target));
+
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("SHIPPING", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.ORDER_ALREADY_SHIPPED);
+    }
+
+    @Test
+    @DisplayName("I-30: 경합에 져 조건부 UPDATE가 0건이면 그것도 409다")
+    void shipItemRejectsLostRace() {
+        OrderItem target = shippableItem(OrderItemStatus.ORDERED);
+
+        when(orderItemRepository.findOwnedByBrand(5551L, BRAND_ID)).thenReturn(Optional.of(target));
+        when(statusChanger.shipBySeller(eq(target), any(), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("SHIPPING", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.ORDER_ALREADY_SHIPPED);
+    }
+
+    @Test
+    @DisplayName("I-30: 활성 클레임 등 ORDERED가 아닌 상태는 400 ORDER_INVALID_TRANSITION")
+    void shipItemRejectsInvalidTransition() {
+        OrderItem claimed = shippableItem(OrderItemStatus.CANCEL_REQUESTED);
+
+        when(orderItemRepository.findOwnedByBrand(5551L, BRAND_ID)).thenReturn(Optional.of(claimed));
+
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("SHIPPING", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.ORDER_INVALID_TRANSITION);
+    }
+
+    @Test
+    @DisplayName("I-30: 타 브랜드·미존재 아이템은 403이 아니라 404로 존재를 은닉한다")
+    void shipItemHidesForeignItem() {
+        when(orderItemRepository.findOwnedByBrand(5551L, BRAND_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("SHIPPING", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.ORDER_ITEM_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("I-30: 어휘 밖(PREPARING)은 VALIDATION_ERROR, 어휘엔 있으나 미허용(DELIVERED)은 전이 오류")
+    void shipItemSplitsVocabularyAndTransitionErrors() {
+        // 어휘 판정이 소유권 조회보다 먼저다 — 조회 스텁 없이도 걸린다
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("PREPARING", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("SHIPPED", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+
+        assertThatThrownBy(() -> service.shipItem(BRAND_ID, 5551L, new SellerShipRequest("DELIVERED", null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.ORDER_INVALID_TRANSITION);
     }
 
     @Test

@@ -89,6 +89,25 @@ public class OrderStatusChanger {
     }
 
     /**
+     * I-30 판매자 발송 (01 §2-3 — ORDERED→SHIPPING의 유일한 트리거, 2026-08-06 개정).
+     * 조건부 UPDATE라 경합에 지면 0건이 돌아온다 — 이중 발송은 별도 락 없이 여기서 걸린다.
+     * 성공하면 actor=SELLER로 아이템 단위 로그 1행을 남겨 I-14 분석에 합류시킨다.
+     *
+     * @return 전이했으면 true, 이미 다른 실행이 가져갔으면 false (호출부가 409로 번역)
+     */
+    @Transactional
+    public boolean shipBySeller(OrderItem item, String reason, LocalDateTime now) {
+        if (orderItemRepository.transitionStatus(
+                item.getId(), OrderItemStatus.ORDERED, OrderItemStatus.SHIPPING, now) != 1) {
+            return false;
+        }
+        logRepository.save(OrderStatusLog.ofItem(item.getOrderId(), item.getId(),
+                OrderItemStatus.ORDERED.name(), OrderItemStatus.SHIPPING.name(),
+                ActorType.SELLER, reason));
+        return true;
+    }
+
+    /**
      * 클레임 자동 승인 배치 (01 D10·§6) — 아이템 종결 전이 + claim COMPLETED 같은 트랜잭션.
      * 로그는 아이템마다 1행, actor=USER(신청 주체), reason=claim.reason (01 §6.5 규칙 3·4).
      * 전량 취소 도달 시 orders.status → CANCELLED 승격 + 주문 단위 로그 1행 (01 §2-1).

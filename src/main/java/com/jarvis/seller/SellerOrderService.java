@@ -8,10 +8,13 @@ import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemRepository;
 import com.jarvis.order.OrderItemStatus;
 import com.jarvis.order.OrderRepository;
+import com.jarvis.order.OrderStatusChanger;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.SellerOrderInternalResponse;
 import com.jarvis.seller.dto.SellerOrderListResponse;
+import com.jarvis.seller.dto.SellerShipRequest;
+import com.jarvis.seller.dto.SellerShipResponse;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Comparator;
@@ -50,6 +53,7 @@ public class SellerOrderService {
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final BrandRepository brandRepository;
+    private final OrderStatusChanger statusChanger;
 
     public SellerOrderListResponse list(Long brandId, String statusParam, int page, int size) {
         if (page < 0 || size < 1 || size > 100) {
@@ -92,6 +96,49 @@ public class SellerOrderService {
         List<SellerOrderInternalResponse.Row> rows = orderIds.isEmpty() ? List.of()
                 : buildInternalRows(brandId, orderIds);
         return new SellerOrderInternalResponse(tabCounts, rows, total);
+    }
+
+    /**
+     * I-30 발송 처리 (노션 I-30) — HITL confirm 후에만 호출된다. 상태 변경은 OrderStatusChanger
+     * 단일 관문을 통한다(01 D12). brandId는 티켓 claim에서 오지만 신뢰하지 않고 실행 시점에 재검증한다.
+     *
+     * <p>판정 순서가 계약이다: 어휘 밖 → VALIDATION_ERROR, 소유 아님·미존재 → 404(존재 은닉),
+     * 이미 SHIPPING → 409, 그 외 ORDERED 아님 → 400. 409를 400보다 먼저 봐야 "이미 발송됨"과
+     * "발송할 수 없는 상태"가 구분된다.
+     */
+    @Transactional
+    public SellerShipResponse shipItem(Long brandId, Long orderItemId, SellerShipRequest request) {
+        OrderItemStatus toStatus = parseItemStatus(request.toStatus());
+        if (toStatus != OrderItemStatus.SHIPPING) {
+            // 어휘엔 있으나 MVP 허용 전이가 아니다 — DELIVERED·CONFIRMED는 시스템 모의 전이 소관
+            throw new BusinessException(ErrorCode.ORDER_INVALID_TRANSITION);
+        }
+        OrderItem item = orderItemRepository.findOwnedByBrand(orderItemId, brandId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_ITEM_NOT_FOUND));
+        if (item.getStatus() == OrderItemStatus.SHIPPING) {
+            throw new BusinessException(ErrorCode.ORDER_ALREADY_SHIPPED);
+        }
+        if (item.getStatus() != OrderItemStatus.ORDERED) {
+            // 활성 클레임(CANCEL_REQUESTED)도 여기 걸린다 — status 자체가 ORDERED가 아니므로
+            throw new BusinessException(ErrorCode.ORDER_INVALID_TRANSITION);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (!statusChanger.shipBySeller(item, request.reason(), now)) {
+            // 조건부 UPDATE가 0건 — 위 검사 이후 다른 실행이 먼저 가져갔다(이중 발송 경합)
+            throw new BusinessException(ErrorCode.ORDER_ALREADY_SHIPPED);
+        }
+        return new SellerShipResponse(item.getId(), OrderItemStatus.ORDERED.name(),
+                OrderItemStatus.SHIPPING.name(), now.atZone(ZONE).toOffsetDateTime());
+    }
+
+    /** 상태기계(01) 어휘 밖이면 VALIDATION_ERROR — PREPARING·SHIPPED가 여기 걸린다(노션 I-30) */
+    private static OrderItemStatus parseItemStatus(String toStatus) {
+        try {
+            return OrderItemStatus.valueOf(toStatus);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
+        }
     }
 
     /** ALL + 4탭 키를 항상 채운다 — 0건도 키가 있어야 에이전트가 "없음"을 말할 수 있다(노션 I-29). */
