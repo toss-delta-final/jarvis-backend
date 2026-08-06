@@ -47,7 +47,8 @@ public class Review extends BaseTimeEntity {
     @Column(nullable = false)
     private int rating;
 
-    @Column(nullable = false, columnDefinition = "text")
+    /** NULL = 별점만 남긴 후기 (M-1, 2026-08-06) */
+    @Column(columnDefinition = "text")
     private String content;
 
     @Enumerated(EnumType.STRING)
