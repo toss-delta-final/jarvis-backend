@@ -265,7 +265,7 @@ com.jarvis
 | `LLM_BASE_URL` | FastAPI 주소 — **Spring→FastAPI 호출용**(P-5 추천·세션 정리 통지). 채팅 SSE는 FE 직결이라 무관 |
 | `NEXT_PUBLIC_LLM_SSE_URL` (FE) | 채팅 SSE 직결용 FastAPI 공개 URL — **FE 브라우저가 티켓 들고 직접 연결**(FE 팀 공유 필요, D5) |
 | `INTERNAL_API_TOKEN` | internal API 서비스 토큰 (FastAPI와 동일 이름·값 org 공유) |
-| `app.mock.shipping-minutes` 등 | mock 전이 간격 (환경변수 아님, yml 기본값 shipping/delivery/confirm/claim-approve = 5/5/10/5분 — 01 §6) |
+| `app.mock.delivery-minutes` 등 | mock 전이 간격 (환경변수 아님, yml 기본값 delivery/confirm/claim-approve = 5/10/5분 — 01 §6). **구 `shipping-minutes`는 2026-08-06 제거** — `ORDERED→SHIPPING`이 판매자 발송(I-30) 소관이 되면서 스케줄러가 더는 일으키지 않는다(01 D4 개정) |
 
 `.gitignore`에 `application-local.yml`, `.env` 포함 확인. 어떤 시크릿도 커밋 금지.
 
