@@ -49,6 +49,11 @@
 - **문제**: 실제 택배사 연동은 불가능하지만, 취소(배송 전)/반품·교환(배송완료 후)/후기(배송완료 후) 규칙이 전부 배송 상태에 의존한다.
 - **선택**: 결제 완료 시 아이템 `ORDERED` → 스케줄러가 **5분 후 `SHIPPING`**, **다시 5분 후 `DELIVERED`** 로 자동 전이. 간격은 `app.mock-delivery.*` 설정값으로 조정 가능(데모 리허설 때 짧게 줄일 수 있게).
 - **트레이드오프**: 실제 물류와 무관한 가짜 상태. 데모 목적상 충분하며, 시연 중 "방금 산 상품을 바로 반품"이 가능하도록 간격을 설정으로 뺐다.
+- **[2026-08-06 개정] `ORDERED→SHIPPING`은 자동 전이에서 제외한다** — 판매자 발송(I-30)이 생기면서 이 구간은
+  사람의 행위가 됐다. mock 자동 전이는 애초에 판매자 기능이 없어서 둔 대체물이라, 진짜가 생긴 이상 걷어내는 게 맞다.
+  `SHIPPING→DELIVERED` 이후는 그대로 스케줄러가 맡는다. 전제: 전 브랜드에 판매자 계정을 부여한다(02 D25 개정) —
+  판매자 없는 브랜드가 남으면 그 주문은 발송 주체가 없어 `ORDERED`에 갇힌다. 시연·개발 편의를 위한 상태 밀기는
+  DB 직접 변경으로 처리한다(발송하지 않은 물건에 후기·반품이 되지 않는 것은 정상 동작이므로 폴백을 두지 않는다).
 
 ### ~~D5. 클레임은 관리자 페이지에서 승인/거절로 처리한다~~ (2026-07-09 관리자 MVP 제외 결정으로 폐기 → D10)
 
@@ -167,7 +172,7 @@
 | From | To | 트리거 |
 |---|---|---|
 | `PENDING` | `ORDERED` | 결제 성공 — Order `PAID` 전이와 같은 트랜잭션 (D9). 최초 결제(O-1)와 재결제(O-2) 공통 |
-| `ORDERED` | `SHIPPING` | 스케줄러 |
+| `ORDERED` | `SHIPPING` | **판매자 발송(I-30)** — 2026-08-06 개정(구: 스케줄러). 아이템 단위, HITL 승인 후 실행 |
 | `SHIPPING` | `DELIVERED` | 스케줄러 |
 | `DELIVERED` | `CONFIRMED` | 스케줄러 (확정 대기 경과, D8) |
 | `ORDERED` | `CANCEL_REQUESTED` | 사용자 취소 신청 |
@@ -217,6 +222,11 @@
 
 문의 챗봇의 주문 상태 콜백도 이 파생 규칙의 결과 + 아이템별 상태 목록을 함께 반환한다(LLM이 "키보드는 배송중이고 마우스는 반품 처리중이에요"라고 답할 수 있게).
 
+**부분 발송 (2026-08-06 — D4 개정으로 흔해진 경우)**: 발송이 판매자 행위가 되면서, 여러 브랜드 아이템이
+섞인 주문은 한쪽만 먼저 `SHIPPING`이 되는 구간이 길어진다. 규칙 6이 7보다 앞서므로 그때 대표 상태는
+`ORDERED`("배송 준비중")다 — 이미 떠난 아이템이 있어도 주문 전체는 준비중으로 보인다. 의도된 동작이며
+(가장 뒤진 단계 기준), 아이템별 실제 상태는 O-4 주문 상세와 S-2·I-29 판매자 조회가 따로 싣는다.
+
 ---
 
 ## 5. 클레임 신청 데이터
@@ -238,33 +248,38 @@
 
 | 잡 | 주기 | 동작 |
 |---|---|---|
-| 배송 전이 | 1분마다 | `ORDERED` 중 `status_changed_at`이 5분 경과 → `SHIPPING`. `SHIPPING` 중 5분 경과 → `DELIVERED`. `DELIVERED` 중 10분 경과 → `CONFIRMED` (D8 — 반품 신청 중인 아이템은 상태가 `*_REQUESTED`라 WHERE에서 자연 제외). **`PENDING`(결제 전) 아이템은 대상 아님(D9)** — 출발 상태가 `ORDERED`뿐이라 자연 제외 |
+| 배송 전이 | 1분마다 | `SHIPPING` 중 `status_changed_at`이 5분 경과 → `DELIVERED`. `DELIVERED` 중 10분 경과 → `CONFIRMED` (D8 — 반품 신청 중인 아이템은 상태가 `*_REQUESTED`라 WHERE에서 자연 제외). **`ORDERED→SHIPPING`은 이 잡의 대상이 아니다(2026-08-06 개정, D4)** — 판매자 발송(I-30)만이 그 전이를 일으킨다. 따라서 `PENDING`·`ORDERED` 아이템은 애초에 스캔되지 않는다 |
 | 클레임 자동 승인 | 1분마다 | `*_REQUESTED` 중 신청 후 `claim-approve-minutes` 경과 → 완료 상태(`CANCELLED`/`RETURNED`) 전이 + claim `COMPLETED` — 같은 트랜잭션 (D10) |
 
-- 간격은 `application.yml`의 `app.mock.shipping-minutes`, `app.mock.delivery-minutes`, `app.mock.confirm-minutes`, `app.mock.claim-approve-minutes`로 설정. 기본 5/5/10/5분.
-- 구현: Spring `@Scheduled` + **조건부 UPDATE**(`SET status=<다음 상태>, status_changed_at=NOW() WHERE status=<이전 상태> AND status_changed_at <= NOW()-간격`). 체크와 전이를 한 쿼리에 접어 다인스턴스 동시 실행에도 정합성이 깨지지 않게 한다(늦은 인스턴스는 WHERE 불일치로 0건 매치). **SET 절의 `status_changed_at=NOW()` 갱신은 필수** — 빠뜨리면 옛 타임스탬프 기준으로 다음 틱에 연쇄 전이돼(ORDERED→SHIPPING→DELIVERED가 2분 만에) mock 간격이 무의미해진다.
+- 간격은 `application.yml`의 `app.mock.delivery-minutes`, `app.mock.confirm-minutes`, `app.mock.claim-approve-minutes`로 설정. 기본 5/10/5분. (`app.mock.shipping-minutes`는 2026-08-06 개정으로 사용처가 사라졌다 — 자동 `ORDERED→SHIPPING` 폐지)
+- 구현: Spring `@Scheduled` + **조건부 UPDATE**(`SET status=<다음 상태>, status_changed_at=NOW() WHERE status=<이전 상태> AND status_changed_at <= NOW()-간격`). 체크와 전이를 한 쿼리에 접어 다인스턴스 동시 실행에도 정합성이 깨지지 않게 한다(늦은 인스턴스는 WHERE 불일치로 0건 매치). **SET 절의 `status_changed_at=NOW()` 갱신은 필수** — 빠뜨리면 옛 타임스탬프 기준으로 다음 틱에 연쇄 전이돼(SHIPPING→DELIVERED→CONFIRMED가 2분 만에) mock 간격이 무의미해진다.
 - **분산 안전(2026-07-08 스터디, 03 §1-2 D-분산5 갱신)**: 이 잡이 종전에 두었던 "인스턴스 1대 전제"는 분산 단계(03 §1-2)에서 폐기. spring이 3대로 복제되면 같은 잡이 매 틱 중복 실행되므로 **Redis 분산 락(ShedLock)** 으로 틱당 1대만 실행한다. 조건부 UPDATE(정합성 최종 방어선) + 분산 락(중복 부수효과 차단)의 2층 방어. 잡에 부수효과(전이 건별 알림 등)를 추가할 땐 분산 락이 필수 — 상태 전이 로그(`order_status_logs`)는 부수효과가 아니라 조건부 UPDATE와 **같은 트랜잭션**에 포함된다(D12).
 
 ## 6.5 주문 상태 전이 로그 — order_status_logs 기록 지점 (D12)
 
 테이블 정의는 02 §3. 상태 UPDATE와 로그 INSERT는 **OrderStatusChanger에서 같은 트랜잭션**(D12) — 이 표에 없는 경로로 상태를 바꾸는 코드는 리뷰에서 거부한다.
 
-| 지점 | from → to | actor | reason |
-|---|---|---|---|
-| O-1 주문 생성 | NULL → PENDING | SYSTEM | — |
-| 모의결제 실패 | PENDING → PAYMENT_FAILED | SYSTEM | 실패 코드 |
-| 결제 성공 | PENDING → PAID | SYSTEM | — (아이템 ORDERED 전이는 PAID와 동시라 별도 기록 없음) |
-| 배송 전이 스케줄러 | ORDERED→SHIPPING, SHIPPING→DELIVERED | SYSTEM | — |
-| 취소 완료(자동 승인) | (신청 전 상태) → CANCELLED | **USER** | claim.reason |
-| 반품 완료(자동 승인) | (신청 전 상태) → RETURNED | **USER** | claim.reason |
-| 전량 취소 시 주문 | orders.status → CANCELLED | USER | — |
+| 지점 | from → to | actor | `order_item_id` | reason |
+|---|---|---|---|---|
+| O-1 주문 생성 | NULL → PENDING | SYSTEM | NULL | — |
+| 모의결제 실패 | PENDING → PAYMENT_FAILED | SYSTEM | NULL | 실패 코드 |
+| 결제 성공 | PENDING → PAID | SYSTEM | NULL | — (아이템 ORDERED 전이는 PAID와 동시라 별도 기록 없음) |
+| **판매자 발송(I-30)** | ORDERED→SHIPPING | **SELLER** | **필수** | 판매자 입력 사유(선택, 200자) |
+| 배송 전이 스케줄러 | SHIPPING→DELIVERED | SYSTEM | **필수** | — |
+| 취소 완료(자동 승인) | (신청 전 상태) → CANCELLED | **USER** | **필수** | claim.reason |
+| 반품 완료(자동 승인) | (신청 전 상태) → RETURNED | **USER** | **필수** | claim.reason |
+| 전량 취소 시 주문 | orders.status → CANCELLED | USER | NULL | — |
 
 규칙:
 1. `*_REQUESTED`(신청 접수)는 로그에 기록하지 않는다 — 신청의 정본은 claim 테이블.
 2. `CONFIRMED` 전이는 기록하지 않는다 — 분석 미사용. 추후 필요 시 어휘에 편입.
 3. actor는 승인 주체가 아니라 **신청 주체** 기준 — 자동 승인 스케줄러가 실행해도 `USER`. 이탈 원인 분석이 "누가 원해서 일어났나"를 소비하기 때문.
-4. 같은 주문의 여러 아이템이 같은 전이를 동시에 겪으면(배치) 주문 단위 1행만 남긴다.
-5. 배송 전이는 전부 `SYSTEM` — 판매자 발송 기능이 없다(실 택배 연동 불가, 사업자 등록 필요).
+4. **로그 해상도는 "무엇의 상태를 바꿨나"로 가른다 (2026-08-06 개정, D32)** — 아이템 상태를 바꾼 전이는
+   아이템마다 1행이고 `order_item_id`가 반드시 채워진다. 주문 상태를 바꾼 전이만 `NULL`이다.
+   구 규칙("같은 주문 여러 아이템의 동시 동일 전이는 주문 단위 1행만")은 폐기 — 발송이 아이템별·판매자별로
+   갈리면서 같은 주문의 아이템들이 서로 다른 시각에 다음 단계로 넘어가 "동시 배치"라는 전제가 사라졌다.
+5. ~~같은 주문의 여러 아이템이 같은 전이를 동시에 겪으면(배치) 주문 단위 1행만 남긴다.~~ **(2026-08-06 폐기 → 규칙 4)**
+6. ~~배송 전이는 전부 `SYSTEM` — 판매자 발송 기능이 없다.~~ **(2026-08-06 폐기)** 발송(`ORDERED→SHIPPING`)은 `SELLER`(I-30), 그 이후 배송 전이만 `SYSTEM`이다.
 
 ## 7. 구현 체크리스트 (검토자용)
 
