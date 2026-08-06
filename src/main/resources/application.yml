@@ -90,7 +90,8 @@ app:
   image:
     base-url: ${APP_IMAGE_BASE_URL:https://jarvis-storage-049705857330-ap-northeast-2-an.s3.ap-northeast-2.amazonaws.com}
   mock:
-    shipping-minutes: 5
+    # shipping-minutes 제거 (2026-08-06) — ORDERED→SHIPPING은 판매자 발송(I-30) 소관이라
+    # 스케줄러가 더는 일으키지 않는다 (01 D4 개정)
     delivery-minutes: 5
     confirm-minutes: 10
     claim-approve-minutes: 5

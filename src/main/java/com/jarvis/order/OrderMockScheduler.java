@@ -22,8 +22,9 @@ public class OrderMockScheduler {
     @SchedulerLock(name = "order-shipment-transition", lockAtMostFor = "PT50S")
     public void transitionShipment() {
         LocalDateTime now = LocalDateTime.now();
-        statusChanger.transitionShipment(OrderItemStatus.ORDERED, OrderItemStatus.SHIPPING,
-                now.minusMinutes(mockProperties.shippingMinutes()), true);
+        // ORDERED→SHIPPING은 이 잡의 대상이 아니다 (2026-08-06, 01 D4 개정) — 판매자 발송(I-30)만이
+        // 그 전이를 일으킨다. mock 자동 전이는 판매자 기능이 없어서 뒀던 대체물이라 진짜가 생긴 이상 걷어낸다.
+        // 발송 주체가 없는 브랜드의 주문은 ORDERED에 머문다 — 필요하면 DB로 직접 밀어 쓴다.
         statusChanger.transitionShipment(OrderItemStatus.SHIPPING, OrderItemStatus.DELIVERED,
                 now.minusMinutes(mockProperties.deliveryMinutes()), true);
         // CONFIRMED 전이는 로그 미기록 (01 §6.5 규칙 2). 반품 신청 중(*_REQUESTED)은 WHERE에서 자연 제외 (01 D8)
