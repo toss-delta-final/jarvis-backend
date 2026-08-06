@@ -3,6 +3,7 @@ package com.jarvis.order;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -67,6 +68,19 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
 
     /** 전량 취소 판정 (01 §2-1) — 0이면 소속 아이템 전부 CANCELLED */
     long countByOrderIdAndStatusNot(Long orderId, OrderItemStatus status);
+
+    /**
+     * I-30 발송 대상 조회 — 아이템이 그 브랜드 소유일 때만 반환한다(노션 I-30).
+     * 소유가 아니면 빈 값이라 호출부가 404로 존재를 은닉한다 — 403이 아니다(I-11 규칙).
+     * brandId는 티켓 claim에서 오지만 신뢰하지 않고 실행 시점에 다시 확인하는 지점이다.
+     */
+    @Query("""
+            select oi from OrderItem oi
+            where oi.id = :orderItemId
+              and oi.productId in (select p.id from Product p where p.brandId = :brandId)
+            """)
+    Optional<OrderItem> findOwnedByBrand(@Param("orderItemId") Long orderItemId,
+                                         @Param("brandId") Long brandId);
 
     /** S-3/I-9 표시 판매량 부착 — PAID 주문 합산 (02 D18, P-6 popular와 동일 규칙) */
     @Query(value = """

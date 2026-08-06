@@ -268,6 +268,20 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
   - S-2·I-19가 쓰는 `ORDER_INVALID_PARAM`이 **아니다** — I-24~I-28 internal 전례를 따른다(2026-08-06 결정).
 - **자사 주문 0건도 200 + 빈 `rows`·`total: 0`·`tabCounts` 전부 0**이고, `orderId` 직조회가 타사·미존재여도 **404가 아니라 200 + 빈 `rows`**로 존재를 은닉한다 — 에이전트는 "해당 주문이 없습니다"로 안내한다.
 
+### I-30. 발송 처리 `PATCH /internal/seller/{brandId}/order-items/{orderItemId}/status` (신설 2026-08-06 — 판매자 챗봇 `update_order_status`)
+
+- **HITL confirm 후에만 호출**된다(I-12와 같은 등급의 쓰기). 발송은 되돌릴 수 없어서 — `SHIPPING` 이후 역전이·취소 전이가 전부 400이고 `SHIPPING` 구간에선 취소도 반품도 불가(01) — **LLM의 지목이 단독으로 비가역 지점을 통과하지 않게 하는 것이 승인 단계의 목적**이다.
+- body `{toStatus, reason?}` — `toStatus`는 상태기계(01) 아이템 어휘, **MVP 유효값은 `SHIPPING` 하나**. `reason`은 선택·200자(`order_status_logs.reason`).
+- **이 API가 `ORDERED→SHIPPING`의 유일한 트리거**다(01 D4 개정 — 자동 전이 폐지). 아이템 단위이며 **복수 발송은 항목별 반복 호출**(bulk 없음 — C-4·I-24 전례).
+- `brandId`는 티켓 claim에서 오지만 신뢰하지 않고 **실행 시점에 소유권을 재검증**한다(I-11 규칙).
+- 응답 `{orderItemId, fromStatus, toStatus, changedAt}` — id는 숫자 그대로.
+- 로그는 `order_status_logs`에 `order_item_id`를 채워 1행(actor=`SELLER`) → **I-14로 자동 합류**한다.
+- **판정 순서가 계약이다**: ① `toStatus` 어휘 밖(`PREPARING`·`SHIPPED` 포함) → 400 `VALIDATION_ERROR` ② 미존재·**타 브랜드** → 404 `ORDER_ITEM_NOT_FOUND`(403 아님 — 존재 은닉) ③ 이미 `SHIPPING` → **409 `ORDER_ALREADY_SHIPPED`** ④ 그 외 `ORDERED`가 아님(활성 클레임 포함) → 400 `ORDER_INVALID_TRANSITION`. **③을 ④보다 먼저 봐야** "이미 발송됨"과 "발송할 수 없는 상태"가 구분된다.
+- **409는 멱등 200이 아니다** — HITL 쓰기는 "이미 된 일"과 "방금 한 일"을 구분해야 에이전트의 거짓 성공 보고를 막는다. LLM은 "이미 발송 처리된 주문이에요"로 안내한다.
+- 전이 실패(500 `INTERNAL_ERROR`) 시 **에이전트는 성공 보고 금지**(I-11·I-12 규칙).
+- 이중 발송 경합은 조건부 UPDATE(`WHERE status = ORDERED`)가 잡는다 — 검사 이후 다른 실행이 먼저 가져가면 0건이 돌아와 역시 409다.
+- **S-4 `draft.op`에 `ship` 추가는 별건**(AI팀·FE 합의 사항). API는 그것 없이도 완성이지만, 확인 카드를 그리려면 그쪽이 따라와야 챗봇에서 실제로 쓸 수 있다.
+
 ### I-31. 자사 상품 리뷰 조회 `GET /internal/seller/{brandId}/reviews` (신설 2026-08-06 — 판매자 챗봇 `get_reviews`)
 
 - 읽기 전용이라 **HITL 불필요**(S-4 analysis 레인). "이번 주 리뷰 요약해줘"·"평점 낮은 리뷰 뭐가 문제야"·sales_anomaly 교차(매출 급락일 리뷰 확인)에 쓴다.
