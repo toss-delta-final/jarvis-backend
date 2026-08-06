@@ -1,5 +1,6 @@
 package com.jarvis.seller.dto;
 
+import com.jarvis.global.response.StringId;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -13,7 +14,7 @@ import java.util.Map;
 public record SellerProductListResponse(Map<String, Long> tabCounts, List<Row> content,
                                         int page, int size, long totalElements, int totalPages) {
 
-    public record Row(Long productId, String name, String imageUrl, String category,
+    public record Row(@StringId Long productId, String name, String imageUrl, String category,
                       int price, int originalPrice, int stockQuantity, long displayedSalesCount,
                       String status, String displayStatus, OffsetDateTime createdAt,
                       OffsetDateTime updatedAt) {

@@ -1,5 +1,6 @@
 package com.jarvis.cart.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.product.PurchaseState;
 import java.util.List;
 
@@ -13,9 +14,9 @@ import java.util.List;
  */
 public record CartResponse(List<Item> items, int totalOriginal, int totalSale, int discount) {
 
-    public record Item(Long cartItemId, Long productId, String name,
-                       Long brandId, String brandName,
-                       Long optionId, String optionName,
+    public record Item(@StringId Long cartItemId, @StringId Long productId, String name,
+                       @StringId Long brandId, String brandName,
+                       @StringId Long optionId, String optionName,
                        int quantity, int price, int originalPrice,
                        String imageUrl, String purchaseState, int maxQuantity) {
 

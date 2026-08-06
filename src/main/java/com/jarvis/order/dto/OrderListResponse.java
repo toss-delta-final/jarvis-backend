@@ -1,5 +1,6 @@
 package com.jarvis.order.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.order.Order;
 import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemStatus;
@@ -22,11 +23,13 @@ public record OrderListResponse(List<Summary> content, int page, int size,
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
-    public record Summary(Long orderId, String orderNo, String representativeStatus, int totalAmount,
+    public record Summary(@StringId Long orderId, String orderNo, String representativeStatus,
+                          int totalAmount,
                           OffsetDateTime orderedAt, List<ItemSummary> items) {
     }
 
-    public record ItemSummary(Long orderItemId, Long productId, String productName, String optionName,
+    public record ItemSummary(@StringId Long orderItemId, @StringId Long productId,
+                              String productName, String optionName,
                               int price, int quantity, String status, String imageUrl,
                               String purchaseState) {
 

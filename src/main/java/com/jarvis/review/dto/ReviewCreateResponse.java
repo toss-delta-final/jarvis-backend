@@ -1,11 +1,13 @@
 package com.jarvis.review.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.review.Review;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 /** M-1 응답 — 날짜는 ISO 8601 + 오프셋 (03 D2) */
-public record ReviewCreateResponse(Long reviewId, Long orderItemId, Long productId,
+public record ReviewCreateResponse(@StringId Long reviewId, @StringId Long orderItemId,
+                                   @StringId Long productId,
                                    int rating, String content, OffsetDateTime createdAt) {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");

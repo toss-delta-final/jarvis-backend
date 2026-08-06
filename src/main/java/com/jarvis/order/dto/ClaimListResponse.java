@@ -1,5 +1,6 @@
 package com.jarvis.order.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.order.Order;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -16,7 +17,7 @@ public record ClaimListResponse(List<Item> content, int page, int size,
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
-    public record Item(Long claimId, String orderNo, Long orderItemId,
+    public record Item(@StringId Long claimId, String orderNo, @StringId Long orderItemId,
                        String productName, String optionName, int quantity, int refundAmount,
                        String type, String status, String reason,
                        OffsetDateTime requestedAt, OffsetDateTime processedAt) {

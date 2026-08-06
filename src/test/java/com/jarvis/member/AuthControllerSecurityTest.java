@@ -164,7 +164,10 @@ class AuthControllerSecurityTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.accessToken").doesNotExist())
-                .andExpect(jsonPath("$.data.member.id").value(1))
+                // isString이 있어야 타입을 실제로 본다 — value(1)만으로는 JsonPath가 "1"을 1로
+                // 강제 변환해 통과시켜서, id가 숫자로 되돌아가도 이 단언은 못 잡는다(2026-08-06)
+                .andExpect(jsonPath("$.data.member.id").isString())
+                .andExpect(jsonPath("$.data.member.id").value("1"))
                 // AT는 전 경로에 실려야 한다 — /api/products 같은 일반 API도 인증을 읽는다
                 .andExpect(cookie().value(AccessCookieManager.COOKIE_NAME, "access-token"))
                 .andExpect(cookie().httpOnly(AccessCookieManager.COOKIE_NAME, true))

@@ -1,5 +1,6 @@
 package com.jarvis.chat.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.product.dto.ProductCardResponse;
 
 /**
@@ -10,7 +11,7 @@ import com.jarvis.product.dto.ProductCardResponse;
  * 남아 의미가 없다. P-4·P-5가 같은 이유로 이 필드를 뺀 것과 동일하다
  * (2026-07-28 P-4 결정, 2026-08-05 CH-5에도 적용).
  */
-public record RecommendedCardResponse(Long productId, String name, String brandName,
+public record RecommendedCardResponse(@StringId Long productId, String name, String brandName,
                                       int price, int originalPrice, String imageUrl,
                                       double rating, long reviewCount, String reason) {
 
