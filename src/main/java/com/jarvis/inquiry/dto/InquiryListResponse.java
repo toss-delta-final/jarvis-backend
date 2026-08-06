@@ -1,5 +1,6 @@
 package com.jarvis.inquiry.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.inquiry.Inquiry;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -14,7 +15,7 @@ public record InquiryListResponse(List<Item> content, int page, int size,
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
     /** 답변 전이면 answer는 명시적 null (Notion 계약) */
-    public record Item(Long inquiryId, String title, String content, String status,
+    public record Item(@StringId Long inquiryId, String title, String content, String status,
                        Answer answer, OffsetDateTime createdAt) {
 
         public static Item from(Inquiry inquiry) {

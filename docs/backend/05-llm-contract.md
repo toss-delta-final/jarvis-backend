@@ -150,6 +150,8 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 
 공통: `X-Internal-Token` 필수. 응답은 BE 공통 envelope. 타임아웃 권장 3s. **여기 없는 쓰기 작업은 존재하지 않는다** (주문 생성·클레임·후기는 LLM이 못 함 — 결제 자동화 범위는 "담기까지").
 
+🔄 **id 타입 (2026-08-06)**: 공개 API는 id를 **문자열**로 내보내지만(04 §0 — JS 안전 정수 초과), **`/internal`은 숫자를 유지한다**. Python은 정밀도 손실이 없어 바꿀 이유가 없고, jarvis-ai의 Pydantic 스키마(`product_id: int`)를 이득 없이 흔들게 된다. **예외 하나** — `CART_OPTION_REQUIRED`의 `error.detail.options[].optionId`는 공개 C-2와 I-2가 같은 CartService·같은 DTO를 지나 문자열로 나간다(§I-2). ⚠️ **LLM 팀 조치 필요**: 판매자 draft 이벤트(§1-3)의 `productId`는 FastAPI가 FE로 직송하므로 BE 변경이 닿지 않는다 — FE가 한 화면에서 숫자/문자열을 섞어 받지 않으려면 그쪽도 문자열로 내보내야 한다. 구매자 추천은 SSE가 카드를 싣지 않아(§1-2-1 경로 B) CH-5로 전부 덮인다.
+
 ### I-1. 상품 검색 (추천 1왕복 · 후보 조회) `GET /internal/products/search`
 - **역할**: 추천 2왕복 중 **라운드1** — 정형조건으로 MariaDB 후보를 좁혀 **리랭킹용 최소필드**만 반환(1-2-1). 표시 데이터는 안 준다(CH-5 카드 부착 담당).
 - query: `keyword?`(상품명+summary+attributes LIKE), `categoryName?`, `minPrice?`, `maxPrice?`, `brandName?`(**리스트 — 반복 파라미터, 하나라도 일치하면 후보**), `color?`(**리스트 — 2026-08-03 개정, 아래**). **정형 진실(가격 범위·재고·판매상태 필터)은 Spring SQL에서 적용** — 살 수 없는 상품은 후보에서 제외.
@@ -165,7 +167,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 ### I-2. 장바구니 담기 `POST /internal/cart/items`
 - body: `{ "userId": 123, "guestId": null, "productId": 1, "optionId": null, "quantity": 1 }` — userId/guestId 중 하나(채팅 요청의 메아리). quantity 1~99 (04 §3과 동일 검증: 입구가 달라도 같은 CartService)
 - **게스트(userId null)도 guestId로 담기 성공** (02 D30 — 2026-07-10 개정, 기존 403 유도 폐기). 로그인 유도는 결제 시점의 FE 몫 — LLM은 "장바구니에 담았어요. 주문하실 땐 로그인이 필요해요" 정도로만 안내.
-- 옵션 필요한데 optionId 없으면 400 `CART_OPTION_REQUIRED` + options 목록 반환 → LLM이 "어떤 색상으로 담을까요?"로 되물음. **(2026-07-18 구현 확정)** options는 envelope `error.detail.options[{optionId, name, extraPrice}]`로 실린다.
+- 옵션 필요한데 optionId 없으면 400 `CART_OPTION_REQUIRED` + options 목록 반환 → LLM이 "어떤 색상으로 담을까요?"로 되물음. **(2026-07-18 구현 확정)** options는 envelope `error.detail.options[{optionId, name, extraPrice}]`로 실린다. **2026-08-06부터 여기 `optionId`는 문자열**(`"42"`) — 공개 C-2와 DTO를 공유해서다(§2 id 타입). 되보내는 요청 body의 optionId는 숫자·문자열 모두 받는다.
 - **재고 부족 시 400 `CART_STOCK_INSUFFICIENT` + `error.detail.availableStock`(2026-07-22 추가)** — 합산 후 수량이 재고를 넘으면. LLM은 "재고가 N개뿐이에요"로 안내. 재고는 상품 단위(옵션별 재고 없음, 02 D33)라 옵션 무관하게 상품 재고와 비교. C-2와 동일 CartService·동일 규칙.
 - 성공 응답에 cartItemId — action 이벤트에 사용. 행동 이벤트(behavior_events `add_to_cart`)는 서버 적재가 아니라 FE 배치 소관(04 §8 E-1 — 2026-07-17 전환).
 

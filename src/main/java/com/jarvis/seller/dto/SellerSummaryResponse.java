@@ -1,5 +1,6 @@
 package com.jarvis.seller.dto;
 
+import com.jarvis.global.response.StringId;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -38,12 +39,12 @@ public record SellerSummaryResponse(Period period, OrderStatus orderStatus, Toda
     /** 재고 부족 알림 — ON_SALE 중 재고 ≤ threshold, 재고 오름차순. */
     public record LowStock(int threshold, int count, List<Item> items) {
 
-        public record Item(Long productId, String name, String imageUrl, int stockQuantity) {
+        public record Item(@StringId Long productId, String name, String imageUrl, int stockQuantity) {
         }
     }
 
     /** (화면 없음, AI·타 화면 소비) 상품별 퍼널 — 조회수·담김수 = behavior_events, 판매수 = order_item 집계. */
-    public record ProductMetric(Long productId, String name, long viewCount, long cartCount,
+    public record ProductMetric(@StringId Long productId, String name, long viewCount, long cartCount,
                                 long salesCount) {
     }
 }

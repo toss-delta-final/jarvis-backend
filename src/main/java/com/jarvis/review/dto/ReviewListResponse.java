@@ -1,6 +1,7 @@
 package com.jarvis.review.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.jarvis.global.response.StringId;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Map;
@@ -17,7 +18,7 @@ public record ReviewListResponse(java.util.List<Item> content, int page, int siz
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
-    public record Item(Long reviewId, int rating, String content, String authorNickname,
+    public record Item(@StringId Long reviewId, int rating, String content, String authorNickname,
                        OffsetDateTime createdAt) {
 
         public static Item from(ReviewRow row) {

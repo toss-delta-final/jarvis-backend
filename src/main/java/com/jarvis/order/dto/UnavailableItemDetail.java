@@ -1,5 +1,6 @@
 package com.jarvis.order.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.product.Product;
 import com.jarvis.product.PurchaseState;
 
@@ -9,7 +10,7 @@ import com.jarvis.product.PurchaseState;
  * <p>FE가 "○○ 상품이 품절됐어요 — 빼고 결제" 복구 동선을 만들려면 어느 상품이 왜 안 되는지가 필요하다.
  * reason 어휘는 목록·상세의 purchaseState와 같다 — 주문 화면과 장바구니가 다른 말을 하면 안 된다.
  */
-public record UnavailableItemDetail(Long productId, String name, String reason) {
+public record UnavailableItemDetail(@StringId Long productId, String name, String reason) {
 
     /** 구매 가능하면 null. 판정은 PurchaseState 한 곳에서 — 숨김이 품절보다 우선한다 */
     public static UnavailableItemDetail of(Product product, int requestedQuantity) {

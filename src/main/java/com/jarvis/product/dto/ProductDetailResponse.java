@@ -3,6 +3,7 @@ package com.jarvis.product.dto;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jarvis.brand.Brand;
 import com.jarvis.category.Category;
+import com.jarvis.global.response.StringId;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.PurchaseState;
@@ -17,7 +18,7 @@ import java.util.List;
  * 달라서다. 배열 순서가 곧 노출 순서라 {@code {url, order}} 객체로 감싸지 않으며, 상세 이미지가 없는
  * 상품은 {@code null}이 아니라 빈 배열이다.
  */
-public record ProductDetailResponse(Long id, String name, int price, int originalPrice,
+public record ProductDetailResponse(@StringId Long id, String name, int price, int originalPrice,
                                     int stockQuantity, String purchaseState, String status,
                                     String imageUrl, List<String> detailImages,
                                     String summary, JsonNode attributes,
@@ -25,19 +26,19 @@ public record ProductDetailResponse(Long id, String name, int price, int origina
                                     BrandSummary brand, List<OptionResponse> options,
                                     Rating rating) {
 
-    public record CategorySummary(Long id, String name) {
+    public record CategorySummary(@StringId Long id, String name) {
         public static CategorySummary from(Category category) {
             return new CategorySummary(category.getId(), category.getName());
         }
     }
 
-    public record BrandSummary(Long id, String name, String logoUrl) {
+    public record BrandSummary(@StringId Long id, String name, String logoUrl) {
         public static BrandSummary from(Brand brand) {
             return new BrandSummary(brand.getId(), brand.getName(), brand.getLogoUrl());
         }
     }
 
-    public record OptionResponse(Long optionId, String name, int extraPrice) {
+    public record OptionResponse(@StringId Long optionId, String name, int extraPrice) {
         public static OptionResponse from(ProductOption option) {
             return new OptionResponse(option.getId(), option.getName(), option.getExtraPrice());
         }

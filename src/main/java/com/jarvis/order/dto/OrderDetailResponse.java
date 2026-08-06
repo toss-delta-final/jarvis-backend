@@ -1,5 +1,6 @@
 package com.jarvis.order.dto;
 
+import com.jarvis.global.response.StringId;
 import com.jarvis.order.Order;
 import com.jarvis.order.OrderItem;
 import com.jarvis.order.OrderItemStatus;
@@ -17,7 +18,8 @@ import java.util.function.Predicate;
  * FE는 boolean만 보고 버튼 노출(상태 판단 중복 구현 금지). canExchange는 D11 제거로 없음.
  * NON_NULL 금지 — paidAt 등 미확정 값은 키 생략이 아니라 명시적 null(노션 O-4, FE 코멘트 반영).
  */
-public record OrderDetailResponse(Long orderId, String orderNo, String status, String representativeStatus,
+public record OrderDetailResponse(@StringId Long orderId, String orderNo, String status,
+                                  String representativeStatus,
                                   String paymentMethod, int totalAmount,
                                   OffsetDateTime orderedAt, OffsetDateTime paidAt,
                                   ShippingAddress address, String deliveryRequest,
@@ -34,7 +36,8 @@ public record OrderDetailResponse(Long orderId, String orderNo, String status, S
      * 이름은 비슷하지만 다른 축이다. FE는 purchaseState=HIDDEN이면 상세 링크를 걸지 않고
      * "판매 종료"로 표시한다(상품 자체는 스냅샷이라 행은 그대로 보인다).
      */
-    public record Item(Long orderItemId, Long productId, String productName, String optionName,
+    public record Item(@StringId Long orderItemId, @StringId Long productId,
+                       String productName, String optionName,
                        int price, int originalPrice, int quantity, String status, String imageUrl,
                        String purchaseState,
                        boolean canCancel, boolean canReturn, boolean canReview) {
