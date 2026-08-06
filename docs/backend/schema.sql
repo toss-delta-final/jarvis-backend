@@ -371,19 +371,21 @@ CREATE TABLE behavior_events (
 -- ------------------------------------------------------------
 
 CREATE TABLE order_status_logs (
-    id           BIGINT       NOT NULL AUTO_INCREMENT,
-    order_id     BIGINT       NOT NULL,                    -- FK 미설정 (append-only 로그)
-    from_status  VARCHAR(20)  NULL,                        -- 최초 생성 시 NULL
-    to_status    VARCHAR(20)  NOT NULL,                    -- 주문: PENDING/PAID/PAYMENT_FAILED/CANCELLED · 아이템 이행: SHIPPING/DELIVERED/CANCELLED/RETURNED
-    actor_type   ENUM('USER','SELLER','ADMIN','SYSTEM') NOT NULL,  -- 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제=SYSTEM
-    reason       VARCHAR(200) NULL,                        -- 결제 실패 코드, 취소·반품 사유(claim.reason)
-    created_at   DATETIME(6)  NOT NULL,
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    order_id      BIGINT       NOT NULL,                   -- FK 미설정 (append-only 로그)
+    order_item_id BIGINT       NULL,                       -- 아이템 상태 전이면 필수, 주문 상태 전이면 NULL (D32 개정 2026-08-06)
+    from_status   VARCHAR(20)  NULL,                       -- 최초 생성 시 NULL
+    to_status     VARCHAR(20)  NOT NULL,                   -- 주문: PENDING/PAID/PAYMENT_FAILED/CANCELLED · 아이템 이행: SHIPPING/DELIVERED/CANCELLED/RETURNED
+    actor_type    ENUM('USER','SELLER','ADMIN','SYSTEM') NOT NULL,  -- 발송(ORDERED→SHIPPING)=SELLER, 이후 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제=SYSTEM
+    reason        VARCHAR(200) NULL,                       -- 결제 실패 코드, 취소·반품 사유(claim.reason), 판매자 발송 사유(I-30)
+    created_at    DATETIME(6)  NOT NULL,
     PRIMARY KEY (id),
     KEY idx_oslog_order  (order_id, created_at),
     KEY idx_oslog_status (to_status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- ORDERED(PAID와 같은 트랜잭션)·*_REQUESTED(claim이 정본)·CONFIRMED는 미기록. 교환 어휘 없음 (D34)
--- 같은 주문 여러 아이템의 동시 동일 전이(스케줄러 배치)는 주문 단위 1행만 (D32)
+-- 해상도는 "무엇의 상태를 바꿨나"로 가른다 — 아이템 상태 전이는 아이템마다 1행(order_item_id 필수),
+-- 주문 상태 전이만 order_item_id NULL. 구 "주문 단위 1행" 배치 규칙은 폐기 (D32 개정 2026-08-06)
 
 CREATE TABLE product_change_logs (
     id           BIGINT      NOT NULL AUTO_INCREMENT,

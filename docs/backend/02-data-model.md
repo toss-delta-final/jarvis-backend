@@ -156,6 +156,13 @@
 - **선택지**: (A) review 행으로 적재 — order_item_id/member_id NULL 허용 + author_name 추가 (B) product에 base_rating_avg/base_review_count 컬럼 (C) 크롤링 리뷰 미사용, 시드에서 가짜 회원·주문·리뷰 생성
 - **기준**: ① 상세페이지가 요구하는 건 통계 숫자만이 아니라 **리뷰 목록 원문** — (B)는 통계와 목록 숫자가 안 맞는 화면이 됨 ② 작업량 — (C)는 상품 300+개에 가짜 주문 체인까지 생성 ③ 평점 통계의 단일 소스 — (A)면 크롤링분+자체분이 한 테이블에서 자연 집계(D9 원칙 그대로).
 - **선택**: (A). `member_id IS NULL` = 크롤링 리뷰. 후기 자격 검증(D4: 배송완료·아이템당 1개)은 **우리 회원의 작성 경로에만 적용** — 크롤링 리뷰는 시드 적재 전용이고 API로는 생성 불가.
+- **[2026-08-06] 시드 적재 시 `created_at`을 과거로 분산시킨다** — 원본 작성일이 있으면 그 값을, 없으면 최근 몇 달에 흩뿌린다.
+  `NOW()`로 몰아 넣으면 기간 필터가 무너진다: I-31(판매자 리뷰 조회)은 기간 생략 시 **최근 7일**이 기본이라,
+  시드 직후 일주일은 크롤링 리뷰가 전부 잡히고 그 뒤로는 0건이 된다("이번 주 리뷰 요약해줘"의 답이 시연 날짜에 따라 뒤바뀐다).
+  P-3 상세페이지에서 리뷰 날짜가 전부 같은 날로 보이는 문제도 같이 해소된다.
+- **[2026-08-06] 판매자 조회(I-31)도 크롤링 리뷰를 포함한다** — I-31이 `VISIBLE`만 내보내는 근거가 "구매자가 보는 것과
+  같은 진실을 보게 한다"이므로, 구매자에게 P-3로 노출되는 크롤링 리뷰를 판매자에게만 감출 이유가 없다.
+  `authorNickname`은 회원이면 `member.nickname`, 크롤링이면 `review.author_name`을 쓴다(COALESCE).
 - **트레이드오프**: NOT NULL 제약 완화로 "리뷰=검증된 구매" 불변식이 약해짐 → 감수 방법: 작성 API는 여전히 order_item 앵커 필수(서비스 검증), NULL 조합 정합(`member_id NULL ↔ author_name NOT NULL`)도 서비스 검증. UNIQUE(order_item_id)는 NULL 다중 허용이라 그대로 동작.
 
 ### D20. 카테고리는 2단 계층으로 개정한다 (D10 폐기 — 피그마 검토 2026-07-09)
@@ -193,6 +200,13 @@
 - **선택지**: (A) 브랜드마다 더미 SELLER 회원 생성 (B) NULL 허용
 - **기준**: (A)는 member의 NOT NULL 컬럼(약관 동의 시각·성별·출생일)을 가입한 적 없는 가짜 인물로 채워 회원 데이터의 의미를 오염시킨다. (B)는 "아직 입점 판매자가 연결되지 않은 브랜드"라는 도메인 사실 그대로.
 - **선택**: (B). MariaDB UNIQUE는 NULL 다중 허용이라 "판매자 1명 = 브랜드 1개" 제약은 유지. 판매자 플로우는 member→brand 방향 유도(03 §7)라 영향 없음 — 주인 없는 브랜드는 대시보드 주인이 없는 게 맞다.
+- **[2026-08-06 개정] 전 브랜드에 판매자 계정을 부여한다 — 사실상 (A)로 선회**. 발송이 판매자 행위가 되면서(01 D4 개정)
+  주인 없는 브랜드의 주문은 발송 주체가 없어 `ORDERED`에 갇힌다. 시드 스크립트로 브랜드마다 SELLER 회원을 생성한다.
+  - **컬럼은 `NULL` 허용 그대로 둔다** — 제약을 조이는 이득이 없고, 되돌릴 여지를 남기는 편이 싸다. 실질적으로 NULL 행이 없어질 뿐이다.
+  - **계정 수**: `uk_brand_seller`가 UNIQUE라 계정 재사용이 불가능하다. 브랜드 수만큼 SELLER 회원이 필요하다(sample_100 기준 약 93개).
+  - **기각 사유였던 오염은 남되 범위가 좁다**: member의 NOT NULL 컬럼(약관 동의 시각·성별·출생일)을 가짜 값으로 채우는 건
+    그대로다. 다만 성별·출생일을 소비하는 집계 API가 없고, 더미 계정은 주문·행동 이벤트를 만들지 않아
+    I-8·I-16 등 회원 분석에는 잡히지 않는다. 비용은 "가짜 회원 행이 늘어난다"까지다.
 
 ### D26. FK가 못 막는 교차 정합 4건은 서비스 검증으로 강제한다 (ERD 정합 검토 — 2026-07-10)
 
@@ -247,7 +261,7 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 
 - **문제**: 분석 에이전트 입력 중 주문 상태 전이·상품 가격/재고/상태 변경·인증 이벤트는 FE 행동 이벤트(D31)로 잡을 수 없는 서버 사실. 어디에 어떻게 남길지.
 - **선택**: append-only 로그 테이블 3종 신설 — `order_status_logs` / `product_change_logs` / `account_event_logs`(§3). 전부 FK 미설정(append-only 로그 경량화 — 구 user_event.product_id와 같은 이유). 상세 기록 지점 규칙은 **01 문서 소관**(01에 신설됨) — 02는 테이블 정의 + 요약만.
-- **order_status_logs 요약**: to_status 어휘는 **우리 상태명 그대로** — 주문 수준 `PENDING`/`PAID`/`PAYMENT_FAILED`/`CANCELLED`, 아이템 이행 수준 `SHIPPING`/`DELIVERED`/`CANCELLED`/`RETURNED`. `ORDERED`는 PAID와 같은 트랜잭션이라 별도 기록 안 함, `*_REQUESTED`(신청 접수)는 claim 테이블이 정본이라 미기록, `CONFIRMED`(구매확정)도 미기록. 교환 어휘 없음(D34). actor 규칙: 배송 전이=SYSTEM(모의 스케줄러 — 판매자 발송 기능 없음), 취소/반품 완료=USER(신청 주체 — 자동 승인 스케줄러가 실행해도 신청 주체 기준) + claim.reason 텍스트, 결제 성공/실패=SYSTEM. 같은 주문의 여러 아이템이 같은 전이를 동시에 겪으면(스케줄러 배치) 주문 단위 1행만. **orders.status 어휘에 `CANCELLED` 편입**(4종, 컬럼 타입 무변경) — 전량 취소(소속 아이템 전부 CANCELLED) 시 같은 트랜잭션에서 orders.status→CANCELLED + 로그 1행. 미입금 자동취소 배치는 도입하지 않음(주문=결제 동시 생성이라 해당 없음).
+- **order_status_logs 요약**: to_status 어휘는 **우리 상태명 그대로** — 주문 수준 `PENDING`/`PAID`/`PAYMENT_FAILED`/`CANCELLED`, 아이템 이행 수준 `SHIPPING`/`DELIVERED`/`CANCELLED`/`RETURNED`. `ORDERED`는 PAID와 같은 트랜잭션이라 별도 기록 안 함, `*_REQUESTED`(신청 접수)는 claim 테이블이 정본이라 미기록, `CONFIRMED`(구매확정)도 미기록. 교환 어휘 없음(D34). actor 규칙: **발송(`ORDERED→SHIPPING`)=SELLER**(판매자 발송 I-30 — 2026-08-06 개정, 구 "SYSTEM 모의 스케줄러·판매자 발송 기능 없음"), 그 이후 배송 전이=SYSTEM(모의 스케줄러), 취소/반품 완료=USER(신청 주체 — 자동 승인 스케줄러가 실행해도 신청 주체 기준) + claim.reason 텍스트, 결제 성공/실패=SYSTEM. **[2026-08-06 개정] 로그 해상도는 "무엇의 상태를 바꿨나"로 가른다** — `order_item_id` 컬럼을 신설해 아이템 상태 전이는 아이템마다 1행(값 필수), 주문 상태 전이만 NULL. 구 "같은 주문 여러 아이템의 동시 동일 전이는 주문 단위 1행만" 규칙은 폐기 — 발송이 아이템별·판매자별로 갈리면서 아이템들이 서로 다른 시각에 다음 단계로 넘어가 "동시 배치" 전제가 사라졌고, 한 주문에 타 브랜드 아이템이 섞이는 이상 order_id만으로는 무엇이 발송됐는지 복원할 수 없다(01 §6.5 규칙 4). **orders.status 어휘에 `CANCELLED` 편입**(4종, 컬럼 타입 무변경) — 전량 취소(소속 아이템 전부 CANCELLED) 시 같은 트랜잭션에서 orders.status→CANCELLED + 로그 1행. 미입금 자동취소 배치는 도입하지 않음(주문=결제 동시 생성이라 해당 없음).
 - **product_change_logs 요약**: 전후 값 동일 시 미기록. 주문에 의한 재고 -1은 미기록(order_item으로 복원 가능) — 수동 조정과 품절(new_value=0)/재입고 전환만 기록. 품절 신호 = STOCK new_value 0 (SOLD_OUT 상태 미도입).
 - **account_event_logs 요약**: AuthService 성공/실패 지점에서 직접 적재(03 §3-1 — formLogin 미사용이라 Security 핸들러 자동 발화 없음). 로그인 실패도 기록 — 없는 계정 시도는 member_id NULL + IP(무차별 대입 탐지 재료). FE의 login 행동 이벤트(D31)와 중복이지만 목적이 다름(행동 vs 보안) — **"마지막 로그인"의 단일 출처는 account_event_logs.LOGIN_SUCCESS**.
 - **트레이드오프**: 쓰기 경로마다 로그 INSERT 1회 추가 — append-only 단순 INSERT라 무시 가능. FK 미설정으로 고아 로그 가능 → 로그는 참조 무결성보다 적재 안정성 우선.
@@ -531,6 +545,7 @@ erDiagram
     order_status_logs {
         bigint id PK
         bigint order_id "FK 미설정(D32)"
+        bigint order_item_id "아이템 전이면 필수, 주문 전이면 NULL(D32)"
         varchar from_status "최초 생성 시 NULL"
         varchar to_status "우리 상태 어휘(D32)"
         enum actor_type "USER/SELLER/ADMIN/SYSTEM"
@@ -824,14 +839,15 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 | 컬럼 | 타입 | 제약 | 비고 |
 |---|---|---|---|
 | order_id | BIGINT | NOT NULL, FK 미설정 | append-only 로그 |
+| order_item_id | BIGINT | NULL, FK 미설정 | **아이템 상태 전이면 필수, 주문 상태 전이면 NULL**(2026-08-06 신설) |
 | from_status | VARCHAR(20) | NULL | 최초 생성 시 NULL |
 | to_status | VARCHAR(20) | NOT NULL | 주문 수준 `PENDING`/`PAID`/`PAYMENT_FAILED`/`CANCELLED` · 아이템 이행 수준 `SHIPPING`/`DELIVERED`/`CANCELLED`/`RETURNED` — 우리 상태명 그대로 |
-| actor_type | ENUM('USER','SELLER','ADMIN','SYSTEM') | NOT NULL | 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제 성공/실패=SYSTEM |
-| reason | VARCHAR(200) | NULL | 결제 실패 코드, 취소·반품 사유(claim.reason 텍스트) |
+| actor_type | ENUM('USER','SELLER','ADMIN','SYSTEM') | NOT NULL | 발송(`ORDERED→SHIPPING`)=**SELLER**(I-30), 이후 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제 성공/실패=SYSTEM |
+| reason | VARCHAR(200) | NULL | 결제 실패 코드, 취소·반품 사유(claim.reason 텍스트), 판매자 발송 사유(I-30 — 선택) |
 | created_at | DATETIME(6) | NOT NULL | |
 
 - 인덱스: `(order_id, created_at)`, `(to_status, created_at)`.
-- `ORDERED`(PAID와 같은 트랜잭션)·`*_REQUESTED`(claim이 정본)·`CONFIRMED`는 미기록. 교환 어휘 없음(D34). 스케줄러 배치의 동일 전이는 주문 단위 1행만. **상세 기록 지점 규칙은 01 문서 소관** — 여기는 정의+요약만(D32).
+- `ORDERED`(PAID와 같은 트랜잭션)·`*_REQUESTED`(claim이 정본)·`CONFIRMED`는 미기록. 교환 어휘 없음(D34). **해상도는 "무엇의 상태를 바꿨나"로 가른다 — 아이템 전이는 아이템마다 1행**(구 "배치 동일 전이는 주문 단위 1행" 폐기, 2026-08-06). **상세 기록 지점 규칙은 01 문서 소관** — 여기는 정의+요약만(D32).
 
 ### product_change_logs (BE 직접 적재 — D32)
 | 컬럼 | 타입 | 제약 | 비고 |
@@ -902,7 +918,7 @@ FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommenda
 - [ ] guest → member 승계 시 cart_item이 병합되는가 (D30 — 동일 상품+옵션 수량 합산·상한 99, 행동 이벤트 승계와 같은 트랜잭션)
 - [ ] 시드 상품의 attributes 키가 소속 category.attribute_schema와 일치하는가 (D11)
 - [ ] 결제 성공 처리(PAID 전이)가 재고를 같은 트랜잭션의 조건부 UPDATE로 차감하고, 부족 시 결제 실패(OUT_OF_STOCK)·0 도달 시 STOCK 로그 1행을 남기는가 (D33·D32)
-- [ ] 주문 상태 전이가 order_status_logs에 기록되는가 — 배치 전이는 주문 단위 1행, actor 규칙 준수 (D32 — 기록 지점 상세는 01)
+- [ ] 주문 상태 전이가 order_status_logs에 기록되는가 — 아이템 전이는 `order_item_id`를 채워 아이템마다 1행, 주문 전이만 NULL, actor 규칙 준수 (D32 — 기록 지점 상세는 01)
 - [ ] product_change_logs가 전후 동일 값·주문에 의한 재고 -1을 기록하지 않는가 (D32)
 - [ ] 로그인 성공/실패가 Security 핸들러에서 account_event_logs로 적재되는가 — 없는 계정 시도는 member_id NULL + IP (D32)
 - [ ] 전량 취소 시 orders.status→CANCELLED 승격 + 로그 1행이 같은 트랜잭션인가 (D32)
