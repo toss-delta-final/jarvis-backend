@@ -6,6 +6,7 @@ import com.jarvis.seller.AnalysisPeriod;
 import com.jarvis.seller.SellerAnalyticsService;
 import com.jarvis.seller.SellerOrderService;
 import com.jarvis.seller.SellerProductService;
+import com.jarvis.seller.SellerReviewService;
 import com.jarvis.seller.SellerSalesService;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
@@ -56,6 +57,10 @@ public class InternalSellerController {
     private final SellerProductService sellerProductService;
     private final SellerAnalyticsService sellerAnalyticsService;
     private final SellerOrderService sellerOrderService;
+    private final SellerReviewService sellerReviewService;
+
+    /** I-31 기간 생략 시 기본 — 최근 7일(to=오늘, from=6일 전, 노션 I-31) */
+    private static final int REVIEW_DEFAULT_DAYS = 7;
 
     /** I-6 — 매출 시계열(granularity daily|weekly|monthly|summary, 이상 감지 포함) */
     @GetMapping("/seller/{brandId}/sales")
@@ -122,6 +127,29 @@ public class InternalSellerController {
             @RequestParam(defaultValue = "0") @Min(0) long offset) {
         return ApiResponse.success(sellerOrderService.listInternal(
                 brandId, status, orderId, AnalysisPeriod.optional(from, to), limit, offset));
+    }
+
+    /**
+     * I-31 — 자사 상품 리뷰 목록·집계 (노션 I-31). 읽기 전용이라 HITL이 없다.
+     * status=VISIBLE만 — 신고로 숨겨진 리뷰를 에이전트가 인용하면 사고다.
+     * 기간은 선택이고 생략하면 최근 7일이다(리뷰는 기간 질의가 본령이라 I-29의 "전체"와 반대).
+     * stats=true면 목록 대신 집계만 내려가며 응답 shape 자체가 갈린다.
+     */
+    @GetMapping("/seller/{brandId}/reviews")
+    public ApiResponse<?> reviews(
+            @PathVariable Long brandId,
+            @RequestParam(required = false) Long productId,
+            @RequestParam(required = false) String rating,
+            @RequestParam(defaultValue = "latest") @Pattern(regexp = "latest|ratingAsc") String sort,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit,
+            @RequestParam(defaultValue = "0") @Min(0) int offset,
+            @RequestParam(defaultValue = "false") boolean stats) {
+        AnalysisPeriod period = AnalysisPeriod.withDefaultDays(from, to, REVIEW_DEFAULT_DAYS);
+        return ApiResponse.success(stats
+                ? sellerReviewService.stats(brandId, productId, rating, period)
+                : sellerReviewService.list(brandId, productId, rating, sort, period, limit, offset));
     }
 
     /** I-10 — 상품 등록(HITL confirm 후) — 등록은 change log 미기록, 201 {productId, status} (노션 I-10) */

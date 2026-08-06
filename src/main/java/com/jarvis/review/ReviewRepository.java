@@ -1,6 +1,8 @@
 package com.jarvis.review;
 
 import com.jarvis.review.dto.ReviewRow;
+import com.jarvis.seller.dto.SellerReviewRow;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.domain.Page;
@@ -50,4 +52,55 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
             group by r.productId
             """)
     List<Object[]> aggregateVisibleByProductIds(@Param("productIds") Collection<Long> productIds);
+
+    // ── I-31 자사 상품 리뷰 (노션 I-31) ──
+    // P-3와 달리 브랜드 전체가 대상이라 Product를 조인해 소유권을 건다. VISIBLE만 보는 건 같다.
+    // 크롤링 리뷰(member_id NULL, 02 D19)도 포함하므로 Member는 left join이고 닉네임은 coalesce다.
+    // applyRating은 빈 컬렉션을 IN에 넣지 않으려는 플래그 — I-14 toStatus 전례.
+
+    String SELLER_WHERE = """
+            from Review r
+              join Product p on p.id = r.productId
+              left join Member m on m.id = r.memberId
+            where p.brandId = :brandId
+              and r.status = com.jarvis.review.ReviewStatus.VISIBLE
+              and (:productId is null or r.productId = :productId)
+              and (:applyRating = false or r.rating in :ratings)
+              and r.createdAt >= :from and r.createdAt < :to
+            """;
+
+    String SELLER_SELECT = "select new com.jarvis.seller.dto.SellerReviewRow("
+            + "r.id, r.productId, p.name, r.rating, r.content, "
+            + "coalesce(m.nickname, r.authorName), r.createdAt) ";
+    String SELLER_COUNT = "select count(r) " + SELLER_WHERE;
+
+    @Query(value = SELLER_SELECT + SELLER_WHERE + " order by r.createdAt desc, r.id desc",
+            countQuery = SELLER_COUNT)
+    Page<SellerReviewRow> findSellerReviewsLatest(
+            @Param("brandId") Long brandId, @Param("productId") Long productId,
+            @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to, Pageable pageable);
+
+    /** ratingAsc = 낮은 순 고정 — P-3의 sort=rating(높은 순)과 이름을 가른 이유다(노션 I-31 결정 1) */
+    @Query(value = SELLER_SELECT + SELLER_WHERE + " order by r.rating asc, r.id desc",
+            countQuery = SELLER_COUNT)
+    Page<SellerReviewRow> findSellerReviewsRatingAsc(
+            @Param("brandId") Long brandId, @Param("productId") Long productId,
+            @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to, Pageable pageable);
+
+    /** [rating, count] — stats distribution. 없는 별점은 행이 없으므로 서비스가 0으로 채운다 */
+    @Query("select r.rating, count(r) " + SELLER_WHERE + " group by r.rating")
+    List<Object[]> countSellerReviewsByRating(
+            @Param("brandId") Long brandId, @Param("productId") Long productId,
+            @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /** [productId, productName, count, avg] — stats byProduct. count 내림차순, 동률은 productId 오름차순 */
+    @Query("select r.productId, p.name, count(r), avg(r.rating) " + SELLER_WHERE
+            + " group by r.productId, p.name order by count(r) desc, r.productId asc")
+    List<Object[]> aggregateSellerReviewsByProduct(
+            @Param("brandId") Long brandId, @Param("productId") Long productId,
+            @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 }
