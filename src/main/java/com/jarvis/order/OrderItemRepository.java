@@ -79,10 +79,12 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
     List<ProductQuantityRow> sumPaidQuantityByProduct(@Param("productIds") Collection<Long> productIds);
 
     /**
-     * S-2 주문 단위 탭 카운트 (노션 S-2) — 자사 아이템이 포함된 PAID 주문을 대표상태로 분류.
+     * S-2·I-29 주문 단위 탭 카운트 (노션 S-2) — 자사 아이템이 포함된 PAID 주문을 대표상태로 분류.
      * 대표 탭 규칙(위에서부터): 활성 클레임(*_REQUESTED) 또는 전량 종결(CANCELLED/RETURNED) → CLAIM,
      * ORDERED 존재 → ORDERED, SHIPPING 존재 → SHIPPING, 그 외(DELIVERED/CONFIRMED) → DELIVERED.
      * item.status는 claim REQUESTED와 동기 전이(01 §5)라 클레임 판정에 claim 테이블 조인 불필요.
+     * orderId·from·to는 I-29 전용 선택 필터 — S-2는 전부 null을 넘겨 종전과 같이 동작한다.
+     * 탭 필터는 여기 없다: tabCounts는 탭 선택과 무관한 전량 기준이기 때문(S-2 규칙).
      */
     @Query(value = """
             SELECT t.tab AS bucket, COUNT(*) AS cnt FROM (
@@ -97,13 +99,22 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
                 FROM order_item oi
                 JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
                 JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+                WHERE (:orderId IS NULL OR o.id = :orderId)
+                  AND (CAST(:from AS datetime) IS NULL OR o.created_at >= :from)
+                  AND (CAST(:to AS datetime) IS NULL OR o.created_at < :to)
                 GROUP BY oi.order_id
             ) t
             GROUP BY t.tab
             """, nativeQuery = true)
-    List<StatusCountRow> countSellerOrderTabs(@Param("brandId") Long brandId);
+    List<StatusCountRow> countSellerOrderTabs(@Param("brandId") Long brandId,
+                                              @Param("orderId") Long orderId,
+                                              @Param("from") LocalDateTime from,
+                                              @Param("to") LocalDateTime to);
 
-    /** S-2 페이지 orderId — 대표 탭 필터(null=전체) + 주문일시 최신순. 대표상태 파생은 countSellerOrderTabs와 동일. */
+    /**
+     * S-2·I-29 페이지 orderId — 대표 탭 필터(null=전체) + 주문일시 최신순. 대표상태 파생은 countSellerOrderTabs와 동일.
+     * orderId·from·to는 I-29 전용 선택 필터 — S-2는 전부 null을 넘겨 종전과 같이 동작한다.
+     */
     @Query(value = """
             SELECT t.order_id FROM (
                 SELECT oi.order_id AS order_id, o.created_at AS created_at,
@@ -117,6 +128,9 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
                 FROM order_item oi
                 JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
                 JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+                WHERE (:orderId IS NULL OR o.id = :orderId)
+                  AND (CAST(:from AS datetime) IS NULL OR o.created_at >= :from)
+                  AND (CAST(:to AS datetime) IS NULL OR o.created_at < :to)
                 GROUP BY oi.order_id, o.created_at
             ) t
             WHERE (:tab IS NULL OR t.tab = :tab)
@@ -124,6 +138,8 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             LIMIT :limit OFFSET :offset
             """, nativeQuery = true)
     List<Long> findSellerOrderIdsByTab(@Param("brandId") Long brandId, @Param("tab") String tab,
+                                       @Param("orderId") Long orderId,
+                                       @Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
                                        @Param("limit") int limit, @Param("offset") long offset);
 
     /** S-2 페이지 주문들의 자사 아이템 — 금액·건수·대표상품·대표상태 산출용 */

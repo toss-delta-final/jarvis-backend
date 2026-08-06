@@ -1,5 +1,6 @@
 package com.jarvis.seller;
 
+import com.jarvis.brand.BrandRepository;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.Order;
@@ -9,7 +10,9 @@ import com.jarvis.order.OrderItemStatus;
 import com.jarvis.order.OrderRepository;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.seller.dto.SellerOrderInternalResponse;
 import com.jarvis.seller.dto.SellerOrderListResponse;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -46,6 +49,7 @@ public class SellerOrderService {
     private final OrderItemRepository orderItemRepository;
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
+    private final BrandRepository brandRepository;
 
     public SellerOrderListResponse list(Long brandId, String statusParam, int page, int size) {
         if (page < 0 || size < 1 || size > 100) {
@@ -53,22 +57,97 @@ public class SellerOrderService {
         }
         String tab = parseTab(statusParam);
 
-        Map<String, Long> rawTabs = orderItemRepository.countSellerOrderTabs(brandId).stream()
-                .collect(Collectors.toMap(OrderItemRepository.StatusCountRow::getBucket,
-                        OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a));
-        long all = rawTabs.values().stream().mapToLong(Long::longValue).sum();
-        Map<String, Long> tabCounts = new LinkedHashMap<>();
-        tabCounts.put("ALL", all);
-        TAB_KEYS.forEach(key -> tabCounts.put(key, rawTabs.getOrDefault(key, 0L)));
-
+        Map<String, Long> tabCounts = tabCounts(brandId, null, null, null);
+        long all = tabCounts.get("ALL");
         long total = tab == null ? all : tabCounts.getOrDefault(tab, 0L);
         int totalPages = (int) Math.ceil((double) total / size);
 
         List<Long> orderIds = orderItemRepository.findSellerOrderIdsByTab(
-                brandId, tab, size, (long) page * size);
+                brandId, tab, null, null, null, size, (long) page * size);
         List<SellerOrderListResponse.Row> rows = orderIds.isEmpty() ? List.of()
                 : buildRows(brandId, orderIds);
         return new SellerOrderListResponse(tabCounts, rows, page, size, total, totalPages);
+    }
+
+    /**
+     * I-29 (노션 I-29) — S-2와 같은 파생을 쓰되 응답은 items 배열을 실은 internal 판이다.
+     * 파라미터 검증은 컨트롤러의 @Pattern/@Min/@Max가 맡아 VALIDATION_ERROR로 떨어진다
+     * (S-2의 parseTab은 ORDER_INVALID_PARAM을 던지므로 여기서 재사용하지 않는다 — 노션 I-29 결정 1).
+     * 기간을 주면 tabCounts도 그 기간 기준이다 — 탭 선택만 무시하는 게 "전량 기준"의 뜻이기 때문.
+     */
+    public SellerOrderInternalResponse listInternal(Long brandId, String tab, Long orderId,
+                                                    AnalysisPeriod period, int limit, long offset) {
+        if (!brandRepository.existsById(brandId)) {
+            throw new BusinessException(ErrorCode.BRAND_NOT_FOUND);
+        }
+        LocalDateTime from = period.from() == null ? null : period.from().atStartOfDay();
+        // to는 그날을 포함해야 하므로 다음날 0시 미만으로 연다(쿼리는 < :to)
+        LocalDateTime to = period.to() == null ? null : period.to().plusDays(1).atStartOfDay();
+
+        Map<String, Long> tabCounts = tabCounts(brandId, orderId, from, to);
+        long total = tab == null ? tabCounts.get("ALL") : tabCounts.getOrDefault(tab, 0L);
+
+        List<Long> orderIds = orderItemRepository.findSellerOrderIdsByTab(
+                brandId, tab, orderId, from, to, limit, offset);
+        List<SellerOrderInternalResponse.Row> rows = orderIds.isEmpty() ? List.of()
+                : buildInternalRows(brandId, orderIds);
+        return new SellerOrderInternalResponse(tabCounts, rows, total);
+    }
+
+    /** ALL + 4탭 키를 항상 채운다 — 0건도 키가 있어야 에이전트가 "없음"을 말할 수 있다(노션 I-29). */
+    private Map<String, Long> tabCounts(Long brandId, Long orderId, LocalDateTime from, LocalDateTime to) {
+        Map<String, Long> raw = orderItemRepository.countSellerOrderTabs(brandId, orderId, from, to).stream()
+                .collect(Collectors.toMap(OrderItemRepository.StatusCountRow::getBucket,
+                        OrderItemRepository.StatusCountRow::getCnt, (a, b) -> a));
+        Map<String, Long> tabCounts = new LinkedHashMap<>();
+        tabCounts.put("ALL", raw.values().stream().mapToLong(Long::longValue).sum());
+        TAB_KEYS.forEach(key -> tabCounts.put(key, raw.getOrDefault(key, 0L)));
+        return tabCounts;
+    }
+
+    private List<SellerOrderInternalResponse.Row> buildInternalRows(Long brandId, List<Long> orderIds) {
+        Map<Long, Order> orders = orderRepository.findAllById(orderIds).stream()
+                .collect(Collectors.toMap(Order::getId, Function.identity()));
+        Map<Long, List<OrderItem>> itemsByOrder = orderItemRepository
+                .findSellerItemsByOrderIds(brandId, orderIds).stream()
+                .collect(Collectors.groupingBy(OrderItem::getOrderId));
+        Set<Long> productIds = itemsByOrder.values().stream().flatMap(List::stream)
+                .map(OrderItem::getProductId).collect(Collectors.toSet());
+        Map<Long, Product> products = productRepository.findAllById(productIds).stream()
+                .collect(Collectors.toMap(Product::getId, Function.identity()));
+
+        return orderIds.stream()
+                .map(id -> toInternalRow(orders.get(id), itemsByOrder.getOrDefault(id, List.of()), products))
+                .toList();
+    }
+
+    private static SellerOrderInternalResponse.Row toInternalRow(Order order, List<OrderItem> items,
+                                                                 Map<Long, Product> products) {
+        long myItemsAmount = items.stream()
+                .filter(SellerOrderService::countsForAmount)
+                .mapToLong(i -> (long) i.getPrice() * i.getQuantity())
+                .sum();
+        List<SellerOrderInternalResponse.Item> itemRows = items.stream()
+                .map(item -> {
+                    Product product = products.get(item.getProductId());
+                    return new SellerOrderInternalResponse.Item(item.getId(), item.getProductId(),
+                            // 현재 상품명 우선 + 스냅샷 폴백 — S-2 대표상품과 같은 규칙
+                            product != null ? product.getName() : item.getProductName(),
+                            item.getOptionName(), item.getQuantity(), item.getPrice(),
+                            item.getStatus().name(), activeClaimStatus(item));
+                })
+                .toList();
+        return new SellerOrderInternalResponse.Row(order.getId(), order.orderNo(),
+                order.getCreatedAt().atZone(ZONE).toOffsetDateTime(), order.getRecipient(),
+                order.getPaymentMethod(), myItemsAmount,
+                representativeStatus(items), claimStatus(items), itemRows);
+    }
+
+    /** 아이템 단위 활성 클레임 — 종결된 클레임은 status 자체에 드러나므로 null (노션 I-29) */
+    private static String activeClaimStatus(OrderItem item) {
+        return item.getStatus() == OrderItemStatus.CANCEL_REQUESTED
+                || item.getStatus() == OrderItemStatus.RETURN_REQUESTED
+                ? item.getStatus().name() : null;
     }
 
     private List<SellerOrderListResponse.Row> buildRows(Long brandId, List<Long> orderIds) {

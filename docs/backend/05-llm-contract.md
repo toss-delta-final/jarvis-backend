@@ -254,6 +254,20 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - I-28은 I-27의 지칭 해소용("어제 찜한 이어폰")이며 조회이므로 `action` 이벤트가 없다 — I-18과 같이 `token` 텍스트로 답한다. 찜이 없어도 200 + 빈 배열이고, 찜한 뒤 HIDDEN·품절이 된 상품도 목록에 남아 "찜해 둔 상품이지만 지금은 담을 수 없어요" 안내에 쓸 수 있다. 페이징 없이 MVP 전량 반환.
 - **IDOR 표면은 장바구니보다 작다.** 키가 `(userId, productId)`라 타인의 찜 행을 직접 지목할 수 없고, I-24의 별도 소유자 재검증이 여기서는 "그 회원의 찜 행이 있는가" 판정으로 흡수된다. 단 이 성질은 `userId`를 AI가 검증한 티켓 `sub`에서만 도출한다는 전제(§0-1)가 유지될 때만 성립한다.
 
+### I-29. 자사 주문 조회 `GET /internal/seller/{brandId}/orders` (신설 2026-08-06 — 판매자 챗봇 `get_orders`)
+
+- **S-2의 internal 판**(S-3↔I-9와 같은 구도). "신규주문 뭐 있어?" 현재 상태 Q&A + **I-30 발송 대상 `orderItemId` 해소 경로**. 역할 분리: **I-29 = 현재 상태, I-14 = 전이 이력·집계**.
+- query: `status?`(`ORDERED|SHIPPING|DELIVERED|CLAIM` — S-2 탭 어휘, 생략=전체) · `orderId?`(단건 직조회) · `from`/`to`?(`YYYY-MM-DD`, 주문일 기준) · `limit`(기본 20, 1~100) · `offset`(기본 0).
+- 응답 `{tabCounts{ALL,ORDERED,SHIPPING,DELIVERED,CLAIM}, rows[{orderId, orderNo, orderedAt, recipientName, paymentMethod, myItemsAmount, status, claimStatus, items[{orderItemId, productId, name, optionName, quantity, price, status, activeClaimStatus}]}], total}` — id는 숫자 그대로(문자열화는 공개 응답 한정).
+- **기간은 선택이고 생략하면 전체 주문이다** — 현재 상태 Q&A라 기간 개념이 없고, 잘라내면 오래된 미발송 주문이 빠져 I-30 발송 대상 해소가 막힌다. I-31이 최근 7일 기본인 것과 반대인데 의도된 차이다. `to`는 그날을 포함한다(다음날 0시 미만).
+- **`tabCounts`는 탭 선택만 무시하고 기간·`orderId` 필터는 반영한다** — "전량 기준"(S-2)이 뜻하는 건 탭과 무관하다는 것이고, 기간을 준 질의에서는 그 기간 안의 탭 분포가 답이기 때문.
+- S-2에서 **상속하는 건 파생 규칙**(대표상태·`claimStatus`·`orderNo`·자사 금액만 집계·타사 아이템 이름/금액 미노출)**이지 응답 필드가 아니다** — `myItemCount`·`representativeProduct`는 싣지 않는다(개수는 `items` 길이, 대표상품은 화면용 장치).
+- `activeClaimStatus`는 `CANCEL_REQUESTED|RETURN_REQUESTED|null`이며 claim 테이블이 아니라 **아이템 `status`에서 직접 파생**한다(01 §5 동기 전이). 종결된 클레임(`CANCELLED`/`RETURNED`)은 `status` 자체에 드러나므로 여기선 `null`이다.
+- `items[].name`은 **현재 상품명 우선 + 스냅샷 폴백** — S-2 대표상품과 같은 규칙이라 판매자가 상품명을 바꿔도 두 화면이 어긋나지 않는다.
+- 실패: 400 `VALIDATION_ERROR`(`status` 어휘 밖 — `PREPARING` 포함 / `limit` 1–100 밖 / 숫자 자리에 문자) · 400 `INVALID_PERIOD`(형식 오류·역전. **누락은 오류가 아니다**) · 401 `INTERNAL_TOKEN_INVALID` · 404 `BRAND_NOT_FOUND` · 500 `INTERNAL_ERROR`. **403은 없다**(§0-1).
+  - S-2·I-19가 쓰는 `ORDER_INVALID_PARAM`이 **아니다** — I-24~I-28 internal 전례를 따른다(2026-08-06 결정).
+- **자사 주문 0건도 200 + 빈 `rows`·`total: 0`·`tabCounts` 전부 0**이고, `orderId` 직조회가 타사·미존재여도 **404가 아니라 200 + 빈 `rows`**로 존재를 은닉한다 — 에이전트는 "해당 주문이 없습니다"로 안내한다.
+
 ## 2-1. 아웃바운드: Spring → FastAPI
 
 ### I-20. 세션 종료 통지 `POST {LLM_BASE_URL}/events/session-end` — **방향 예외(Spring→FastAPI)**
