@@ -16,8 +16,13 @@ public record SellerOrderEventsResponse(Long brandId, LocalDate from, LocalDate 
                                         List<?> rows, Integer total, Map<String, Long> byStatus,
                                         List<ReasonCount> cancelReasonsTop) {
 
-    public record Row(Long orderId, String fromStatus, String toStatus, String actorType,
-                      String reason, Long buyerMemberId, OffsetDateTime createdAt) {
+    /**
+     * orderItemId는 아이템 상태 전이면 값, 주문 상태 전이(PAID 등)면 null이다(2026-08-06 추가).
+     * 발송이 아이템 단위라 이게 없으면 같은 orderId의 동일 행이 여러 개로 보여 중복으로 읽힌다.
+     */
+    public record Row(Long orderId, Long orderItemId, String fromStatus, String toStatus,
+                      String actorType, String reason, Long buyerMemberId,
+                      OffsetDateTime createdAt) {
     }
 
     /**

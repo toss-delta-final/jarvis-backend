@@ -2,11 +2,8 @@ package com.jarvis.order;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +16,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 같은 트랜잭션으로 묶어 로그 누락을 구조적으로 차단한다. 이 클래스를 우회한 상태 변경은 리뷰에서 거부된다.
  *
  * 기록 규칙 (01 §6.5): *_REQUESTED(claim이 정본)·CONFIRMED(분석 미사용)·아이템 ORDERED(PAID와 동시) 미기록.
- * 같은 주문의 동일 전이 배치는 주문 단위 1행. 취소·반품 완료 actor는 승인 주체가 아니라 신청 주체(USER).
+ * 아이템 상태 전이는 아이템마다 1행(orderItemId 필수), 주문 상태 전이만 null — 해상도는 "무엇의 상태를
+ * 바꿨나"로 가른다(2026-08-06 개정, 구 "배치는 주문 단위 1행" 폐기).
+ * 취소·반품 완료 actor는 승인 주체가 아니라 신청 주체(USER).
  */
 @Slf4j
 @Component
@@ -33,7 +32,7 @@ public class OrderStatusChanger {
 
     /** O-1 주문 생성 — NULL → PENDING (SYSTEM) */
     public void logOrderCreated(Order order) {
-        logRepository.save(OrderStatusLog.of(order.getId(), null,
+        logRepository.save(OrderStatusLog.ofOrder(order.getId(), null,
                 OrderStatus.PENDING.name(), ActorType.SYSTEM, null));
     }
 
@@ -41,7 +40,7 @@ public class OrderStatusChanger {
     public void paymentFailed(Order order, String failureCode) {
         String from = order.getStatus().name();
         order.markPaymentFailed();
-        logRepository.save(OrderStatusLog.of(order.getId(), from,
+        logRepository.save(OrderStatusLog.ofOrder(order.getId(), from,
                 OrderStatus.PAYMENT_FAILED.name(), ActorType.SYSTEM, failureCode));
     }
 
@@ -50,7 +49,7 @@ public class OrderStatusChanger {
         String from = order.getStatus().name();
         order.markPaid(now);
         items.forEach(item -> item.markOrdered(now));
-        logRepository.save(OrderStatusLog.of(order.getId(), from,
+        logRepository.save(OrderStatusLog.ofOrder(order.getId(), from,
                 OrderStatus.PAID.name(), ActorType.SYSTEM, null));
     }
 
@@ -63,7 +62,7 @@ public class OrderStatusChanger {
     }
 
     /**
-     * 배송 mock 전이 1단계 (01 §6) — 조건부 UPDATE(+status_changed_at 갱신) 후 주문 단위 로그.
+     * 배송 mock 전이 1단계 (01 §6) — 조건부 UPDATE(+status_changed_at 갱신) 후 아이템마다 로그 1행.
      * CONFIRMED 전이는 writeLog=false로 호출 (01 §6.5 규칙 2).
      */
     @Transactional
@@ -75,24 +74,23 @@ public class OrderStatusChanger {
             return 0;
         }
         LocalDateTime now = LocalDateTime.now();
-        Set<Long> transitionedOrders = new LinkedHashSet<>();
         int count = 0;
         for (OrderItem item : candidates) {
             if (orderItemRepository.transitionStatus(item.getId(), from, to, now) == 1) {
-                transitionedOrders.add(item.getOrderId());
+                if (writeLog) {
+                    // 아이템 상태 전이라 아이템마다 1행 (01 §6.5 규칙 4) — 구 주문 단위 묶음은 폐기
+                    logRepository.save(OrderStatusLog.ofItem(item.getOrderId(), item.getId(),
+                            from.name(), to.name(), ActorType.SYSTEM, null));
+                }
                 count++;
             }
-        }
-        if (writeLog) {
-            transitionedOrders.forEach(orderId -> logRepository.save(
-                    OrderStatusLog.of(orderId, from.name(), to.name(), ActorType.SYSTEM, null)));
         }
         return count;
     }
 
     /**
      * 클레임 자동 승인 배치 (01 D10·§6) — 아이템 종결 전이 + claim COMPLETED 같은 트랜잭션.
-     * 로그는 (주문, 전이)당 1행, actor=USER(신청 주체), reason=claim.reason (01 §6.5 규칙 3·4).
+     * 로그는 아이템마다 1행, actor=USER(신청 주체), reason=claim.reason (01 §6.5 규칙 3·4).
      * 전량 취소 도달 시 orders.status → CANCELLED 승격 + 주문 단위 로그 1행 (01 §2-1).
      */
     @Transactional
@@ -106,7 +104,6 @@ public class OrderStatusChanger {
                 .stream().collect(Collectors.toMap(OrderItem::getId, Function.identity()));
 
         LocalDateTime now = LocalDateTime.now();
-        Map<LogKey, String> logGroups = new LinkedHashMap<>();
         List<Long> cancelledOrderIds = new ArrayList<>();
         int approved = 0;
         for (Claim claim : due) {
@@ -121,14 +118,15 @@ public class OrderStatusChanger {
                 continue;
             }
             claim.approve(now);
-            logGroups.putIfAbsent(new LogKey(item.getOrderId(), from, to), claim.getReason());
+            // 아이템 상태 전이라 아이템마다 1행 — 구 (주문, from, to) 묶음은 폐기(01 §6.5 규칙 4).
+            // 묶을 때 버려지던 아이템별 claim.reason도 이제 각 행에 그대로 남는다.
+            logRepository.save(OrderStatusLog.ofItem(item.getOrderId(), item.getId(),
+                    from.name(), to.name(), ActorType.USER, claim.getReason()));
             if (to == OrderItemStatus.CANCELLED) {
                 cancelledOrderIds.add(item.getOrderId());
             }
             approved++;
         }
-        logGroups.forEach((key, reason) -> logRepository.save(
-                OrderStatusLog.of(key.orderId(), key.from().name(), key.to().name(), ActorType.USER, reason)));
         promoteFullyCancelledOrders(cancelledOrderIds);
         return approved;
     }
@@ -141,13 +139,10 @@ public class OrderStatusChanger {
                         .ifPresent(order -> {
                             String from = order.getStatus().name();
                             order.markCancelled();
-                            logRepository.save(OrderStatusLog.of(orderId, from,
+                            logRepository.save(OrderStatusLog.ofOrder(orderId, from,
                                     OrderStatus.CANCELLED.name(), ActorType.USER, null));
                         });
             }
         });
-    }
-
-    private record LogKey(Long orderId, OrderItemStatus from, OrderItemStatus to) {
     }
 }
