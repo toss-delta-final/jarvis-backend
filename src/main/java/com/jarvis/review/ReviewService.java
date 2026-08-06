@@ -55,7 +55,8 @@ public class ReviewService {
             throw new BusinessException(ErrorCode.REVIEW_ALREADY_EXISTS);
         }
         Review review = reviewRepository.save(Review.write(
-                item.getId(), item.getProductId(), memberId, request.rating(), request.content()));
+                item.getId(), item.getProductId(), memberId, request.rating(),
+                request.normalizedContent()));
         return ReviewCreateResponse.from(review);
     }
 

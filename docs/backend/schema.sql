@@ -268,7 +268,7 @@ CREATE TABLE review (
     member_id      BIGINT      NULL,                       -- NULL = 크롤링 리뷰 (D19). NULL이면 author_name 필수(서비스 검증)
     author_name    VARCHAR(50) NULL,                       -- 크롤링 리뷰 작성자 표시명 (D19)
     rating         TINYINT     NOT NULL,
-    content        TEXT        NOT NULL,
+    content        TEXT        NULL,                       -- NULL = 별점만 남긴 후기 (M-1, 2026-08-06). 빈 문자열로 저장하지 않는다
     status         VARCHAR(20) NOT NULL DEFAULT 'VISIBLE', -- VISIBLE / HIDDEN / DELETED — 신고 처리는 soft (D4)
     created_at     DATETIME    NOT NULL,
     updated_at     DATETIME    NULL,

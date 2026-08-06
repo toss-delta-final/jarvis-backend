@@ -97,6 +97,28 @@ class ReviewWriteServiceTest {
     }
 
     @Test
+    @DisplayName("M-1 — 별점만 남기면 content는 null로 저장 (2026-08-06)")
+    void writeRatingOnly() {
+        ReviewCreateResponse response = reviewService.write(MEMBER_ID,
+                new ReviewCreateRequest(ORDER_ITEM_ID, 5, null));
+
+        ArgumentCaptor<Review> captor = ArgumentCaptor.forClass(Review.class);
+        verify(reviewRepository).save(captor.capture());
+        assertThat(captor.getValue().getContent()).isNull();
+        assertThat(response.content()).isNull();
+    }
+
+    @Test
+    @DisplayName("M-1 — 공백만 들어와도 빈 문자열이 아니라 null로 저장")
+    void writeBlankContentNormalized() {
+        reviewService.write(MEMBER_ID, new ReviewCreateRequest(ORDER_ITEM_ID, 3, "   "));
+
+        ArgumentCaptor<Review> captor = ArgumentCaptor.forClass(Review.class);
+        verify(reviewRepository).save(captor.capture());
+        assertThat(captor.getValue().getContent()).isNull();
+    }
+
+    @Test
     @DisplayName("M-1 — SHIPPING 등 자격 외 상태는 400 REVIEW_NOT_ALLOWED")
     void writeRejectedByStatus() {
         when(orderItem.getStatus()).thenReturn(OrderItemStatus.SHIPPING);
