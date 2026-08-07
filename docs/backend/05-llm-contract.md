@@ -165,7 +165,8 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - attributes까지 반환하는 이유: LLM이 "린넨 소재만" 같은 세밀 조건을 후처리 필터링할 수 있게(서버는 후보만 좁힘 — 02 D7). 카테고리별 속성 축의 정의는 `category.attribute_schema`(02 D11) — 시드 데이터·벡터DB attributes·LLM 프롬프트가 같은 축을 공유한다.
 
 ### I-2. 장바구니 담기 `POST /internal/cart/items`
-- body: `{ "userId": 123, "guestId": null, "productId": 1, "optionId": null, "quantity": 1 }` — userId/guestId 중 하나(채팅 요청의 메아리). quantity 1~99 (04 §3과 동일 검증: 입구가 달라도 같은 CartService)
+- body: `{ "userId": 123, "guestId": null, "productId": 1, "optionId": null, "quantity": 1, "recommendationContext": { "recommendationRequestId": "a63be350-...", "listId": "9f2c1a7e..." } }` — userId/guestId 중 하나(채팅 요청의 메아리). quantity 1~99 (04 §3과 동일 검증: 입구가 달라도 같은 CartService)
+- **`recommendationContext`(선택, 2026-08-07 구현 — 02 D43)**: FastAPI가 싣는다. 챗봇이 직전 추천에서 "담아줘"를 처리하는 경로라 **추천→전환의 가장 직접적인 증거**다. 서버가 저장 전 ① `listId` 실재 ② 목록 소유자 = 요청자(`userId`/`guestId`) ③ `productId`가 그 목록에 포함을 확인하고, **어긋나면 문맥만 버리고 담기는 성공**시킨다 — 검증 실패로 400이 나가지 않으므로 LLM은 이 필드 때문에 실패 문구를 낼 일이 없다. `recommendationRequestId`도 요청값이 아니라 목록에 저장된 값을 쓴다(둘이 달라도 오류가 아니다).
 - **게스트(userId null)도 guestId로 담기 성공** (02 D30 — 2026-07-10 개정, 기존 403 유도 폐기). 로그인 유도는 결제 시점의 FE 몫 — LLM은 "장바구니에 담았어요. 주문하실 땐 로그인이 필요해요" 정도로만 안내.
 - 옵션 필요한데 optionId 없으면 400 `CART_OPTION_REQUIRED` + options 목록 반환 → LLM이 "어떤 색상으로 담을까요?"로 되물음. **(2026-07-18 구현 확정)** options는 envelope `error.detail.options[{optionId, name, extraPrice}]`로 실린다. **2026-08-06부터 여기 `optionId`는 문자열**(`"42"`) — 공개 C-2와 DTO를 공유해서다(§2 id 타입). 되보내는 요청 body의 optionId는 숫자·문자열 모두 받는다.
 - **재고 부족 시 400 `CART_STOCK_INSUFFICIENT` + `error.detail.availableStock`(2026-07-22 추가)** — 합산 후 수량이 재고를 넘으면. LLM은 "재고가 N개뿐이에요"로 안내. 재고는 상품 단위(옵션별 재고 없음, 02 D33)라 옵션 무관하게 상품 재고와 비교. C-2와 동일 CartService·동일 규칙.

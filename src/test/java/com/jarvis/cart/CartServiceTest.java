@@ -3,6 +3,7 @@ package com.jarvis.cart;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -19,6 +20,9 @@ import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.product.ProductStatus;
+import com.jarvis.recommendation.ConversionAttribution;
+import com.jarvis.recommendation.RecommendationAttributionResolver;
+import com.jarvis.recommendation.dto.RecommendationContext;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +43,7 @@ class CartServiceTest {
     @Mock ProductOptionRepository productOptionRepository;
     @Mock BrandRepository brandRepository;
     @Mock GuestService guestService;
+    @Mock RecommendationAttributionResolver attributionResolver;
 
     @InjectMocks CartService cartService;
 
@@ -51,6 +56,9 @@ class CartServiceTest {
         when(product.getStatus()).thenReturn(ProductStatus.ON_SALE);
         when(product.getStockQuantity()).thenReturn(100);        // 시드 기본 재고 (02 D33) — 개별 테스트가 필요 시 override
         lenient().when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        // 담기 대부분은 추천 경유가 아니다 — 개별 테스트가 필요할 때만 override
+        lenient().when(attributionResolver.resolveForConversion(any(), any(), any(), any()))
+                .thenReturn(ConversionAttribution.NONE);
         lenient().when(cartItemRepository.save(any(CartItem.class))).thenAnswer(inv -> {
             CartItem item = inv.getArgument(0);
             ReflectionTestUtils.setField(item, "id", 5L);
@@ -65,7 +73,7 @@ class CartServiceTest {
         when(brand.getId()).thenReturn(3L);
         when(product.getBrandId()).thenReturn(3L);
         when(product.getStockQuantity()).thenReturn(3);
-        CartItem line = CartItem.forMember(1L, 10L, null, 2);
+        CartItem line = CartItem.forMember(1L, 10L, null, 2, null);
         when(cartItemRepository.findAllByMemberIdOrderByIdDesc(1L)).thenReturn(List.of(line));
         when(productRepository.findAllById(List.of(10L))).thenReturn(List.of(product));
         when(productOptionRepository.findAllById(List.of())).thenReturn(List.of());
@@ -91,11 +99,11 @@ class CartServiceTest {
         when(option.getId()).thenReturn(77L);
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of(option));
 
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.CART_OPTION_REQUIRED);
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, 999L, 1)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, 999L, 1, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.CART_OPTION_INVALID);
@@ -105,14 +113,14 @@ class CartServiceTest {
     @DisplayName("C-2 — 동일 상품+옵션 재담기는 수량 합산, 합산 99 초과는 400")
     void addQuantityOverflowRejected() {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
-        CartItem existing = CartItem.forMember(1L, 10L, null, 98);
+        CartItem existing = CartItem.forMember(1L, 10L, null, 98, null);
         ReflectionTestUtils.setField(existing, "id", 5L);
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(existing));
 
-        CartService.CartAddResult ok = cartService.addItem(1L, null, new CartAddRequest(10L, null, 1));
+        CartService.CartAddResult ok = cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null));
         assertThat(ok.item().quantity()).isEqualTo(99);
 
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_ERROR);
@@ -125,7 +133,7 @@ class CartServiceTest {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 5)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 5, null)))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> {
                     BusinessException ex = (BusinessException) e;
@@ -138,7 +146,7 @@ class CartServiceTest {
     @DisplayName("C-3 — 변경 수량이 재고 초과면 CART_STOCK_INSUFFICIENT")
     void changeQuantityStockInsufficient() {
         when(product.getStockQuantity()).thenReturn(3);
-        CartItem owned = CartItem.forMember(1L, 10L, null, 1);
+        CartItem owned = CartItem.forMember(1L, 10L, null, 1, null);
         ReflectionTestUtils.setField(owned, "id", 5L);
         when(cartItemRepository.findById(5L)).thenReturn(Optional.of(owned));
 
@@ -155,7 +163,7 @@ class CartServiceTest {
         when(cartItemRepository.findGuestLinesForUpdate(any(), any(), any())).thenReturn(List.of());
         when(guestService.ensureGuest(null)).thenReturn("issued-guest-id");
 
-        CartService.CartAddResult result = cartService.addItem(null, null, new CartAddRequest(10L, null, 2));
+        CartService.CartAddResult result = cartService.addItem(null, null, new CartAddRequest(10L, null, 2, null));
 
         assertThat(result.issuedGuestId()).isEqualTo("issued-guest-id");
         verify(guestService).ensureGuest(null);
@@ -164,9 +172,9 @@ class CartServiceTest {
     @Test
     @DisplayName("병합 승계 — 동일 상품+옵션은 수량 합산 후 게스트 행 삭제, 없으면 소유자 변경 (02 D30)")
     void mergeGuestCart() {
-        CartItem guestDup = CartItem.forGuest("g-1", 10L, null, 3);
-        CartItem guestNew = CartItem.forGuest("g-1", 20L, null, 1);
-        CartItem memberLine = CartItem.forMember(1L, 10L, null, 2);
+        CartItem guestDup = CartItem.forGuest("g-1", 10L, null, 3, null);
+        CartItem guestNew = CartItem.forGuest("g-1", 20L, null, 1, null);
+        CartItem memberLine = CartItem.forMember(1L, 10L, null, 2, null);
         when(cartItemRepository.findAllByGuestId("g-1")).thenReturn(List.of(guestDup, guestNew));
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(memberLine));
         when(cartItemRepository.findMemberLinesForUpdate(1L, 20L, null)).thenReturn(List.of());
@@ -179,10 +187,85 @@ class CartServiceTest {
         assertThat(guestNew.getGuestId()).isNull();
     }
 
+    // ---- 추천 귀속 (노션 C-2·I-2) ----
+
+    private static final String LIST_ID = "9f2c1a7e4b8d43f5a0c6e1d97b3f8a24";
+    private static final String REQUEST_ID = "a63be350-ec96-4f44-b3f9-c962b6673a68";
+
+    private static final RecommendationContext CONTEXT = new RecommendationContext(REQUEST_ID, LIST_ID);
+    private static final ConversionAttribution VERIFIED =
+            new ConversionAttribution(REQUEST_ID, LIST_ID);
+
+    @Test
+    @DisplayName("C-2 — 추천 카드에서 담으면 검증된 출처가 cart_item에 저장된다")
+    void addStoresVerifiedAttribution() {
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
+        when(attributionResolver.resolveForConversion(CONTEXT, 10L, 1L, null)).thenReturn(VERIFIED);
+
+        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT));
+
+        verify(cartItemRepository).save(argThat(item ->
+                LIST_ID.equals(item.getListId()) && REQUEST_ID.equals(item.getRecommendationRequestId())));
+    }
+
+    // 분석 데이터가 이상하다고 사용자의 담기를 막으면 안 된다 (노션 C-2 「검증 규칙」)
+    @Test
+    @DisplayName("C-2 — 출처 검증에 실패해도 담기는 성공하고 출처만 비워진다")
+    void addSucceedsWhenAttributionRejected() {
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
+        when(attributionResolver.resolveForConversion(CONTEXT, 10L, 1L, null))
+                .thenReturn(ConversionAttribution.NONE);
+
+        CartService.CartAddResult result =
+                cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT));
+
+        assertThat(result.item().quantity()).isEqualTo(1);
+        verify(cartItemRepository).save(argThat(item -> item.getListId() == null));
+    }
+
+    @Test
+    @DisplayName("C-2 재담기 — 검증된 새 출처만 덮어쓰고(last_valid_touch), 출처 없는 재담기는 기존 값을 지우지 않는다")
+    void reAddOverwritesOnlyWithValidAttribution() {
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        CartItem existing = CartItem.forMember(1L, 10L, null, 1, null);
+        ReflectionTestUtils.setField(existing, "id", 5L);
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(existing));
+        when(attributionResolver.resolveForConversion(CONTEXT, 10L, 1L, null)).thenReturn(VERIFIED);
+
+        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT));
+        assertThat(existing.getListId()).isEqualTo(LIST_ID);
+
+        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null));
+        assertThat(existing.getListId()).isEqualTo(LIST_ID);
+    }
+
+    @Test
+    @DisplayName("병합 승계 — 사라지는 게스트 라인의 출처는 회원 라인이 비어 있을 때만 물려받는다")
+    void mergeInheritsAttributionOnlyWhenEmpty() {
+        CartItem guestWithSource = CartItem.forGuest("g-1", 10L, null, 1, VERIFIED);
+        CartItem guestOther = CartItem.forGuest("g-1", 20L, null, 1, VERIFIED);
+        CartItem emptyMemberLine = CartItem.forMember(1L, 10L, null, 1, null);
+        CartItem ownedMemberLine = CartItem.forMember(1L, 20L, null, 1,
+                new ConversionAttribution("other-request", "other-list"));
+        when(cartItemRepository.findAllByGuestId("g-1"))
+                .thenReturn(List.of(guestWithSource, guestOther));
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null))
+                .thenReturn(List.of(emptyMemberLine));
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 20L, null))
+                .thenReturn(List.of(ownedMemberLine));
+
+        cartService.mergeGuestCart(1L, "g-1");
+
+        assertThat(emptyMemberLine.getListId()).isEqualTo(LIST_ID);
+        assertThat(ownedMemberLine.getListId()).isEqualTo("other-list");
+    }
+
     @Test
     @DisplayName("C-3/C-4 — 남의 항목 접근은 403 AUTH_FORBIDDEN")
     void ownershipGuard() {
-        CartItem foreign = CartItem.forMember(2L, 10L, null, 1);
+        CartItem foreign = CartItem.forMember(2L, 10L, null, 1, null);
         when(cartItemRepository.findById(5L)).thenReturn(Optional.of(foreign));
 
         assertThatThrownBy(() -> cartService.changeQuantity(1L, null, 5L, 3))

@@ -25,6 +25,8 @@ import com.jarvis.product.ProductChangeType;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.recommendation.ConversionAttribution;
+import com.jarvis.recommendation.RecommendationAttributionResolver;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -69,8 +71,10 @@ public class OrderService {
     private final ReviewRepository reviewRepository;
     private final PaymentService paymentService;
     private final OrderStatusChanger statusChanger;
+    private final RecommendationAttributionResolver attributionResolver;
 
-    private record Line(Product product, ProductOption option, int quantity, CartItem cartItem) {
+    private record Line(Product product, ProductOption option, int quantity, CartItem cartItem,
+                        ConversionAttribution attribution) {
 
         int unitPrice() {
             return product.getPrice() + (option == null ? 0 : option.getExtraPrice());
@@ -104,7 +108,8 @@ public class OrderService {
         List<OrderItem> items = orderItemRepository.saveAll(lines.stream()
                 .map(line -> OrderItem.pending(order.getId(), line.product().getId(),
                         line.product().getName(), line.option() == null ? null : line.option().getName(),
-                        line.unitPrice(), line.unitOriginalPrice(), line.quantity(), now))
+                        line.unitPrice(), line.unitOriginalPrice(), line.quantity(), now,
+                        line.attribution()))
                 .toList());
         statusChanger.logOrderCreated(order);
 
@@ -232,15 +237,17 @@ public class OrderService {
                     "cartItemIds 또는 items 중 정확히 하나만 보내야 합니다.");
         }
         List<LineSpec> specs = fromCart ? specsFromCart(memberId, request.cartItemIds())
-                : specsFromBody(request.items());
+                : specsFromBody(memberId, request.items());
         Map<Long, Product> products = requireAllAvailable(specs);
         return specs.stream().map(spec -> buildLine(spec, products.get(spec.productId()))).toList();
     }
 
     /** 옵션 검증 전의 원시 주문 라인 — 두 출처(장바구니/바로 구매)를 같은 모양으로 모은다 */
-    private record LineSpec(Long productId, Long optionId, int quantity, CartItem cartItem) {
+    private record LineSpec(Long productId, Long optionId, int quantity, CartItem cartItem,
+                            ConversionAttribution attribution) {
     }
 
+    /** 추천 출처는 담기 시점(C-2·I-2)에 검증이 끝났으므로 여기선 복사만 한다 (노션 O-1) */
     private List<LineSpec> specsFromCart(Long memberId, List<Long> cartItemIds) {
         List<CartItem> cartItems = cartItemRepository.findAllById(cartItemIds);
         boolean allOwned = cartItems.stream()
@@ -249,13 +256,18 @@ public class OrderService {
             throw new BusinessException(ErrorCode.CART_ITEM_NOT_FOUND);
         }
         return cartItems.stream()
-                .map(item -> new LineSpec(item.getProductId(), item.getOptionId(), item.getQuantity(), item))
+                .map(item -> new LineSpec(item.getProductId(), item.getOptionId(), item.getQuantity(),
+                        item, item.attribution()))
                 .toList();
     }
 
-    private List<LineSpec> specsFromBody(List<OrderCreateRequest.OrderLine> orderLines) {
+    /** 바로 구매는 복사할 원본이 없어 요청값을 검증 후 저장한다 — 실패해도 주문은 정상 처리 (노션 O-1) */
+    private List<LineSpec> specsFromBody(Long memberId, List<OrderCreateRequest.OrderLine> orderLines) {
         return orderLines.stream()
-                .map(line -> new LineSpec(line.productId(), line.optionId(), line.quantity(), null))
+                .map(line -> new LineSpec(line.productId(), line.optionId(), line.quantity(), null,
+                        // O-1은 로그인 전용이라 게스트 신원이 없다 (02 D30)
+                        attributionResolver.resolveForConversion(line.recommendationContext(),
+                                line.productId(), memberId, null)))
                 .toList();
     }
 
@@ -300,7 +312,7 @@ public class OrderService {
             option = options.stream().filter(o -> o.getId().equals(spec.optionId())).findFirst()
                     .orElseThrow(() -> new BusinessException(ErrorCode.CART_OPTION_INVALID));
         }
-        return new Line(product, option, spec.quantity(), spec.cartItem());
+        return new Line(product, option, spec.quantity(), spec.cartItem(), spec.attribution());
     }
 
     private Shipping resolveShipping(Long memberId, OrderCreateRequest request) {

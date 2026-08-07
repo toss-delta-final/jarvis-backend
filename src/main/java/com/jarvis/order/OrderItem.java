@@ -1,6 +1,7 @@
 package com.jarvis.order;
 
 import com.jarvis.global.entity.BaseTimeEntity;
+import com.jarvis.recommendation.ConversionAttribution;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -58,9 +59,17 @@ public class OrderItem extends BaseTimeEntity {
     @Column(name = "status_changed_at", nullable = false)
     private LocalDateTime statusChangedAt;
 
+    /** 추천 출처 스냅샷 (노션 O-1) — 목록이 만료돼도 주문 시점의 귀속이 주문에 박혀 남는다 */
+    @Column(name = "recommendation_request_id", columnDefinition = "char(36)")
+    private String recommendationRequestId;
+
+    @Column(name = "list_id", length = 64)
+    private String listId;
+
     /** 주문과 함께 PENDING으로 생성 — 결제 성공 시 ORDERED 전이 (01 D9) */
     public static OrderItem pending(Long orderId, Long productId, String productName, String optionName,
-                                    int price, int originalPrice, int quantity, LocalDateTime now) {
+                                    int price, int originalPrice, int quantity, LocalDateTime now,
+                                    ConversionAttribution attribution) {
         OrderItem item = new OrderItem();
         item.orderId = orderId;
         item.productId = productId;
@@ -71,6 +80,10 @@ public class OrderItem extends BaseTimeEntity {
         item.quantity = quantity;
         item.status = OrderItemStatus.PENDING;
         item.statusChangedAt = now;
+        if (attribution != null) {
+            item.recommendationRequestId = attribution.recommendationRequestId();
+            item.listId = attribution.listId();
+        }
         return item;
     }
 

@@ -37,7 +37,7 @@ class ClaimServiceTest {
 
     @BeforeEach
     void setUp() {
-        item = OrderItem.pending(1L, 10L, "상품", null, 12000, 15000, 1, LocalDateTime.now());
+        item = OrderItem.pending(1L, 10L, "상품", null, 12000, 15000, 1, LocalDateTime.now(), null);
         ReflectionTestUtils.setField(item, "id", 100L);
         order = Order.create(1L, "MOCK_CARD", 12000, "r", "p", "z", "a1", null, null);
         ReflectionTestUtils.setField(order, "id", 1L);

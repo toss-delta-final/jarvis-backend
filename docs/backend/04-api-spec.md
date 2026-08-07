@@ -54,20 +54,21 @@
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
 | C-1 | GET | /api/cart | 🔓(게스트 허용) | 내(회원/게스트) 장바구니: 아이템(상품 요약, 옵션, 수량, 현재가), 합계는 FE 계산 아님 — data에 totalOriginal/totalSale/discount 포함. 아이템에 **brandId·brandName 포함**(07-17 FE). HIDDEN·품절 아이템은 목록에 유지하되 `purchaseState`(`AVAILABLE`/`SOLD_OUT`/`HIDDEN`, 겹치면 HIDDEN 우선)로 이유를 밝히고 합계에서 제외 — 주문 시도는 O-1이 400. 아이템에 **maxQuantity**(2026-08-05 추가 — 수량 스테퍼 상한, `min(stock_quantity, 99)`를 서버가 계산. 재고만 내리면 FE가 담기 상한 99와 다시 비교해야 하는데 그 99는 서버 규칙이다. 조회 시점 스냅샷이라 C-2·C-3의 `CART_STOCK_INSUFFICIENT`는 그대로 남는다) |
-| C-2 | POST | /api/cart/items | 🔓(게스트 허용) | 담기. body: productId, optionId?, quantity — 동일 상품+옵션 존재 시 수량 합산. **합산 후 수량 > 재고면 400 `CART_STOCK_INSUFFICIENT`**(아래). 담기 성공 시 행동 이벤트는 FE가 E-1 `add_to_cart`로 전송(서버 적재 없음, §8). 게스트는 guest_id 쿠키가 소유 주체(없으면 발급 — 02 D30) |
+| C-2 | POST | /api/cart/items | 🔓(게스트 허용) | 담기. body: productId, optionId?, quantity, **recommendationContext?**{recommendationRequestId, listId} — 동일 상품+옵션 존재 시 수량 합산. **합산 후 수량 > 재고면 400 `CART_STOCK_INSUFFICIENT`**(아래). 담기 성공 시 행동 이벤트는 FE가 E-1 `add_to_cart`로 전송(서버 적재 없음, §8). 게스트는 guest_id 쿠키가 소유 주체(없으면 발급 — 02 D30) |
 | C-3 | PATCH | /api/cart/items/{id} | 🔓(게스트 허용) | 수량 변경. body: quantity(≥1). **변경 수량 > 재고면 400 `CART_STOCK_INSUFFICIENT`**(치환값 기준) |
 | C-4 | DELETE | /api/cart/items/{id} | 🔓(게스트 허용) | 삭제 (복수 삭제는 FE에서 반복 호출 — 데모 규모) |
 
 - 옵션 있는 상품에 optionId 누락 → 400 `CART_OPTION_REQUIRED`. optionId가 해당 상품의 옵션이 아니면 400 `CART_OPTION_INVALID`(02 D26 ①). 본인(회원 또는 게스트 쿠키) 아이템 아니면 403. quantity는 1~99(합산 결과 포함 — INT 오버플로·비정상 입력 방지, I-2 동일).
 - **재고 검증(2026-07-22 추가)**: C-2(합산 후 수량)·C-3(치환 수량)이 `product.stock_quantity`를 넘으면 400 `CART_STOCK_INSUFFICIENT` + `error.detail.availableStock`(남은 재고). 재고는 **상품 단위**라 옵션별 재고 없음(02 D33). 이 검증은 **UX 가드**이고 최종 방어선은 결제(O-1 PAID) 시점 조건부 차감 — 담기 이후 재고가 줄어 결제에서 다시 실패할 수 있다. 시드 기본 재고 100.
 - 게스트 장바구니(02 D30): 소유 주체는 guest_id 쿠키. 가입/로그인(A-1/A-2 — guest_id 쿠키) 시 회원 장바구니로 병합(동일 상품+옵션 수량 합산·상한 99). **주문(O-1)은 로그인 필수** — 게스트가 결제 진입 시 FE가 로그인 유도.
+- **추천 귀속(2026-08-07 구현 — 02 D43)**: C-2·O-1(`items[]`)·I-2가 `recommendationContext`(`recommendationRequestId`·`listId`)를 선택 수용한다. 서버는 저장 전 ① `listId` 실재 ② 목록 소유자 = 요청자 ③ `productId`가 그 목록에 포함을 확인하고, **어긋나면 문맥만 버리고 담기·주문은 정상 처리**한다(검증 실패로 400을 내지 않는다). `recommendationRequestId`는 요청값이 아니라 목록에 저장된 값을 쓴다. O-1 `cartItemIds` 경로는 **요청에 넣지 않는다** — `cart_item`에 저장된 값을 재검증 없이 복사한다.
 - 부분 선택 결제는 O-1의 cartItemIds[]로 지원 — 선택 항목 합계 표시는 FE 계산, 결제 금액의 진실은 O-1 서버 재계산(원칙 유지).
 
 ## 4. order / claim
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
-| O-1 | POST | /api/orders | 🔑 | 주문 생성+모의 결제 한 번에. body: **source = cartItemIds[] 또는 items[]{productId, optionId?, quantity} 중 정확히 하나** (장바구니 경유 vs 바로 구매 — 둘 다/둘 다 없음 400), addressId 또는 address 직접 입력, deliveryRequest?(02 D22), paymentMethod — 처리: PENDING 생성(아이템도 `PENDING` — 01 D9) → 스냅샷 복사 → mock 결제 판정 → PAID(아이템 `ORDERED` 전이·장바구니 경유분만 차감 — 상태 전이 기록은 order_status_logs, 01 소관) 또는 PAYMENT_FAILED. 응답: orderId, orderNo, status, **failureReason**(2026-08-05 추가 — 실패 원인 `OUT_OF_STOCK`/`MOCK_DECLINED`, 성공이면 null) |
+| O-1 | POST | /api/orders | 🔑 | 주문 생성+모의 결제 한 번에. body: **source = cartItemIds[] 또는 items[]{productId, optionId?, quantity, recommendationContext?} 중 정확히 하나** (장바구니 경유 vs 바로 구매 — 둘 다/둘 다 없음 400), addressId 또는 address 직접 입력, deliveryRequest?(02 D22), paymentMethod — 처리: PENDING 생성(아이템도 `PENDING` — 01 D9) → 스냅샷 복사 → mock 결제 판정 → PAID(아이템 `ORDERED` 전이·장바구니 경유분만 차감 — 상태 전이 기록은 order_status_logs, 01 소관) 또는 PAYMENT_FAILED. 응답: orderId, orderNo, status, **failureReason**(2026-08-05 추가 — 실패 원인 `OUT_OF_STOCK`/`MOCK_DECLINED`, 성공이면 null) |
 | O-2 | POST | /api/orders/{id}/retry-payment | 🔑 | 실패 주문 재결제. body: paymentMethod — PENDING/PAYMENT_FAILED에서만. 성공 시 부수효과는 O-1의 PAID와 동일(아이템 `ORDERED` 전이·장바구니에 같은 상품+옵션 행이 남아 있으면 삭제). 응답은 O-1과 동형(**failureReason** 포함) — O-2에는 O-1의 재고 선검증이 없어 재고 부족이면 몇 번을 눌러도 같은 결과라, **이 경로의 무한 루프를 끊는 건 이 필드뿐이다**(2026-08-05) |
 | O-3 | GET | /api/orders | 🔑 | 내 주문 목록: 대표 상태(01 §4 — **enum 코드 8종**, 표시 문구는 FE 매핑 — 07-17 FE), 아이템 요약. query: page, size. 아이템에 **`purchaseState`**(현재 상품 기준 AVAILABLE|SOLD_OUT|HIDDEN) 포함 — 내려간 상품은 FE가 상세 링크를 걸지 않고 "판매 종료"로 표시(02 D41) |
 | O-4 | GET | /api/orders/{id} | 🔑 | 주문 상세: 아이템별 상태, 배송지 스냅샷, 금액, 아이템별 가능 액션(canCancel/canReturn/canReview — 01 §3 매트릭스를 서버가 계산해 내려줌, 교환 제거 확정으로 canExchange 없음). 아이템에 **originalPrice(정가 스냅샷 — 할인 표시, 02 D37)**, **`purchaseState`**(O-3과 동일 — 링크 차단용, 02 D41) 포함 |

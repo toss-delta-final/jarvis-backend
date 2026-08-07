@@ -37,7 +37,8 @@ public class InternalCartController {
     public ApiResponse<InternalCartItemResponse> addItem(
             @Valid @RequestBody InternalCartAddRequest request) {
         CartService.CartAddResult result = cartService.addItem(request.userId(), request.guestId(),
-                new CartAddRequest(request.productId(), request.optionId(), request.quantity()));
+                new CartAddRequest(request.productId(), request.optionId(), request.quantity(),
+                        request.recommendationContext()));
         return ApiResponse.success(InternalCartItemResponse.from(result.item()));
     }
 

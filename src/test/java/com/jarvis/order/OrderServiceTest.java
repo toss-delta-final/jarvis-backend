@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.jarvis.address.AddressRepository;
@@ -30,6 +31,9 @@ import com.jarvis.order.dto.UnavailableItemDetail;
 import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.recommendation.ConversionAttribution;
+import com.jarvis.recommendation.RecommendationAttributionResolver;
+import com.jarvis.recommendation.dto.RecommendationContext;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -63,6 +67,7 @@ class OrderServiceTest {
     @Mock ReviewRepository reviewRepository;
     @Mock PaymentService paymentService;
     @Mock OrderStatusChanger statusChanger;
+    @Mock RecommendationAttributionResolver attributionResolver;
 
     @Captor ArgumentCaptor<List<OrderItem>> itemsCaptor;
 
@@ -80,6 +85,9 @@ class OrderServiceTest {
             return order;
         });
         lenient().when(orderItemRepository.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+        // 주문 대부분은 추천 경유가 아니다 — 개별 테스트가 필요할 때만 override
+        lenient().when(attributionResolver.resolveForConversion(any(), any(), any(), any()))
+                .thenReturn(ConversionAttribution.NONE);
         // 목이지만 실제 전이 부수효과는 재현 — 서비스가 PAID 여부로 후속 처리(장바구니 삭제)를 분기하므로
         lenient().doAnswer(inv -> {
             Order order = inv.getArgument(0);
@@ -104,7 +112,7 @@ class OrderServiceTest {
 
     private OrderCreateRequest directRequest(String paymentMethod, int quantity) {
         return new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(10L, null, quantity)),
+                List.of(new OrderCreateRequest.OrderLine(10L, null, quantity, null)),
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울시 강남구", null),
                 null, paymentMethod);
@@ -163,9 +171,9 @@ class OrderServiceTest {
         when(productRepository.findById(30L)).thenReturn(Optional.of(hidden));
 
         OrderCreateRequest request = new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(10L, null, 1),
-                        new OrderCreateRequest.OrderLine(20L, null, 1),
-                        new OrderCreateRequest.OrderLine(30L, null, 1)),
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1, null),
+                        new OrderCreateRequest.OrderLine(20L, null, 1, null),
+                        new OrderCreateRequest.OrderLine(30L, null, 1, null)),
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
                 null, "MOCK_CARD");
@@ -193,8 +201,8 @@ class OrderServiceTest {
 
         // 줄 단위로는 각 2개라 재고 3을 안 넘지만, 상품 단위 합계는 4라 넘는다
         OrderCreateRequest request = new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(10L, null, 2),
-                        new OrderCreateRequest.OrderLine(10L, null, 2)),
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 2, null),
+                        new OrderCreateRequest.OrderLine(10L, null, 2, null)),
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
                 null, "MOCK_CARD");
@@ -219,8 +227,8 @@ class OrderServiceTest {
         when(productRepository.deductStock(20L, 1)).thenReturn(0);
 
         OrderCreateRequest request = new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(10L, null, 1),
-                        new OrderCreateRequest.OrderLine(20L, null, 1)),
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1, null),
+                        new OrderCreateRequest.OrderLine(20L, null, 1, null)),
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
                 null, "MOCK_CARD");
@@ -235,7 +243,7 @@ class OrderServiceTest {
     @DisplayName("O-1 — cartItemIds와 items 둘 다/둘 다 없음은 400")
     void createSourceXor() {
         OrderCreateRequest both = new OrderCreateRequest(List.of(1L),
-                List.of(new OrderCreateRequest.OrderLine(10L, null, 1)), null,
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1, null)), null,
                 new OrderCreateRequest.AddressInput("a", "b", "c", "d", null), null, "MOCK_CARD");
         assertThatThrownBy(() -> orderService.create(1L, both))
                 .isInstanceOf(BusinessException.class)
@@ -246,7 +254,7 @@ class OrderServiceTest {
     @Test
     @DisplayName("O-1 장바구니 경유 성공 — 해당 cart 행 삭제")
     void createFromCartDeletesLines() {
-        CartItem cartItem = CartItem.forMember(1L, 10L, null, 2);
+        CartItem cartItem = CartItem.forMember(1L, 10L, null, 2, null);
         ReflectionTestUtils.setField(cartItem, "id", 5L);
         when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(cartItem));
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
@@ -263,10 +271,82 @@ class OrderServiceTest {
         verify(cartItemRepository).deleteAll(List.of(cartItem));
     }
 
+    // ---- 추천 귀속 스냅샷 (노션 O-1) ----
+
+    private static final String LIST_ID = "9f2c1a7e4b8d43f5a0c6e1d97b3f8a24";
+    private static final String REQUEST_ID = "a63be350-ec96-4f44-b3f9-c962b6673a68";
+
+    @Test
+    @DisplayName("O-1 장바구니 경유 — cart_item의 출처를 order_item으로 그대로 복사한다(재검증 없음)")
+    void copiesAttributionFromCartLine() {
+        CartItem cartItem = CartItem.forMember(1L, 10L, null, 2,
+                new ConversionAttribution(REQUEST_ID, LIST_ID));
+        ReflectionTestUtils.setField(cartItem, "id", 5L);
+        when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(cartItem));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
+        when(productRepository.deductStock(10L, 2)).thenReturn(1);
+        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(98));
+
+        orderService.create(1L, new OrderCreateRequest(List.of(5L), null, null,
+                new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
+                null, "MOCK_CARD"));
+
+        verify(orderItemRepository).saveAll(itemsCaptor.capture());
+        OrderItem saved = itemsCaptor.getValue().get(0);
+        assertThat(saved.getListId()).isEqualTo(LIST_ID);
+        assertThat(saved.getRecommendationRequestId()).isEqualTo(REQUEST_ID);
+        // 담기 때 검증이 끝났으므로 주문에선 검증기를 부르지 않는다
+        verifyNoInteractions(attributionResolver);
+    }
+
+    @Test
+    @DisplayName("O-1 바로 구매 — 복사할 원본이 없어 요청 출처를 검증 후 저장한다")
+    void validatesAttributionOnDirectPurchase() {
+        RecommendationContext context = new RecommendationContext(REQUEST_ID, LIST_ID);
+        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(paymentService.pay("MOCK_CARD", 12000)).thenReturn(PaymentResult.approved());
+        when(productRepository.deductStock(10L, 1)).thenReturn(1);
+        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(99));
+        when(attributionResolver.resolveForConversion(context, 10L, 1L, null))
+                .thenReturn(new ConversionAttribution(REQUEST_ID, LIST_ID));
+
+        orderService.create(1L, new OrderCreateRequest(null,
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1, context)), null,
+                new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
+                null, "MOCK_CARD"));
+
+        verify(orderItemRepository).saveAll(itemsCaptor.capture());
+        assertThat(itemsCaptor.getValue().get(0).getListId()).isEqualTo(LIST_ID);
+    }
+
+    // 분석 데이터가 이상하다고 사용자의 주문을 막으면 안 된다 (노션 O-1 「검증 규칙」)
+    @Test
+    @DisplayName("O-1 바로 구매 — 출처 검증에 실패해도 주문은 정상 처리되고 출처만 비워진다")
+    void orderSucceedsWhenAttributionRejected() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(paymentService.pay("MOCK_CARD", 12000)).thenReturn(PaymentResult.approved());
+        when(productRepository.deductStock(10L, 1)).thenReturn(1);
+        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(99));
+
+        OrderCreateResponse response = orderService.create(1L, new OrderCreateRequest(null,
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1,
+                        new RecommendationContext(REQUEST_ID, "stale-list"))), null,
+                new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
+                null, "MOCK_CARD"));
+
+        assertThat(response.status()).isEqualTo("PAID");
+        verify(orderItemRepository).saveAll(itemsCaptor.capture());
+        assertThat(itemsCaptor.getValue().get(0).getListId()).isNull();
+    }
+
     @Test
     @DisplayName("O-1 — 남의 장바구니 행은 CART_ITEM_NOT_FOUND")
     void createFromCartRejectsForeignLines() {
-        CartItem foreign = CartItem.forMember(2L, 10L, null, 1);
+        CartItem foreign = CartItem.forMember(2L, 10L, null, 1, null);
         when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(foreign));
 
         OrderCreateRequest request = new OrderCreateRequest(List.of(5L), null, null,
@@ -318,7 +398,7 @@ class OrderServiceTest {
         ReflectionTestUtils.setField(order, "createdAt", LocalDateTime.of(2026, 7, 17, 12, 0));
         ReflectionTestUtils.setField(order, "status", OrderStatus.PAYMENT_FAILED);
         OrderItem item = OrderItem.pending(1L, 10L, "린넨 셔츠", null, 12000, 15000, 2,
-                LocalDateTime.of(2026, 7, 17, 12, 0));
+                LocalDateTime.of(2026, 7, 17, 12, 0), null);
         when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(orderItemRepository.findAllByOrderId(1L)).thenReturn(List.of(item));
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
@@ -344,8 +424,8 @@ class OrderServiceTest {
         when(productRepository.deductStock(20L, 1)).thenReturn(0);
 
         OrderCreateRequest request = new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(10L, null, 1),
-                        new OrderCreateRequest.OrderLine(20L, null, 1)),
+                List.of(new OrderCreateRequest.OrderLine(10L, null, 1, null),
+                        new OrderCreateRequest.OrderLine(20L, null, 1, null)),
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
                 null, "MOCK_CARD");
@@ -366,7 +446,7 @@ class OrderServiceTest {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(30L)).thenReturn(List.of());
 
         OrderCreateRequest request = new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(30L, null, 99)), // 9.9e9 > Integer.MAX_VALUE
+                List.of(new OrderCreateRequest.OrderLine(30L, null, 99, null)), // 9.9e9 > Integer.MAX_VALUE
                 null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
                 null, "MOCK_CARD");
@@ -391,7 +471,7 @@ class OrderServiceTest {
     private OrderItem item(Long id, Long orderId, Long productId, String productName, String optionName,
                            int price, int originalPrice, int quantity, OrderItemStatus status) {
         OrderItem item = OrderItem.pending(orderId, productId, productName, optionName,
-                price, originalPrice, quantity, LocalDateTime.of(2026, 7, 17, 12, 0));
+                price, originalPrice, quantity, LocalDateTime.of(2026, 7, 17, 12, 0), null);
         ReflectionTestUtils.setField(item, "id", id);
         ReflectionTestUtils.setField(item, "status", status);
         return item;

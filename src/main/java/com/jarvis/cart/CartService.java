@@ -14,6 +14,8 @@ import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.product.ProductStatus;
 import com.jarvis.product.PurchaseState;
+import com.jarvis.recommendation.ConversionAttribution;
+import com.jarvis.recommendation.RecommendationAttributionResolver;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,6 +39,7 @@ public class CartService {
     private final ProductOptionRepository productOptionRepository;
     private final BrandRepository brandRepository;
     private final GuestService guestService;
+    private final RecommendationAttributionResolver attributionResolver;
 
     /** C-2 결과 — issuedGuestId가 있으면 컨트롤러가 guest_id 쿠키를 새로 내린다 */
     public record CartAddResult(CartItemResponse item, String issuedGuestId) {
@@ -103,14 +106,21 @@ public class CartService {
         // 재고 부족은 400 (합산 후 수량 기준). 최종 방어선은 결제 조건부 차감(02 D33) — 담기 검증은 UX 가드
         requireStock(product, resultingQuantity);
 
+        // 추천 출처는 검증 실패해도 담기를 막지 않는다 — 문맥만 버린다 (노션 C-2·I-2 「검증 규칙」)
+        ConversionAttribution attribution = attributionResolver.resolveForConversion(
+                request.recommendationContext(), request.productId(), memberId, guestId);
+
         CartItem item;
         if (existing.isPresent()) {
             item = existing.get();
             item.addQuantity(request.quantity());
+            item.applyAttribution(attribution);
         } else {
             item = cartItemRepository.save(memberId != null
-                    ? CartItem.forMember(memberId, request.productId(), request.optionId(), request.quantity())
-                    : CartItem.forGuest(guestId, request.productId(), request.optionId(), request.quantity()));
+                    ? CartItem.forMember(memberId, request.productId(), request.optionId(),
+                            request.quantity(), attribution)
+                    : CartItem.forGuest(guestId, request.productId(), request.optionId(),
+                            request.quantity(), attribution));
         }
         return new CartAddResult(new CartItemResponse(item.getId(), item.getQuantity()), issuedGuestId);
     }
@@ -143,6 +153,8 @@ public class CartService {
                     .findMemberLinesForUpdate(memberId, guestItem.getProductId(), guestItem.getOptionId()));
             if (memberLine.isPresent()) {
                 memberLine.get().addQuantity(guestItem.getQuantity());
+                // 사라지는 게스트 라인의 추천 출처를 회원 라인이 빈 칸일 때만 물려받는다 (노션 O-1 게스트→회원 병합)
+                memberLine.get().inheritAttributionFrom(guestItem);
                 cartItemRepository.delete(guestItem);
             } else {
                 guestItem.assignTo(memberId);

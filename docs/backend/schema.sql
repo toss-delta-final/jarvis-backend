@@ -158,11 +158,15 @@ CREATE TABLE cart_item (
     product_id  BIGINT   NOT NULL,
     option_id   BIGINT   NULL,                             -- 옵션 없는 상품은 NULL. 해당 상품 소속 옵션인지 서비스 검증 (D26①)
     quantity    INT      NOT NULL,
+    recommendation_request_id CHAR(36) NULL,                 -- ↓ 추천 귀속 2종: 추천 카드에서 담았을 때만 채워진다 (D38, C-2·I-2)
+    list_id     VARCHAR(64) NULL,                            --   FE·FastAPI가 보낸 값을 믿지 않고 서버가 3규칙(실재·소유자·상품 포함)으로 검증한 뒤 저장.
+                                                             --   주문 시 order_item으로 복사돼 "담아뒀다 나중에 삼"에서도 추천과의 연결이 끊기지 않는다 (O-1)
     created_at  DATETIME NOT NULL,
     updated_at  DATETIME NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uk_cart_member (member_id, product_id, option_id),
     UNIQUE KEY uk_cart_guest (guest_id, product_id, option_id),
+    KEY idx_cart_list (list_id),                             -- 추천 목록별 담기 전환 집계. FK는 없다 — behavior_events와 같은 이유(목록 정리를 장바구니가 막으면 안 된다)
     -- 주의: MariaDB UNIQUE는 NULL 중복 허용 → option_id=NULL엔 제약 미적용, 서비스의 조회-후-수량증가 upsert가 실질 방어선
     CONSTRAINT chk_cart_quantity CHECK (quantity > 0),
     CONSTRAINT fk_cart_member  FOREIGN KEY (member_id)  REFERENCES member (id)         ON DELETE RESTRICT,
@@ -231,11 +235,15 @@ CREATE TABLE order_item (
     quantity           INT          NOT NULL,
     status             VARCHAR(30)  NOT NULL,              -- 01 문서의 9개 상태 (D34 — 교환 2종 제거로 11→9)
     status_changed_at  DATETIME     NOT NULL,              -- 배송 전이 스케줄러 기준 시각
+    recommendation_request_id CHAR(36) NULL,               -- ↓ 추천 귀속 2종 — 상품명·가격과 같은 성격의 스냅샷이다 (D38, O-1)
+    list_id            VARCHAR(64)  NULL,                  --   장바구니 경유는 cart_item에서 복사(담기 때 검증 완료), 바로 구매는 요청값을 검증 후 저장.
+                                                           --   목록이 만료돼도 주문 시점의 귀속이 주문에 박혀 남는다
     created_at         DATETIME     NOT NULL,
     updated_at         DATETIME     NULL,
     PRIMARY KEY (id),
     KEY idx_order_item_order (order_id),
     KEY idx_order_item_status (status, status_changed_at), -- 배송 전이 스케줄러 스캔용
+    KEY idx_order_item_list (list_id),                     -- 추천 목록별 구매 전환·매출 집계. FK 없음(cart_item과 동일 이유)
     CONSTRAINT fk_order_item_order   FOREIGN KEY (order_id)   REFERENCES orders (id)  ON DELETE RESTRICT,
     CONSTRAINT fk_order_item_product FOREIGN KEY (product_id) REFERENCES product (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

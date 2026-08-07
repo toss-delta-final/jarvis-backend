@@ -25,6 +25,7 @@
 |---|---|---|
 | `migrate-2026-07-30-recommendation-list.sql` | 추천 목록 영구 사본 2개 테이블 신설 + `behavior_events` 컬럼 5개·인덱스 2개 (02 D38) | 앱 배포 **전** |
 | `migrate-2026-07-31-behavior-events-not-null.sql` | `occurred_at`·`client_event_id` 백필 후 `NOT NULL` (02 D38·D40) | 앱 배포 **후** — 앱이 `occurred_at`을 채운 뒤에 조인다 |
+| `migrate-2026-08-07-recommendation-attribution.sql` | `cart_item`·`order_item`에 추천 귀속 2컬럼씩 + 인덱스 (02 D43) | 앱 배포 **전** — `ddl-auto: validate`라 컬럼이 없으면 기동 자체가 실패한다 |
 
 ## 시드 데이터
 
