@@ -1,0 +1,192 @@
+package com.jarvis.recommendation;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jarvis.cart.CartItem;
+import com.jarvis.cart.CartItemRepository;
+import com.jarvis.order.OrderItemRepository;
+import com.jarvis.product.ProductRepository;
+import com.jarvis.product.ProductService;
+import com.jarvis.product.dto.ProductCardResponse;
+import com.jarvis.product.dto.RecommendedProductsResponse;
+import com.jarvis.recommendation.dto.HomeRecommendationRequest;
+import com.jarvis.recommendation.dto.HomeRecommendationResponse;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+
+/**
+ * P-5 홈 개인화 추천 (노션 P-5·I-22) — 내부적으로 I-22를 한 번 호출한다. 채팅(CH-2/I-21)과 달리
+ * <b>왕복 1회</b>로 끝난다: Spring이 호출한 주체라 응답에 목록이 담겨 오고 I-21 콜백을 타지 않는다.
+ *
+ * <p><b>항상 200이다.</b> 프로필 없음·후보 부족·타임아웃·에러 전부 P-4 인기상품으로 대체한다 —
+ * FE가 "추천 실패" 화면을 따로 만들 필요가 없게 하는 게 이 API의 계약이다.
+ *
+ * <p><b>대체분에도 상관키를 발급한다.</b> 목록을 Spring이 만들었으므로 Spring이 발급하며, 없으면
+ * FE가 인기상품 카드에 대해 쏘는 노출·클릭 이벤트가 부모 없는 고아가 되어 E-1 검증에서 버려진다.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class HomeRecommendationService {
+
+    /** 노출 목표 개수 — 홈 영역 카드 수 (노션 P-4와 같은 규모) */
+    private static final int LIMIT = 12;
+    /** 개인화 결과 캐시 TTL (노션 P-5 2026-07-30 확정). listId 귀속 유효기간 24시간과는 별개다 */
+    private static final Duration CACHE_TTL = Duration.ofMinutes(10);
+    private static final String CACHE_KEY_PREFIX = "p5:home:";
+
+    private final HomeRecommendationClient homeRecommendationClient;
+    private final RecommendationListStore recommendationListStore;
+    private final RecommendationEventRecorder recommendationEventRecorder;
+    private final ProductService productService;
+    private final ProductRepository productRepository;
+    private final CartItemRepository cartItemRepository;
+    private final OrderItemRepository orderItemRepository;
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
+
+    public RecommendedProductsResponse recommend(Long memberId) {
+        RecommendedProductsResponse cached = readCache(memberId);
+        if (cached != null) {
+            return cached;
+        }
+        HomeRecommendationClient.Result result =
+                homeRecommendationClient.recommend(buildRequest(memberId));
+        if (result.response() != null && result.response().isUsable()) {
+            RecommendedProductsResponse personalized = personalized(memberId, result.response());
+            // 카드가 전부 드롭되면(HIDDEN·품절) 빈 화면이 되므로 그때도 인기상품으로 간다
+            if (!personalized.items().isEmpty()) {
+                writeCache(memberId, personalized);
+                return personalized;
+            }
+            return fallback(memberId, HomeRecommendationClient.INSUFFICIENT_CANDIDATES);
+        }
+        return fallback(memberId, fallbackReason(result));
+    }
+
+    /** outcome 3분기 중 대체 2종은 사유가 정해져 있고, 응답 자체가 없으면 클라이언트가 사유를 준다 */
+    private static String fallbackReason(HomeRecommendationClient.Result result) {
+        if (result.response() == null) {
+            return result.fallbackReason();
+        }
+        return HomeRecommendationClient.INSUFFICIENT_CANDIDATES.equals(result.response().outcome())
+                ? HomeRecommendationClient.INSUFFICIENT_CANDIDATES
+                : HomeRecommendationClient.PROFILE_MISSING;
+    }
+
+    private HomeRecommendationRequest buildRequest(Long memberId) {
+        List<Long> recentlyViewed = capped(
+                productRepository.findRecentViewedIdsByOccurredAt(memberId,
+                        HomeRecommendationRequest.MAX_SIGNALS));
+        List<Long> cart = capped(cartItemRepository.findAllByMemberId(memberId).stream()
+                .map(CartItem::getProductId).distinct().toList());
+        List<Long> purchased = capped(orderItemRepository.findRecentPurchasedProductIds(memberId,
+                HomeRecommendationRequest.MAX_SIGNALS));
+        return new HomeRecommendationRequest(memberId, LIMIT,
+                new HomeRecommendationRequest.Signals(recentlyViewed, cart, purchased));
+    }
+
+    /** 상한 초과는 FastAPI가 400을 내므로 보내기 전에 자른다 — 앞쪽(최신)을 남긴다 (노션 I-22 C-19) */
+    private static List<Long> capped(List<Long> ids) {
+        return ids.size() <= HomeRecommendationRequest.MAX_SIGNALS
+                ? ids
+                : ids.subList(0, HomeRecommendationRequest.MAX_SIGNALS);
+    }
+
+    private RecommendedProductsResponse personalized(Long memberId,
+                                                     HomeRecommendationResponse response) {
+        List<Long> productIds = response.items().stream()
+                .map(HomeRecommendationResponse.Item::productId).filter(java.util.Objects::nonNull)
+                .distinct().toList();
+        Map<Long, String> reasons = response.items().stream()
+                .filter(item -> item.productId() != null && item.reason() != null)
+                .collect(Collectors.toMap(HomeRecommendationResponse.Item::productId,
+                        HomeRecommendationResponse.Item::reason, (a, b) -> a));
+        // 판매 불가 상품은 카드 조립 단계에서 뺀다 — 재고·상태 반영은 Spring 몫이다(노션 I-22)
+        List<ProductCardResponse> cards = sellable(productService.getCardsByIds(productIds));
+
+        save(RecommendationList.ofHome(response.listId(), response.recommendationRequestId(),
+                memberId, RecommendationSource.AI_RECOMMENDED, cards.size(), LocalDateTime.now()),
+                cards, null);
+        // 응답 어휘는 DB(source=AI_RECOMMENDED)와 갈린다 — FE는 "개인화됐나"만 묻는다
+        return new RecommendedProductsResponse(RecommendedProductsResponse.PERSONALIZED,
+                response.recommendationRequestId(), response.listId(),
+                cards.stream().map(card -> RecommendedProductsResponse.Item.of(card,
+                        reasons.get(card.productId()))).toList());
+    }
+
+    /**
+     * P-4 인기상품으로 대체한다. <b>캐시하지 않는다</b> — 노션 P-5가 대체분의 상관키는 요청마다 새로
+     * 발급해 귀속이 뭉개지지 않게 하라고 정했다. 대신 AI가 죽어 있으면 홈 진입마다 예산(3s)만큼
+     * 기다리게 되는데, 그 상한이 곧 "메인 렌더 블로킹 방지"의 설계값이다.
+     */
+    private RecommendedProductsResponse fallback(Long memberId, String fallbackReason) {
+        List<ProductCardResponse> cards = sellable(productService.getPopularCards(LIMIT));
+        String requestId = UUID.randomUUID().toString();
+        String listId = UUID.randomUUID().toString().replace("-", "");
+
+        save(RecommendationList.ofHome(listId, requestId, memberId,
+                RecommendationSource.POPULAR_FALLBACK, cards.size(), LocalDateTime.now()),
+                cards, fallbackReason);
+        // 원인 넷(프로필 없음·후보 부족·AI 에러·타임아웃)을 하나로 접는다 — FE 동작이 전부 같다.
+        // 원인을 주장하는 이름을 쓰면 나머지 셋에서 거짓말이 되고, FE가 잘못된 분기를 만든다
+        return new RecommendedProductsResponse(RecommendedProductsResponse.NOT_PERSONALIZED,
+                requestId, listId,
+                // 대체분엔 이유가 없다 — 키는 유지하고 null이다(CH-5와 동일 규칙)
+                cards.stream().map(card -> RecommendedProductsResponse.Item.of(card, null)).toList());
+    }
+
+    /** HIDDEN·품절은 홈 카드에서 뺀다 — P-4와 같은 기준이다 */
+    private static List<ProductCardResponse> sellable(List<ProductCardResponse> cards) {
+        return cards.stream()
+                .filter(card -> "AVAILABLE".equals(card.purchaseState()))
+                .toList();
+    }
+
+    /**
+     * 목록 사본 + generated 이벤트. <b>실패해도 추천은 내려간다</b> — 분석 저장 때문에 홈이 죽으면
+     * 안 된다. 사본이 없으면 그 목록의 노출·클릭 이벤트만 귀속되지 않는다(E-1 ③.5).
+     */
+    private void save(RecommendationList list, List<ProductCardResponse> cards,
+                      String fallbackReason) {
+        try {
+            List<RecommendationListItem> items = IntStream.range(0, cards.size())
+                    .mapToObj(position -> RecommendationListItem.of(list.getListId(), position,
+                            cards.get(position).productId()))
+                    .toList();
+            recommendationListStore.saveAll(List.of(list), items);
+            recommendationEventRecorder.recordHomeGenerated(list, fallbackReason);
+        } catch (Exception e) {
+            log.warn("P-5 목록 저장 실패 — 추천은 그대로 내려간다 (listId={})", list.getListId(), e);
+        }
+    }
+
+    private RecommendedProductsResponse readCache(Long memberId) {
+        try {
+            String cached = redisTemplate.opsForValue().get(CACHE_KEY_PREFIX + memberId);
+            return cached == null ? null
+                    : objectMapper.readValue(cached, RecommendedProductsResponse.class);
+        } catch (Exception e) {
+            // 캐시는 최적화지 정본이 아니다 — 깨졌으면 그냥 다시 계산한다
+            log.warn("P-5 캐시 읽기 실패 — 재계산 (memberId={})", memberId, e);
+            return null;
+        }
+    }
+
+    private void writeCache(Long memberId, RecommendedProductsResponse response) {
+        try {
+            redisTemplate.opsForValue().set(CACHE_KEY_PREFIX + memberId,
+                    objectMapper.writeValueAsString(response), CACHE_TTL);
+        } catch (Exception e) {
+            log.warn("P-5 캐시 쓰기 실패 — 다음 요청에서 재계산 (memberId={})", memberId, e);
+        }
+    }
+}

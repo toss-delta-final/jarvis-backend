@@ -315,4 +315,20 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
                                                       @Param("productId") Long productId,
                                                       @Param("from") LocalDateTime from,
                                                       @Param("to") LocalDateTime to);
+
+    /**
+     * P-5 signals의 {@code recentPurchasedProductIds} (노션 I-22) — FastAPI는 이걸 가중치가 아니라
+     * <b>결과에서 빼는 필터</b>로 쓴다(이미 산 상품을 또 추천하지 않기 위해). 그래서 최신순 정렬이
+     * 의미가 크지 않지만, 상한을 자를 때 오래된 구매부터 버리도록 최신순으로 뽑는다.
+     */
+    @Query(value = """
+            SELECT oi.product_id FROM order_item oi
+            JOIN orders o ON o.id = oi.order_id
+            WHERE o.member_id = :memberId AND o.status = 'PAID'
+            GROUP BY oi.product_id
+            ORDER BY MAX(o.paid_at) DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findRecentPurchasedProductIds(@Param("memberId") Long memberId,
+                                             @Param("limit") int limit);
 }

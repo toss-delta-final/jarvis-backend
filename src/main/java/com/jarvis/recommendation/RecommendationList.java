@@ -75,6 +75,29 @@ public class RecommendationList {
      * identity가 null인 건 정상값이다 — 세션이 이미 만료된 뒤 도착한 콜백은 신원을 구할 수 없고,
      * 그때도 저장하되(익명 저장) CH-5에서는 조회되지 않는다(노션 I-21 「실패가 아닌 것」).
      */
+    /**
+     * P-5(홈) 목록 — I-22 응답이든 P-4 인기상품 대체든 한 행으로 남긴다(노션 P-5·I-22).
+     * 홈은 세션이 없어 {@code sessionId}가 null이고, 게스트는 이 API를 쓰지 않아 항상 회원이다.
+     *
+     * <p>{@code listType}은 {@code PICK_ONE} 고정이다 — 홈 카드는 서로 대안이지 세트가 아니다.
+     * {@code source}로 "AI가 뽑았나, 인기상품으로 대신했나"가 갈리며, 이 값이 곧 P-5 응답의
+     * {@code source}이고 AI 추천 성과 집계에서 대체분을 배제하는 근거다.
+     */
+    public static RecommendationList ofHome(String listId, String recommendationRequestId,
+                                            Long memberId, RecommendationSource source,
+                                            int itemCount, LocalDateTime createdAt) {
+        RecommendationList list = new RecommendationList();
+        list.listId = listId;
+        list.recommendationRequestId = recommendationRequestId;
+        list.surface = RecommendationSurface.HOME;
+        list.listType = RecommendationListType.PICK_ONE;
+        list.source = source;
+        list.memberId = memberId;
+        list.itemCount = itemCount;
+        list.createdAt = createdAt;
+        return list;
+    }
+
     public static RecommendationList ofChat(String listId, String recommendationRequestId,
                                             RecommendationListType listType, String sessionId,
                                             ChatIdentity identity, String label, Integer totalBudget,

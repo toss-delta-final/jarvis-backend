@@ -5,6 +5,7 @@ import com.jarvis.global.event.BehaviorEvent;
 import com.jarvis.global.event.BehaviorEventAppender;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -71,11 +72,45 @@ public class RecommendationEventRecorder {
     }
 
     private String properties(RecommendationList list) {
+        return properties(list, null);
+    }
+
+    /**
+     * @param fallbackReason 홈(P-5)이 인기상품으로 대체된 사유. 와이어에는 싣지 않고 여기에만 남긴다 —
+     *                       신규 회원이라 대체된 건지 AI가 죽어서 대체된 건지는 서버만 알면 되고,
+     *                       그 구분이 있어야 장애를 관측할 수 있다(노션 P-5)
+     */
+    private String properties(RecommendationList list, String fallbackReason) {
         try {
-            return objectMapper.writeValueAsString(Map.of("itemCount", list.getItemCount()));
+            Map<String, Object> properties = new LinkedHashMap<>();
+            properties.put("itemCount", list.getItemCount());
+            if (fallbackReason != null) {
+                properties.put("fallbackReason", fallbackReason);
+            }
+            return objectMapper.writeValueAsString(properties);
         } catch (Exception e) {
             log.warn("recommendation_generated properties 직렬화 실패 — null로 적재", e);
             return null;
+        }
+    }
+
+    /**
+     * P-5(홈) 1건 적재 — 개인화 성공이든 P-4 대체든 남긴다(노션 I-22 규약). 채팅과 달리 목록이
+     * 항상 하나뿐이라 배치 API를 쓰지 않는다.
+     *
+     * <p>{@code session_key}는 홈에 세션이 없어 {@code listId}를 그대로 쓴다 — 컬럼이 NOT NULL이고,
+     * 추천 퍼널의 조인 키는 어차피 {@code list_id}·{@code recommendation_request_id}라 분석에
+     *지장이 없다(02 D39와 같은 논리).
+     */
+    public void recordHomeGenerated(RecommendationList list, String fallbackReason) {
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            behaviorEventAppender.append(List.of(BehaviorEvent.serverGenerated(EVENT_TYPE,
+                    clientEventId(list), list.getMemberId(), list.getGuestId(), list.getListId(),
+                    list.getRecommendationRequestId(), list.getListId(), list.getSurface().name(),
+                    properties(list, fallbackReason), now)));
+        } catch (Exception e) {
+            log.warn("recommendation_generated(홈) 적재 실패 — 1건 유실 (listId={})", list.getListId(), e);
         }
     }
 }
