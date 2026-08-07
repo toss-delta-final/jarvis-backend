@@ -92,9 +92,17 @@ public class ProductService {
 
     /** P-4 — 7일 판매수 → product_view 수 → 최신순 순으로 채움 (04 §2). 품절은 집계 단계에서 이미 빠진다 */
     public List<PopularCardResponse> getPopular(int size) {
-        return toCards(findByIdsPreservingOrder(popularIds(size))).stream()
+        return getPopularCards(size).stream()
                 .map(PopularCardResponse::of)
                 .toList();
+    }
+
+    /**
+     * P-5 대체용 인기 상품 — P-4와 같은 목록이되 공통 카드 형태로 준다(노션 P-5 Fallback 규약).
+     * P-5는 여기에 상관키·{@code reason}을 덧붙여야 해서 {@code purchaseState}가 남은 카드가 필요하다.
+     */
+    public List<ProductCardResponse> getPopularCards(int size) {
+        return toCards(findByIdsPreservingOrder(popularIds(size)));
     }
 
     /**

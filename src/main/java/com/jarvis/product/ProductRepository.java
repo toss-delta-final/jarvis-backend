@@ -157,6 +157,24 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Long> findRecentViewedIds(@Param("memberId") Long memberId, @Param("limit") int limit);
 
     /**
+     * P-5 signals의 {@code recentlyViewedProductIds} (노션 I-22) — M-7과 거의 같지만 정렬 기준이
+     * <b>{@code occurred_at}(FE 발생 시각)</b>이다. M-7은 화면 표시용이라 {@code created_at}(서버 수신)으로
+     * 충분하지만, 이쪽은 FastAPI가 <b>순서에 recency decay를 거는</b> 입력이라 순서가 곧 가중치다.
+     * SDK 버퍼(10건/5초) 때문에 같은 배치로 올라온 조회들은 수신 시각이 뭉쳐 순서가 뒤집힐 수 있고,
+     * 그러면 가중치가 조용히 거꾸로 걸린다 — {@code occurred_at}이 존재하는 이유가 정확히 이것이다(02 D38).
+     */
+    @Query(value = """
+            SELECT be.product_id FROM behavior_events be
+            JOIN product p ON p.id = be.product_id
+            WHERE be.event_type = 'product_view' AND be.member_id = :memberId
+            GROUP BY be.product_id
+            ORDER BY MAX(be.occurred_at) DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findRecentViewedIdsByOccurredAt(@Param("memberId") Long memberId,
+                                               @Param("limit") int limit);
+
+    /**
      * I-1 라운드1 후보 조회 (05 §I-1) — 정형 진실(가격·재고·판매상태)은 여기서 확정,
      * 살 수 없는 상품은 후보에서 제외. 2026-07-27 개정: 후보 수 상한 폐지 — 일치하는 행을 전부 반환한다.
      * 평점은 같은 쿼리에서 집계(02 D9) — 후보 수가 무제한이라 id IN 배치 집계를 쓸 수 없다.
