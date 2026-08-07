@@ -185,7 +185,8 @@
 
 ### D23. inquiry에 title 추가 — 제목·내용은 LLM이 생성 (피그마 검토 2026-07-09)
 
-- 문의 내역 목록이 제목을 표시한다. 접수 채널이 문의 챗봇 단일(I-5)이므로 **제목은 LLM이 문의 내용을 요약해 생성**해서 content와 함께 전달. `inquiry.title VARCHAR(200) NOT NULL`, I-5 body에 title 추가(05 동기). 상태 흐름(PENDING/IN_PROGRESS/DONE)은 그대로.
+- ~~문의 내역 목록이 제목을 표시한다. 접수 채널이 문의 챗봇 단일(I-5)이므로 제목은 LLM이 요약 생성해 content와 함께 전달.~~
+- **무효 (2026-08-07)** — 문의 기능을 폐기하며 `inquiry` 테이블을 제거했다(노션 I-5·M-9·AD-1·AD-2·CH-3). 이 결정이 전제한 접수·조회 경로가 둘 다 사라져 남길 근거가 없다.
 
 ### D24. 표시용 주문번호는 저장하지 않고 파생한다 — `ORD-{yyyyMMdd}-{id}` (2026-07-09)
 
@@ -498,16 +499,6 @@ erDiagram
         bigint member_id FK
         bigint product_id FK
     }
-    inquiry {
-        bigint id PK
-        bigint member_id FK
-        varchar title "LLM 생성(D23)"
-        text content
-        varchar status
-        text answer
-        bigint answered_by
-        datetime answered_at
-    }
     behavior_events {
         bigint id PK
         bigint member_id "FK 미설정 — JWT 서버 주입(D31)"
@@ -571,7 +562,6 @@ erDiagram
     member ||--o{ wishlist : has
     member ||--o{ review : writes
     member ||--o{ review_report : reports
-    member ||--o{ inquiry : files
     member ||--o| brand : "owns (SELLER)"
     member ||--o{ refresh_token : has
     member ||--o{ guest : "converted (승계)"
@@ -778,16 +768,6 @@ JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경�
 | product_id | BIGINT | FK(product), NOT NULL |
 - UNIQUE(member_id, product_id)
 
-### inquiry
-| 컬럼 | 타입 | 제약 | 비고 |
-|---|---|---|---|
-| member_id | BIGINT | FK(member), NOT NULL | 접수는 로그인 사용자만(기능 정의 9번) |
-| title | VARCHAR(200) | NOT NULL | LLM이 요약 생성한 제목 (D23) |
-| content | TEXT | NOT NULL | 챗봇이 정리한 문의 내용 |
-| status | VARCHAR(20) | NOT NULL DEFAULT 'PENDING' | `PENDING` / `IN_PROGRESS` / `DONE` |
-| answer | TEXT | NULL | 관리자 답변 |
-| answered_by / answered_at | BIGINT FK(member) / DATETIME | NULL | 답변 관리자 (고도화) |
-
 ### behavior_events (user_event 대체 — D31)
 | 컬럼 | 타입 | 제약 | 비고 |
 |---|---|---|---|
@@ -941,9 +921,9 @@ FE가 적재하는 **12종 화이트리스트 + 서버 적재 1종**(`recommenda
 | 5 브랜드 홈 | brand, product(정렬은 집계 파생 D9), category 소분류 필터(D20) |
 | 6 장바구니 | cart_item(현재가 표시 — 스냅샷 없음, 의도. 게스트 담기 지원 — D30, 가입 시 병합 승계) |
 | 7 결제 | orders(배송지·금액 스냅샷 D1, 상태 01 §2-1), order_item(01 §2-2), 모의 결제(01 D7). 장바구니 결제·바로 구매 둘 다 O-1(cartItemIds[] 또는 items[]) — 스냅샷이라 스키마 공통 |
-| 8 마이페이지 | orders·order_item(주문 내역), claim(취소·반품 — 교환은 D34로 제거), behavior_events(최근 본 상품 D3·D31), wishlist(찜), address(배송지), inquiry(문의 내역) |
-| 9 문의 챗봇 | inquiry(접수), 주문 상태 답변=01 §4 파생 규칙(저장 안 함) |
+| 8 마이페이지 | orders·order_item(주문 내역), claim(취소·반품 — 교환은 D34로 제거), behavior_events(최근 본 상품 D3·D31), wishlist(찜), address(배송지) — 문의 내역은 2026-08-07 폐기 |
+| ~~9 문의 챗봇~~ | **폐기 (2026-08-07)** — 접수(I-5)·조회(M-9)·답변(AD-1·AD-2)·챗봇(CH-3)을 함께 걷어내고 `inquiry` 테이블도 제거했다. 주문 상태 답변은 구매자 챗봇(CH-2)이 I-4로 흡수(07-18) |
 | 10 판매자 페이지 | brand.seller_id(권한 유도), 지표=order_item·behavior_events 집계(D31), 상품 수정=product(S-3), 재고 조정=product.stock_quantity + STOCK 로그(D32·D33) |
-| (11 관리자 — MVP 제외) | 스키마는 이미 수용: claim·review_report·inquiry의 처리 상태/처리자 컬럼 — 관리자 API는 고도화. 클레임 완료는 01 D10 자동 승인이 대신하고, 문의 답변·신고 처리는 MVP에서 일어나지 않음(데모 필요분은 시드) |
+| (11 관리자 — MVP 제외) | 스키마는 이미 수용: claim·review_report의 처리 상태/처리자 컬럼 — 관리자 API는 고도화. 클레임 완료는 01 D10 자동 승인이 대신하고 신고 처리는 MVP에서 일어나지 않음. **문의 답변(AD-1·AD-2)은 2026-08-07 폐기** |
 
 프로필·세션·평점컬럼이 ERD에 **없는 것**은 각각 D13·D12(존속분)·D9의 결정임 — 누락으로 오인하지 말 것. 재고는 2026-07-17 D33으로 도입됨(D8 폐기).

@@ -11,7 +11,7 @@
 > **2026-07-21 S-5 폐기(팀 결정)**: 판매자 상품 **직접 수정(S-5 `PATCH /api/seller/products/{id}`)은 미채택** — 상품 수정은 챗봇 경로(I-11, HITL confirm)만. 판매자 직접 경로는 조회(S-1 대시보드·S-2 주문·S-3 상품목록)만 남긴다(백엔드→프론트 정보 표시). 이전 "S-5·I-11 병존 확정(07-17)"은 이 결정으로 폐기. 아래 표·05 §1-3의 병존 문구도 정정.
 
 > **2026-07-18 응답 스키마 정합화(팀 결정: 노션 「📡 API 명세서」가 응답 예시의 기준)** — FE 파싱을 깨는 차이를 노션에 맞춰 일괄 수정:
-> 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6·M-9 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩, M-9 `answer` 중첩·명시적 null), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
+> 목록 래핑(P-1 `categories`, P-4·M-7·M-4 `items`, P-3·O-3·O-6 `content`, M-8a `addresses`), 필드명(P-2 옵션 `optionId`, P-3 `reviewId`·`authorNickname`, M-1 `reviewId`, M-8 `addressId`, C-1 아이템 `name`, O-3 `representativeStatus`, 채팅 `ticketTtlSeconds`+`ttlSeconds` 추가), 구조(P-6 `brand` 중첩, O-4 `address` 중첩), 동작(M-3 `reportId`·M-5 `productId` 반환, P-3 없는 상품 404, I-4 한국어 상태문구·없는 회원 404, I-18 `CART_QUERY_INVALID`, I-19 `ORDER_INVALID_PARAM`·`itemsTotal`, CH-1 바디 생략 시 SHOPPING, C-2/I-2 담기 합산 99 초과 400 — 로그인 병합 클램프(02 D30)는 유지). C-1(공개)·I-18(internal) 아이템명은 노션대로 `name`/`productName`으로 분리.
 > **유지(노션 쪽 수정 완료)**: 401 2종 분리(03 D2), 소유권 위반 404(IDOR — 공개 API), `+09:00` 오프셋(03 D2), I-1/I-3 최소필드(05 7-17 재설계 — 노션 페이지를 05 기준으로 갱신), 카드 `purchasable` 등 추가 필드.
 > **Phase 2(판매자 분석·상품 쓰기, 같은 날)**: I-6~I-16·S-1~S-3·S-5도 노션 기준으로 정합화 — from/to 필수+`INVALID_PERIOD`, 422 어휘(`MISSING_FIELD`/`INVALID_PRICE`/`INVALID_STOCK`), I-12 재삭제 409 `ALREADY_HIDDEN`(05 §1-3 멱등 규정 폐기), I-13 구현(501 스텁 해소), I-8/I-14 어뷰징 지표·I-16 코호트 재설계, I-10/I-11/S-5 `attributes` JSON 객체 수용, internal 상품 쓰기 소유권 위반은 404(공개 S-5는 403 유지), CH-6 티켓 클레임 `role`/`brandId`(노션 기준). 노션 쪽은 판매자 페이지 401 코드를 `INTERNAL_TOKEN_INVALID`로 통일하고 I-14 상태 어휘를 01 기준으로 정정.
 > **Round 5(노션 07-20/07-21 개정 정합, 2026-07-21)**: A-1/A-2 게스트 승계를 body `guestId` → **guest_id 쿠키 기준**으로(보내도 무시), 백필은 가입 전용·로그인은 병합만, 가입/로그인 성공 시 게스트 채팅 세션 정리(Redis만 — 게스트는 I-20 미발화). E-1 익명 요청에서 쿠키 없으면 게스트 발급(주체 없는 행 방지). I-19 아이템에 `categoryName` 추가. O-4 `paidAt`·O-6 `processedAt` 등 미확정 값은 키 생략이 아니라 **명시적 null**(NON_NULL 제거 — P-3 `distribution`의 page≥1 생략은 유지).
@@ -83,7 +83,7 @@
 - 표시용 주문번호 `orderNo`는 저장하지 않고 파생: `"ORD-" + created_at(yyyyMMdd) + "-" + id` (02 D24). O-3/O-4 응답에 포함.
 - O-1에서 결제까지 한 API로 묶은 이유: 모의 결제라 "생성→별도 결제 승인" 2단계로 나눌 외부 경계가 없음. 실 PG 전환 시(01 D7) 이 API를 생성/승인으로 쪼개는 게 교체 지점.
 
-## 5. mypage (review / wishlist / recent / address / inquiry)
+## 5. mypage (review / wishlist / recent / address)
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
@@ -95,10 +95,9 @@
 | M-6 | DELETE | /api/wishlist/{productId} | 🔑 | 찜 해제 — 찜하지 않은 상품 404 `WISHLIST_NOT_FOUND` |
 | M-7 | GET | /api/products/recent | 🔑 | 최근 본 상품 (behavior_events `product_view` 기반, 중복 제거 최신 20개) — 카드 공통 모양, HIDDEN 유지(M-4와 동일 원칙) |
 | M-8 | GET/POST/PATCH/DELETE | /api/addresses(/{id}) | 🔑 | 배송지 CRUD. is_default 지정 시 기존 기본 해제(같은 트랜잭션). **첫 배송지는 요청값과 무관하게 기본 지정**(주소가 있으면 기본이 정확히 1개 — Phase 4 구현 확정). PATCH는 부분 수정(null 유지), is_default는 true 지정만 가능(해제는 다른 주소를 기본 지정). 삭제: 기본 배송지는 다른 배송지가 있을 때만 가능 — 등록순 가장 오래된 주소 자동 승격(같은 트랜잭션), 유일한 배송지는 삭제 불가 400 `ADDRESS_LAST_UNDELETABLE`(02 D29) |
-| M-9 | GET | /api/inquiries/me | 🔑 | 내 문의 내역(읽기 전용): 제목(02 D23), 내용, 상태, 답변 |
 | M-10 | PATCH | /api/members/me | 🔑 | 프로필 수정: nickname — **MVP 제외**(FE 화면 없음, 07-17. 스펙은 유지·구현 보류) |
 
-- 문의 "접수"는 사용자 API가 없다 — 문의 챗봇(LLM)이 ⚙ internal 콜백으로만 생성(문의 단일 채널 원칙, 05 문서).
+- **문의 기능은 폐기**(2026-08-07, 노션 I-5·M-9·AD-1·AD-2·CH-3) — 접수·조회·답변·챗봇이 한꺼번에 빠져 `inquiry` 테이블까지 제거했다.
 - 후기는 **등록만** — 본인 후기 수정·삭제 API 없음(02 D29, MVP 팀 결정).
 
 ## 6. chat (직결 — 상세는 05 문서. 2026-07-16 D5 직결 반영)
@@ -111,7 +110,7 @@
 | CH-7 | POST | /api/chat/sessions/{sessionId}/claim | 🔒 | **게스트 접속을 회원으로 승계 (신설 2026-07-31 · 이슈 #63)** — 채팅 화면에서 로그인·가입한 경우에만 FE가 호출한다(자동 아님). body 없음 — `sessionId`는 path, 신원은 AT. **소유권 근거는 쿠키가 아니라 귀속 기록**(`guest.converted_member_id`)이다 — 로그인 시 쿠키가 이미 반납되므로 "내가 방금 은퇴시킨 게스트인가"로 묻고, 그래서 sessionId만으로 남의 세션을 주울 수 없다. **순서**: I-23(AI 전이) 성공 → Redis owner 이전 → 같은 sessionId로 회원 티켓 재발급. 뒤집으면 AI 409 시 부분 성공이 고착된다. 응답은 CH-1과 동일 스키마(`sessionId`는 요청과 같은 값). 실패: 403 `SESSION_FORBIDDEN`(내 게스트가 아님) · 404 `SESSION_NOT_FOUND`(만료 → CH-1로 새 세션) · 409 `SESSION_ACTIVE`(스트리밍 중 — 끝나고 1회 재시도) · 409 `SESSION_CLAIM_CONFLICT`(이미 승계됐거나 회원이 그 채널에 이미 세션 보유 → 병합하지 않고 CH-1로) · 503 `SESSION_CLAIM_UNAVAILABLE`(AI 미응답 — Redis는 그대로 두고 재시도 가능) |
 | CH-1b | POST | /api/chat/tickets | 🔓(게스트 허용) | **스트림 티켓만 재발급**(세션은 유지). body: sessionId — 매 메시지 전 또는 티켓 만료 401 시 호출. **소유권 검증**: 세션 발급 시 신원(회원 id/guest_id)과 재발급 요청 신원이 다르면 403 `SESSION_FORBIDDEN`(sessionId만 알아도 남의 세션 티켓을 못 받게 — I-20과 동일 규칙, 2026-07-17). 세션 만료·없음이면 404 `SESSION_NOT_FOUND` → FE는 CH-1로 새 세션 발급 |
 | ~~CH-2~~ | ~~POST~~ | ~~/api/chat~~ | — | **폐기(직결)** — 추천 챗봇 메시지·SSE는 FE가 `POST {LLM_SSE_URL}/chat`(`Authorization: Bearer <티켓>`)로 FastAPI에 직접(05 §1-1). Spring 경유 아님. 게스트 무제한·개인화 미적용은 유지 |
-| ~~CH-3~~ | ~~POST~~ | ~~/api/chat/cs~~ | — | **폐기(직결)** — CS 챗봇도 동일 직결(`channel:CS` 티켓). 비로그인은 일반 안내만(주문 질문 시 로그인 유도는 LLM 측). 단, 직결 전환 후 문의 챗봇 자체의 폐지/유지 여부는 **OPEN(LLM 확인 중)** |
+| ~~CH-3~~ | ~~POST~~ | ~~/api/chat/cs~~ | — | **폐기(직결)** — CS 챗봇도 동일 직결(`channel:CS` 티켓). 비로그인은 일반 안내만(주문 질문 시 로그인 유도는 LLM 측). **문의 챗봇 자체가 2026-08-07에 폐기**됐다(노션 CH-3 — 접수 I-5·조회 M-9·답변 AD-1/AD-2가 함께 빠짐). 구 OPEN 항목 종결 |
 | CH-5 | GET | /api/chat/lists/{listId} | 🔓(게스트 허용) | **추천 목록 조회 (확정 2026-07-18)** — FE가 SSE `products.ready{listIds[]}` 수신 후 목록마다 호출. I-21 콜백으로 저장된 목록(목록당 ≤9 · Redis TTL 10분)에 BE가 카드 완결 필드 + **추천 카드용 `reason`**(I-21 reasons echo, 없으면 null)을 부착해 반환(순서 = 콜백 저장 순서, HIDDEN·품절 드롭 — 드롭 수는 `itemsDropped`로 항상 반환, 전부 드롭돼도 404가 아니라 200 + 빈 `items`). 응답엔 `recommendationRequestId`·`listType`(항상 — FE 렌더 분기 축)·`label?`이 실리고, **BUY_ALL이면** `totalBudget?`·`sum`(드롭 후 남은 상품 재계산)·`withinBudget`(드롭·예산 미발화면 null 리터럴)이 추가된다 — PICK_ONE엔 세 키 없음(노션 CH-5). **I-21과 쌍**, P-7 대체 완료(2026-07-28 폐기). **소유자 검증**: I-21이 `sessionId`로 세션 신원을 읽어 목록에 owner를 박고, 조회 신원(회원 AT / `guest_id` 쿠키)이 다르면 403이 아니라 **404**로 존재를 은닉한다 — `listId`가 사실상 bearer 키라서(게스트 허용 공개 조회) CH-1b 소유권 규칙을 조회에도 적용. 콜백 시점에 세션이 이미 없으면 owner를 못 남기며 그 목록은 아무도 못 읽는다(fail-closed, I-21은 계약대로 200) |
 
 - 티켓 만료(401) 시 재발급은 **CH-1b**(세션 유지) → 1회 재시도. 세션까지 만료/없음(404 `SESSION_NOT_FOUND`)이면 CH-1로 새 세션. 티켓 발급 앞단에 보조 rate limit 가능(05 §3).
@@ -150,12 +149,10 @@
 
 ## 9. admin — ⚠️ 전부 고도화 (MVP 아님)
 
-> 2026-07-09 팀 결정: 관리자 페이지는 MVP에서 전체 제외. 클레임 완료는 자동 승인 스케줄러가 대신하고(01 D10), 문의 답변·신고 처리는 MVP 기간에 일어나지 않는다(데모에 필요한 답변 완료 건은 시드로). 아래 표는 고도화 시 구현할 명세로 유지.
+> 2026-07-09 팀 결정: 관리자 페이지는 MVP에서 전체 제외. 클레임 완료는 자동 승인 스케줄러가 대신하고(01 D10), 신고 처리는 MVP 기간에 일어나지 않는다. **문의 관련 AD-1·AD-2는 2026-08-07에 폐기**(문의 기능 전체 제거). 아래 표는 고도화 시 구현할 명세로 유지.
 
 | # | Method | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
-| AD-1 | GET | /api/admin/inquiries | 🛡 | 문의 목록. query: status?, page |
-| AD-2 | POST | /api/admin/inquiries/{id}/answer | 🛡 | 답변 등록 → status DONE |
 | AD-3 | GET | /api/admin/reports | 🛡 | 후기 신고 목록. query: status?, page |
 | AD-4 | POST | /api/admin/reports/{id}/process | 🛡 | 신고 처리. body: action(HIDE\|DELETE\|DISMISS) → review.status 변경 + report DONE |
 | AD-5 | GET | /api/admin/claims | 🛡 | 클레임 목록. query: status?(기본 REQUESTED), page |
@@ -169,8 +166,7 @@
 | I-1 | GET | /internal/products/search | 추천 1왕복 후보 조회 — 정형조건 필터. 리랭킹 계산 입력(`price`·`rating`·`reviewCount`) 포함, 카드 표시 필드는 없음. **후보 수 상한 없음**(2026-07-27). 05 §I-1 |
 | I-2 | POST | /internal/cart/items | 챗봇 장바구니 담기 |
 | I-3 | GET | /internal/products/popular | 인기 상품 (무관 질문 시 카드 유지용) |
-| I-4 | GET | /internal/members/{id}/orders/status | 주문 상태 요약 (문의 챗봇용) — I-19(목록)와 역할 분담 |
-| I-5 | POST | /internal/inquiries | 문의 접수 |
+| I-4 | GET | /internal/members/{id}/orders/status | 주문 상태 요약 (구매자 챗봇 CH-2가 흡수 — 07-18) — I-19(목록)와 역할 분담 |
 | I-6 | GET | /internal/seller/{brandId}/sales | 매출 시계열 — granularity daily\|weekly\|monthly\|summary, 응답에 isAnomaly·deviationPct(7일 이동평균 대비 ±30%)·statusCounts(노션 확정 4키: 주문 단위 PAID/PAYMENT_FAILED + 아이템 단위 CANCELLED/RETURNED — 2026-07-18 Round 3) *(구 로컬 I-6 `…/stats` 대체)* |
 | I-7 | GET | /internal/seller/{brandId}/funnel | 구매전환 퍼널 4단 — 1·2단 behavior_events, 3단 checkout_start의 `properties.productIds` 포함 여부(주문서 1회=1), 4단 order_item×product×brand(정본) *(구 로컬 I-7 상품 상세는 I-9 목록으로 흡수)* |
 | I-8 | GET | /internal/account-events | 계정 이벤트 집계(**전역** — brandId 스코프 아님) — groupBy ip\|eventType\|hour, IP 마스킹, **집계 전용(raw 미반환)** |

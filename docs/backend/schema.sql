@@ -310,22 +310,9 @@ CREATE TABLE wishlist (
     CONSTRAINT fk_wishlist_product FOREIGN KEY (product_id) REFERENCES product (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE inquiry (
-    id           BIGINT       NOT NULL AUTO_INCREMENT,
-    member_id    BIGINT       NOT NULL,                    -- 접수는 로그인 사용자만
-    title        VARCHAR(200) NOT NULL,                    -- LLM이 요약 생성한 제목 (D23)
-    content      TEXT         NOT NULL,                    -- 챗봇이 정리한 문의 내용
-    status       VARCHAR(20)  NOT NULL DEFAULT 'PENDING',  -- PENDING / IN_PROGRESS / DONE
-    answer       TEXT         NULL,
-    answered_by  BIGINT       NULL,                        -- 답변 관리자 (고도화)
-    answered_at  DATETIME     NULL,
-    created_at   DATETIME     NOT NULL,
-    updated_at   DATETIME     NULL,
-    PRIMARY KEY (id),
-    KEY idx_inquiry_member (member_id),
-    CONSTRAINT fk_inquiry_member   FOREIGN KEY (member_id)   REFERENCES member (id) ON DELETE RESTRICT,
-    CONSTRAINT fk_inquiry_answerer FOREIGN KEY (answered_by) REFERENCES member (id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- inquiry 테이블은 2026-08-07에 제거했다 — 문의 기능 폐기(노션 I-5·M-9·AD-1·AD-2·CH-3).
+-- 접수(I-5)·조회(M-9)·답변(AD-1·AD-2)·챗봇(CH-3)이 한꺼번에 폐기되어 쓰는 쪽도 볼 쪽도 없어졌다.
+-- 기존 DB는 scripts/migrate-2026-08-07-drop-inquiry.sql로 정리한다.
 
 -- ------------------------------------------------------------
 -- 행동 이벤트 (FE 수집, user_event 대체 — D31)
