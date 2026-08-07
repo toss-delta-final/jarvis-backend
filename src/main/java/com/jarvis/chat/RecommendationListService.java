@@ -70,8 +70,8 @@ public class RecommendationListService {
     public void store(RecommendationCallbackRequest request) {
         String sessionId = request.sessionId();
         requireUuid(sessionId);
-        List<ListEntry> entries = request.resolvedLists();
-        if (entries.isEmpty() || entries.size() > MAX_LISTS) {
+        List<ListEntry> entries = request.lists();
+        if (entries == null || entries.isEmpty() || entries.size() > MAX_LISTS) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         // 목록 전부를 저장 전에 검증한다 — 앞쪽만 저장되면 products.ready가 사본 없는 목록을 가리킨다
@@ -182,14 +182,14 @@ public class RecommendationListService {
     }
 
     /**
-     * listType은 "항상 싣는다"가 계약이지만 누락을 400으로 만들지 않는다 —
-     * 노션 I-21 실패 응답 표에 없는 거절 사유를 새로 만들면 FastAPI가 카드를 못 띄운다.
-     * 대체재/보완재 중 흔한 쪽인 PICK_ONE으로 채우고 경고만 남긴다. 알 수 없는 값은 400이다.
+     * 누락은 DTO의 {@code @NotBlank}가 400으로 거른다(2026-08-07 — 노션 I-21 「필수 필드 누락」 행 개정).
+     * 종전엔 PICK_ONE으로 채우고 경고만 남겼는데, 그러면 BUY_ALL 세트가 PICK_ONE으로 오기록되고
+     * 집계할 때까지 아무도 모른다. 알 수 없는 값은 그때도 지금도 400이다.
      */
     private static RecommendationListType resolveListType(String listType) {
-        if (listType == null || listType.isBlank()) {
-            log.warn("I-21 콜백에 listType이 없다 — PICK_ONE으로 저장한다");
-            return RecommendationListType.PICK_ONE;
+        // null 가드는 @NotBlank가 이미 막은 뒤의 심층 방어다 — valueOf(null)은 NPE라 500이 된다
+        if (listType == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         try {
             return RecommendationListType.valueOf(listType);
@@ -198,13 +198,9 @@ public class RecommendationListService {
         }
     }
 
-    /** 같은 이유로 누락은 400이 아니다 — 컬럼이 NOT NULL이라 서버가 채운다(그 추천은 실행 단위 집계에서 홀로 남는다). */
+    /** 누락은 마찬가지로 {@code @NotBlank}가 막는다 — 서버가 발급하면 그 추천만 실행 단위 집계에서 홀로 남았다. */
     private static String resolveRequestId(String requestId) {
-        if (requestId == null || requestId.isBlank()) {
-            log.warn("I-21 콜백에 recommendationRequestId가 없다 — 서버가 발급한다");
-            return UUID.randomUUID().toString();
-        }
-        if (requestId.length() > MAX_REQUEST_ID_LENGTH) {
+        if (requestId == null || requestId.length() > MAX_REQUEST_ID_LENGTH) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
         return requestId;

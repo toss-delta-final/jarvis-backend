@@ -139,20 +139,33 @@ class RecommendationListServiceTest {
         assertThat(saved.getGuestId()).isNull();
     }
 
-    // FastAPI가 lists[]로 전환하기 전까지 구 평평 구조도 그대로 동작해야 한다(양쪽 배포 시점 분리)
+    // 2026-08-07 과도기 수용 제거 — 구 평평 구조는 lists가 비는 것과 같아 400이다.
+    // 빈 배열·누락을 같은 자리에서 던지는 건 노션 I-21이 둘을 fields 없는 VALIDATION_ERROR로 묶기 때문.
     @Test
-    @DisplayName("I-21 — 과도기 평평 구조(listId·productIds)도 목록 1건으로 수용")
-    void storeAcceptsLegacyFlatShape() throws Exception {
-        service.store(new RecommendationCallbackRequest(SESSION_ID, null, null, null, null,
-                LIST_ID, List.of(5L, 6L), List.of(new Reason(5L, "가성비"))));
+    @DisplayName("I-21 — lists가 없거나 비면 400 (구 평평 구조가 여기로 떨어진다)")
+    void storeRejectsMissingLists() {
+        assertThatThrownBy(() -> service.store(
+                new RecommendationCallbackRequest(SESSION_ID, REQUEST_ID, "PICK_ONE", null, null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+        assertThatThrownBy(() -> service.store(
+                new RecommendationCallbackRequest(SESSION_ID, REQUEST_ID, "PICK_ONE", null, List.of())))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
 
-        verify(recommendationListStore).saveAll(listCaptor.capture(), itemCaptor.capture());
-        assertThat(listCaptor.getValue()).hasSize(1);
-        // listType이 없으면 대체재/보완재 중 흔한 쪽으로 채운다 — 400으로 만들지 않는다
-        assertThat(listCaptor.getValue().get(0).getListType()).isEqualTo(RecommendationListType.PICK_ONE);
-        // requestId도 컬럼이 NOT NULL이라 서버가 발급한다
-        assertThat(listCaptor.getValue().get(0).getRecommendationRequestId()).isNotBlank();
-        assertThat(capturedCache(LIST_ID).productIds()).containsExactly(5L, 6L);
+    // 종전엔 PICK_ONE·서버 발급 UUID로 채웠다 — 그 기본값이 BUY_ALL 세트를 PICK_ONE으로 오기록했다
+    @Test
+    @DisplayName("I-21 — listType·recommendationRequestId 누락도 400 (기본값 폐지, 2026-08-07)")
+    void storeRejectsMissingListTypeAndRequestId() {
+        assertThatThrownBy(() -> service.store(
+                request(null, null, entry(LIST_ID, null, List.of(5L)))))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
+        assertThatThrownBy(() -> service.store(new RecommendationCallbackRequest(
+                SESSION_ID, null, "PICK_ONE", null, List.of(entry(LIST_ID, null, List.of(5L))))))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
     }
 
     @Test
@@ -525,7 +538,7 @@ class RecommendationListServiceTest {
     private static RecommendationCallbackRequest request(String listType, Integer totalBudget,
                                                          ListEntry... entries) {
         return new RecommendationCallbackRequest(SESSION_ID, REQUEST_ID, listType, totalBudget,
-                List.of(entries), null, null, null);
+                List.of(entries));
     }
 
     private static ListEntry entry(String listId, String label, List<Long> productIds,
