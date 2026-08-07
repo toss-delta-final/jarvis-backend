@@ -18,7 +18,7 @@ import static org.mockito.Mockito.when;
 
 import com.jarvis.address.AddressRepository;
 import com.jarvis.cart.CartItem;
-import com.jarvis.cart.CartItemRepository;
+import com.jarvis.cart.CartService;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.member.MemberRepository;
@@ -59,7 +59,7 @@ class OrderServiceTest {
 
     @Mock OrderRepository orderRepository;
     @Mock OrderItemRepository orderItemRepository;
-    @Mock CartItemRepository cartItemRepository;
+    @Mock CartService cartService;
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
     @Mock ProductStockService productStockService;
@@ -136,7 +136,7 @@ class OrderServiceTest {
         assertThat(orderCaptor.getValue().getTotalAmount()).isEqualTo(24000);
         verify(statusChanger).logOrderCreated(any(Order.class));
         verify(statusChanger).paymentSucceeded(any(Order.class), anyList(), any(LocalDateTime.class));
-        verify(cartItemRepository, never()).deleteAll(anyList());
+        verify(cartService, never()).removeOrderedLines(anyList());
         // 같은 상품이 여러 라인이어도 재고는 합산해 한 번만 요청한다
         verify(productStockService).deduct(Map.of(10L, 2));
     }
@@ -254,7 +254,7 @@ class OrderServiceTest {
     void createFromCartDeletesLines() {
         CartItem cartItem = CartItem.forMember(1L, 10L, null, 2, null);
         ReflectionTestUtils.setField(cartItem, "id", 5L);
-        when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(cartItem));
+        when(cartService.getOwnedLines(1L, List.of(5L))).thenReturn(List.of(cartItem));
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
@@ -265,7 +265,7 @@ class OrderServiceTest {
                 null, "MOCK_CARD");
         orderService.create(1L, request);
 
-        verify(cartItemRepository).deleteAll(List.of(cartItem));
+        verify(cartService).removeOrderedLines(List.of(cartItem));
     }
 
     // ---- 추천 귀속 스냅샷 (노션 O-1) ----
@@ -279,7 +279,7 @@ class OrderServiceTest {
         CartItem cartItem = CartItem.forMember(1L, 10L, null, 2,
                 new ConversionAttribution(REQUEST_ID, LIST_ID));
         ReflectionTestUtils.setField(cartItem, "id", 5L);
-        when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(cartItem));
+        when(cartService.getOwnedLines(1L, List.of(5L))).thenReturn(List.of(cartItem));
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
@@ -338,20 +338,6 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("O-1 — 남의 장바구니 행은 CART_ITEM_NOT_FOUND")
-    void createFromCartRejectsForeignLines() {
-        CartItem foreign = CartItem.forMember(2L, 10L, null, 1, null);
-        when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(foreign));
-
-        OrderCreateRequest request = new OrderCreateRequest(List.of(5L), null, null,
-                new OrderCreateRequest.AddressInput("a", "b", "c", "d", null), null, "MOCK_CARD");
-        assertThatThrownBy(() -> orderService.create(1L, request))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.CART_ITEM_NOT_FOUND);
-    }
-
-    @Test
     @DisplayName("O-2 — PENDING/PAYMENT_FAILED가 아니면 ORDER_INVALID_TRANSITION")
     void retryRejectsPaidOrder() {
         Order order = Order.create(1L, "MOCK_CARD", 1000, "r", "p", "z", "a1", null, null);
@@ -376,7 +362,6 @@ class OrderServiceTest {
         when(orderItemRepository.findAllByOrderId(1L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
         when(productStockService.deduct(anyMap())).thenReturn(true);
-        when(cartItemRepository.findAllByMemberId(1L)).thenReturn(List.of());
 
         orderService.retryPayment(1L, 1L, new RetryPaymentRequest("MOCK_CARD"));
 
@@ -402,7 +387,7 @@ class OrderServiceTest {
         OrderCreateResponse response = orderService.retryPayment(1L, 1L, new RetryPaymentRequest("MOCK_CARD"));
 
         assertThat(response.failureReason()).isEqualTo("OUT_OF_STOCK");
-        verify(cartItemRepository, never()).findAllByMemberId(anyLong());
+        verify(cartService, never()).removeLinesMatching(anyLong(), anyList());
     }
 
     @Test

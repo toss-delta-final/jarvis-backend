@@ -6,8 +6,8 @@ import com.jarvis.global.response.ErrorCode;
 import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.review.ReviewRepository;
+import com.jarvis.review.dto.BrandReviewRow;
 import com.jarvis.seller.dto.SellerReviewListResponse;
-import com.jarvis.seller.dto.SellerReviewRow;
 import com.jarvis.seller.dto.SellerReviewStatsResponse;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -50,10 +50,10 @@ public class SellerReviewService {
         Filters f = filters(brandId, productId, rating, period);
         // 정렬은 쿼리에 박혀 있으므로 Pageable에는 Sort를 싣지 않는다(중복 order by 방지)
         Pageable pageable = new OffsetPageRequest(offset, limit, Sort.unsorted());
-        Page<SellerReviewRow> page = "ratingAsc".equals(sort)
-                ? reviewRepository.findSellerReviewsRatingAsc(brandId, productId, f.applyRating(),
+        Page<BrandReviewRow> page = "ratingAsc".equals(sort)
+                ? reviewRepository.findBrandReviewsRatingAsc(brandId, productId, f.applyRating(),
                         f.ratings(), f.from(), f.to(), pageable)
-                : reviewRepository.findSellerReviewsLatest(brandId, productId, f.applyRating(),
+                : reviewRepository.findBrandReviewsLatest(brandId, productId, f.applyRating(),
                         f.ratings(), f.from(), f.to(), pageable);
         return new SellerReviewListResponse(
                 page.getContent().stream().map(SellerReviewService::toRow).toList(),
@@ -64,7 +64,7 @@ public class SellerReviewService {
                                            AnalysisPeriod period) {
         Filters f = filters(brandId, productId, rating, period);
 
-        Map<Integer, Long> raw = reviewRepository.countSellerReviewsByRating(brandId, productId,
+        Map<Integer, Long> raw = reviewRepository.countBrandReviewsByRating(brandId, productId,
                         f.applyRating(), f.ratings(), f.from(), f.to()).stream()
                 .collect(java.util.stream.Collectors.toMap(
                         row -> ((Number) row[0]).intValue(), row -> ((Number) row[1]).longValue()));
@@ -77,7 +77,7 @@ public class SellerReviewService {
                 (double) RATING_KEYS.stream().mapToLong(k -> k * raw.getOrDefault(k, 0L)).sum() / totalCount);
 
         List<SellerReviewStatsResponse.ByProduct> byProduct = reviewRepository
-                .aggregateSellerReviewsByProduct(brandId, productId, f.applyRating(), f.ratings(),
+                .aggregateBrandReviewsByProduct(brandId, productId, f.applyRating(), f.ratings(),
                         f.from(), f.to()).stream()
                 .map(row -> new SellerReviewStatsResponse.ByProduct(
                         ((Number) row[0]).longValue(), (String) row[1],
@@ -125,7 +125,7 @@ public class SellerReviewService {
         }
     }
 
-    private static SellerReviewListResponse.Row toRow(SellerReviewRow row) {
+    private static SellerReviewListResponse.Row toRow(BrandReviewRow row) {
         return new SellerReviewListResponse.Row(row.reviewId(), row.productId(), row.productName(),
                 row.rating(), row.content(), row.authorNickname(),
                 row.createdAt().atZone(ZONE).toOffsetDateTime());

@@ -3,7 +3,7 @@ package com.jarvis.order;
 import com.jarvis.address.Address;
 import com.jarvis.address.AddressRepository;
 import com.jarvis.cart.CartItem;
-import com.jarvis.cart.CartItemRepository;
+import com.jarvis.cart.CartService;
 import com.jarvis.category.Category;
 import com.jarvis.category.CategoryRepository;
 import com.jarvis.global.response.BusinessException;
@@ -57,7 +57,7 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
-    private final CartItemRepository cartItemRepository;
+    private final CartService cartService;
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
     private final ProductStockService productStockService;
@@ -113,7 +113,7 @@ public class OrderService {
         // 장바구니 경유분만 삭제 — 바로 구매는 장바구니 미접촉 (04 §4)
         List<CartItem> purchasedCartLines = lines.stream().map(Line::cartItem).filter(Objects::nonNull).toList();
         if (order.getStatus() == OrderStatus.PAID && !purchasedCartLines.isEmpty()) {
-            cartItemRepository.deleteAll(purchasedCartLines);
+            cartService.removeOrderedLines(purchasedCartLines);
         }
         return OrderCreateResponse.from(order, failureReason);
     }
@@ -245,13 +245,7 @@ public class OrderService {
 
     /** 추천 출처는 담기 시점(C-2·I-2)에 검증이 끝났으므로 여기선 복사만 한다 (노션 O-1) */
     private List<LineSpec> specsFromCart(Long memberId, List<Long> cartItemIds) {
-        List<CartItem> cartItems = cartItemRepository.findAllById(cartItemIds);
-        boolean allOwned = cartItems.stream()
-                .allMatch(item -> memberId.equals(item.getMemberId()));
-        if (cartItems.size() != new HashSet<>(cartItemIds).size() || !allOwned) {
-            throw new BusinessException(ErrorCode.CART_ITEM_NOT_FOUND);
-        }
-        return cartItems.stream()
+        return cartService.getOwnedLines(memberId, cartItemIds).stream()
                 .map(item -> new LineSpec(item.getProductId(), item.getOptionId(), item.getQuantity(),
                         item, item.attribution()))
                 .toList();
@@ -355,25 +349,11 @@ public class OrderService {
                 Collectors.summingInt(OrderItem::getQuantity)));
     }
 
-    /** O-2 성공 시 — 장바구니에 같은 상품+옵션 행이 남아 있으면 삭제 (04 §4) */
+    /** O-2 성공 시 — 장바구니에 같은 상품+옵션 행이 남아 있으면 삭제 (04 §4). 매칭·삭제는 장바구니 소관 */
     private void removeMatchingCartLines(Long memberId, List<OrderItem> items) {
-        List<CartItem> cartLines = cartItemRepository.findAllByMemberId(memberId);
-        if (cartLines.isEmpty()) {
-            return;
-        }
-        Map<Long, String> optionNames = productOptionRepository
-                .findAllById(cartLines.stream().map(CartItem::getOptionId).filter(Objects::nonNull).toList())
-                .stream().collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
-        List<CartItem> matched = cartLines.stream()
-                .filter(cartLine -> {
-                    String optionName = cartLine.getOptionId() == null ? null
-                            : optionNames.get(cartLine.getOptionId());
-                    return items.stream().anyMatch(item ->
-                            item.getProductId().equals(cartLine.getProductId())
-                                    && Objects.equals(item.getOptionName(), optionName));
-                })
-                .toList();
-        cartItemRepository.deleteAll(matched);
+        cartService.removeLinesMatching(memberId, items.stream()
+                .map(item -> new CartService.PurchasedLine(item.getProductId(), item.getOptionName()))
+                .toList());
     }
 
     private Order findOwnedOrder(Long memberId, Long orderId) {

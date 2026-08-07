@@ -337,4 +337,67 @@ class CartServiceTest {
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.AUTH_FORBIDDEN);
     }
+
+    // ---- 주문(O-1·O-2)이 경유하는 진입점 ----
+
+    @Test
+    @DisplayName("O-1 — 남의 장바구니 행이 섞이면 CART_ITEM_NOT_FOUND")
+    void getOwnedLinesRejectsForeignLines() {
+        CartItem foreign = CartItem.forMember(2L, 10L, null, 1, null);
+        when(cartItemRepository.findAllById(List.of(5L))).thenReturn(List.of(foreign));
+
+        assertThatThrownBy(() -> cartService.getOwnedLines(1L, List.of(5L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CART_ITEM_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("O-1 — 없는 id가 섞여 조회 결과가 모자라도 CART_ITEM_NOT_FOUND")
+    void getOwnedLinesRejectsMissingIds() {
+        CartItem mine = CartItem.forMember(1L, 10L, null, 1, null);
+        when(cartItemRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(mine));
+
+        assertThatThrownBy(() -> cartService.getOwnedLines(1L, List.of(5L, 6L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CART_ITEM_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("O-2 — 주문한 (상품, 옵션명)과 같은 행만 지운다. 옵션이 다르면 남긴다")
+    void removeLinesMatchingComparesOptionName() {
+        CartItem sameOption = CartItem.forMember(1L, 10L, 100L, 1, null);
+        CartItem otherOption = CartItem.forMember(1L, 10L, 200L, 1, null);
+        CartItem otherProduct = CartItem.forMember(1L, 20L, null, 1, null);
+        when(cartItemRepository.findAllByMemberId(1L))
+                .thenReturn(List.of(sameOption, otherOption, otherProduct));
+        ProductOption large = option(100L, "L");
+        ProductOption small = option(200L, "S");
+        when(productOptionRepository.findAllById(List.of(100L, 200L)))
+                .thenReturn(List.of(large, small));
+
+        cartService.removeLinesMatching(1L,
+                List.of(new CartService.PurchasedLine(10L, "L")));
+
+        verify(cartItemRepository).deleteAll(List.of(sameOption));
+    }
+
+    @Test
+    @DisplayName("O-2 — 장바구니가 비어 있으면 옵션 조회조차 하지 않는다")
+    void removeLinesMatchingSkipsEmptyCart() {
+        when(cartItemRepository.findAllByMemberId(1L)).thenReturn(List.of());
+
+        cartService.removeLinesMatching(1L,
+                List.of(new CartService.PurchasedLine(10L, null)));
+
+        verifyNoInteractions(productOptionRepository);
+    }
+
+    private ProductOption option(Long id, String name) {
+        ProductOption option = mock(ProductOption.class, withSettings().strictness(Strictness.LENIENT));
+        when(option.getId()).thenReturn(id);
+        when(option.getName()).thenReturn(name);
+        return option;
+    }
 }
