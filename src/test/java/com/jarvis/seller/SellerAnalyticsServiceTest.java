@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +23,7 @@ import com.jarvis.product.Product;
 import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
+import com.jarvis.seller.dto.BrandAccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
@@ -52,12 +54,14 @@ class SellerAnalyticsServiceTest {
     @Mock private BrandRepository brandRepository;
 
     private SellerAnalyticsService service;
+    // 목이 아니라 진짜 라벨러 — 라벨의 결정성·브랜드별 상이를 테스트가 직접 확인해야 한다
+    private final CustomerLabeler customerLabeler = new CustomerLabeler("test-label-secret");
 
     @BeforeEach
     void setUp() {
         service = new SellerAnalyticsService(behaviorEventRepository, orderItemRepository,
                 orderStatusLogRepository, productChangeLogRepository, accountEventLogRepository,
-                productRepository, brandRepository, new ObjectMapper());
+                productRepository, brandRepository, customerLabeler, new ObjectMapper());
     }
 
     private static BehaviorEventRepository.TypeCountRow typeCount(String type, long cnt) {
@@ -324,7 +328,11 @@ class SellerAnalyticsServiceTest {
         assertThat(response.total()).isEqualTo(3);
         List<SellerOrderEventsResponse.MemberRow> rows = response.rows().stream()
                 .map(SellerOrderEventsResponse.MemberRow.class::cast).toList();
-        assertThat(rows.get(0).buyerMemberId()).isEqualTo(1L);
+        // memberId가 아니라 라벨이 나간다 (노션 I-14 2026-08-06 프라이버시 개정)
+        assertThat(rows.get(0).customerLabel()).isEqualTo(customerLabeler.label(BRAND_ID, 1L));
+        // 같은 회원이라도 브랜드가 다르면 라벨이 달라야 한다 — 브랜드 간 대조 추적 차단
+        assertThat(customerLabeler.label(BRAND_ID, 1L))
+                .isNotEqualTo(customerLabeler.label(BRAND_ID + 1, 1L));
         assertThat(rows.get(0).cancelRatio()).isEqualTo(0.75);
         assertThat(rows.get(0).isSuspicious()).isTrue(); // 취소율 초과
         assertThat(rows.get(1).isSuspicious()).isTrue(); // 시간당 주문 초과
@@ -463,5 +471,84 @@ class SellerAnalyticsServiceTest {
         assertThat(member.lastLoginAt()).isNotNull();
         assertThat(member.sessions30d()).isZero();
         assertThat(member.preChurnEvent()).isEqualTo("RETURNED(상품불량)");
+    }
+
+    // ---- I-8 자사 코호트 (노션 I-8 2026-08-06 전역 → 브랜드 스코프 전환) ----
+
+    @Test
+    @DisplayName("I-8 브랜드 스코프 — 코호트가 비면 200 + 빈 rows (이상 없음은 정상 결과)")
+    void brandAccountEventsWithEmptyCohort() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.findChurnCohortMemberIds(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+
+        BrandAccountEventAggregateResponse response =
+                service.brandAccountEvents(BRAND_ID, "ip", null, PERIOD);
+
+        assertThat(response.rows()).isEmpty();
+        assertThat(response.scope()).isEqualTo("brand");
+        // 코호트가 없으면 로그 집계 자체를 하지 않는다
+        verifyNoInteractions(accountEventLogRepository);
+    }
+
+    @Test
+    @DisplayName("I-8 브랜드 스코프 — groupBy=ip는 IP를 마스킹하고 어뷰징 회원 수를 함께 센다")
+    void brandAccountEventsGroupByIp() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.findChurnCohortMemberIds(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of(1L, 2L));
+        when(orderStatusLogRepository.maxSellerOrdersPerHourByMember(
+                eq(BRAND_ID), eq(false), any(), any(), any(), any())).thenReturn(List.of());
+        when(orderStatusLogRepository.aggregateSellerOrderEventsByMember(
+                eq(BRAND_ID), eq(false), any(), any(), any(), any(), anyInt())).thenReturn(List.of());
+        AccountEventLogRepository.CohortIpAggRow ipRow = cohortIpRow("211.234.10.20", 7L, 5L, 87L);
+        when(accountEventLogRepository.aggregateByIpForCohort(any(), any(), any(), any(), any(), anyInt()))
+                .thenReturn(List.of(ipRow));
+
+        BrandAccountEventAggregateResponse response =
+                service.brandAccountEvents(BRAND_ID, "ip", null, PERIOD);
+
+        BrandAccountEventAggregateResponse.IpRow row =
+                (BrandAccountEventAggregateResponse.IpRow) response.rows().get(0);
+        assertThat(row.ipMasked()).isEqualTo("211.234.xx.xx");
+        assertThat(row.distinctMembers()).isEqualTo(7L);
+        assertThat(row.suspiciousMemberCount()).isEqualTo(5L);
+        assertThat(row.eventCount()).isEqualTo(87L);
+    }
+
+    @Test
+    @DisplayName("I-8 브랜드 스코프 — groupBy가 어휘 밖이면 INVALID_GROUP_BY (코호트 조회 전에 걸린다)")
+    void brandAccountEventsRejectsUnknownGroupBy() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.brandAccountEvents(BRAND_ID, "memberId", null, PERIOD))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_GROUP_BY);
+        verifyNoInteractions(behaviorEventRepository);
+    }
+
+    @Test
+    @DisplayName("I-8 브랜드 스코프 — 없는 브랜드는 404 BRAND_NOT_FOUND (빈 코호트 200과 구분)")
+    void brandAccountEventsRejectsUnknownBrand() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.brandAccountEvents(BRAND_ID, "ip", null, PERIOD))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.BRAND_NOT_FOUND);
+    }
+
+    private static AccountEventLogRepository.CohortIpAggRow cohortIpRow(
+            String ip, long distinctMembers, long suspiciousMembers, long eventCount) {
+        AccountEventLogRepository.CohortIpAggRow row =
+                mock(AccountEventLogRepository.CohortIpAggRow.class);
+        when(row.getIp()).thenReturn(ip);
+        when(row.getDistinctMembers()).thenReturn(distinctMembers);
+        when(row.getSuspiciousMembers()).thenReturn(suspiciousMembers);
+        when(row.getEventCount()).thenReturn(eventCount);
+        when(row.getFirstSeen()).thenReturn(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
+        when(row.getLastSeen()).thenReturn(java.time.LocalDateTime.of(2026, 6, 30, 0, 0));
+        return row;
     }
 }

@@ -9,6 +9,7 @@ import com.jarvis.seller.SellerProductService;
 import com.jarvis.seller.SellerReviewService;
 import com.jarvis.seller.SellerSalesService;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
+import com.jarvis.seller.dto.BrandAccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
@@ -85,7 +86,11 @@ public class InternalSellerController {
                 sellerAnalyticsService.funnel(brandId, AnalysisPeriod.of(from, to)));
     }
 
-    /** I-8 — 계정 이벤트 집계(전역 — brandId 스코프 아님, groupBy=ip는 무차별 대입 신호) */
+    /**
+     * 구 I-8 전역 경로 — <b>삭제가 아니라 존치</b>다(노션 I-8 2026-08-06). 무차별 대입 탐지는 브랜드에
+     * 귀속할 수 없는 플랫폼 보안 신호라 admin 파트가 부활하면 그대로 쓴다. 판매자 소비용은 아래
+     * 브랜드 스코프 경로다 — 이쪽을 판매자 워커가 부르면 자사와 무관한 전체 신호를 보게 된다.
+     */
     @GetMapping("/account-events")
     public ApiResponse<AccountEventAggregateResponse> accountEvents(
             @RequestParam(defaultValue = "eventType") String groupBy,
@@ -94,6 +99,18 @@ public class InternalSellerController {
             @RequestParam(required = false) String to) {
         return ApiResponse.success(
                 sellerAnalyticsService.accountEvents(groupBy, eventType, AnalysisPeriod.of(from, to)));
+    }
+
+    /** I-8 — 자사 코호트 계정 이벤트 집계 (노션 I-8 2026-08-06 신규 경로, I-16 churn과 같은 코호트) */
+    @GetMapping("/seller/{brandId}/account-events")
+    public ApiResponse<BrandAccountEventAggregateResponse> brandAccountEvents(
+            @PathVariable Long brandId,
+            @RequestParam(defaultValue = "eventType") String groupBy,
+            @RequestParam(required = false) String eventType,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return ApiResponse.success(sellerAnalyticsService.brandAccountEvents(
+                brandId, groupBy, eventType, AnalysisPeriod.of(from, to)));
     }
 
     /**
