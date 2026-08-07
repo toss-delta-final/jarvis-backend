@@ -19,24 +19,20 @@ import com.jarvis.order.dto.OrderListResponse;
 import com.jarvis.order.dto.RetryPaymentRequest;
 import com.jarvis.order.dto.UnavailableItemDetail;
 import com.jarvis.product.Product;
-import com.jarvis.product.ProductChangeLog;
-import com.jarvis.product.ProductChangeLogRepository;
-import com.jarvis.product.ProductChangeType;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.product.ProductStockService;
 import com.jarvis.recommendation.ConversionAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -64,7 +60,7 @@ public class OrderService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
-    private final ProductChangeLogRepository productChangeLogRepository;
+    private final ProductStockService productStockService;
     private final CategoryRepository categoryRepository;
     private final AddressRepository addressRepository;
     private final MemberRepository memberRepository;
@@ -345,7 +341,7 @@ public class OrderService {
             return result.failureCode();
         }
         // 재고 차감은 결제 성공 처리와 같은 트랜잭션의 조건부 UPDATE (02 D33) — 실패 시 OUT_OF_STOCK 결제 실패
-        if (!deductStock(quantitiesByProduct)) {
+        if (!productStockService.deduct(quantitiesByProduct)) {
             statusChanger.paymentFailed(order, OUT_OF_STOCK);
             return OUT_OF_STOCK;
         }
@@ -353,32 +349,10 @@ public class OrderService {
         return null;
     }
 
+    /** 같은 상품이 여러 라인에 나뉘어 있어도 재고는 한 번에 차감한다. 락 순서는 ProductStockService가 보장 */
     private Map<Long, Integer> aggregateQuantities(List<OrderItem> items) {
-        // productId 오름차순 고정 — 동시 주문 간 락 순서 통일(데드락 방지)
-        return items.stream().collect(Collectors.groupingBy(OrderItem::getProductId, TreeMap::new,
+        return items.stream().collect(Collectors.groupingBy(OrderItem::getProductId,
                 Collectors.summingInt(OrderItem::getQuantity)));
-    }
-
-    private boolean deductStock(Map<Long, Integer> quantitiesByProduct) {
-        List<Map.Entry<Long, Integer>> applied = new ArrayList<>();
-        // 품절 로그는 버퍼에 모았다가 전 품목 차감 성공 후에만 저장 — 일부 실패로 보상 복원되면 허위 품절 로그가 남지 않도록 (02 D32·D33)
-        List<ProductChangeLog> stockOutLogs = new ArrayList<>();
-        for (Map.Entry<Long, Integer> entry : quantitiesByProduct.entrySet()) {
-            if (productRepository.deductStock(entry.getKey(), entry.getValue()) == 0) {
-                applied.forEach(done -> productRepository.restoreStock(done.getKey(), done.getValue()));
-                return false;
-            }
-            applied.add(entry);
-            if (productRepository.findStockQuantity(entry.getKey()).orElse(-1) == 0) {
-                // 주문에 의한 재고 -1은 미기록, 품절 전환(new_value=0)만 기록 (02 D32·D33)
-                stockOutLogs.add(ProductChangeLog.of(entry.getKey(), ProductChangeType.STOCK,
-                        String.valueOf(entry.getValue()), "0"));
-            }
-        }
-        if (!stockOutLogs.isEmpty()) {
-            productChangeLogRepository.saveAll(stockOutLogs);
-        }
-        return true;
     }
 
     /** O-2 성공 시 — 장바구니에 같은 상품+옵션 행이 남아 있으면 삭제 (04 §4) */

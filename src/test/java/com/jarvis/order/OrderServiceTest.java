@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -28,9 +29,9 @@ import com.jarvis.order.dto.OrderDetailResponse;
 import com.jarvis.order.dto.OrderListResponse;
 import com.jarvis.order.dto.RetryPaymentRequest;
 import com.jarvis.order.dto.UnavailableItemDetail;
-import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.product.ProductStockService;
 import com.jarvis.recommendation.ConversionAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
 import com.jarvis.recommendation.dto.RecommendationContext;
@@ -61,7 +62,7 @@ class OrderServiceTest {
     @Mock CartItemRepository cartItemRepository;
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
-    @Mock ProductChangeLogRepository productChangeLogRepository;
+    @Mock ProductStockService productStockService;
     @Mock AddressRepository addressRepository;
     @Mock MemberRepository memberRepository;
     @Mock ReviewRepository reviewRepository;
@@ -124,8 +125,7 @@ class OrderServiceTest {
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 2)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(98));
+        when(productStockService.deduct(anyMap())).thenReturn(true);
 
         OrderCreateResponse response = orderService.create(1L, directRequest("MOCK_CARD", 2));
 
@@ -137,7 +137,8 @@ class OrderServiceTest {
         verify(statusChanger).logOrderCreated(any(Order.class));
         verify(statusChanger).paymentSucceeded(any(Order.class), anyList(), any(LocalDateTime.class));
         verify(cartItemRepository, never()).deleteAll(anyList());
-        verify(productChangeLogRepository, never()).save(any());
+        // 같은 상품이 여러 라인이어도 재고는 합산해 한 번만 요청한다
+        verify(productStockService).deduct(Map.of(10L, 2));
     }
 
     @Test
@@ -154,7 +155,7 @@ class OrderServiceTest {
         assertThat(response.failureReason()).isEqualTo("MOCK_DECLINED");
         verify(statusChanger).paymentFailed(any(Order.class), eq("MOCK_DECLINED"));
         verify(statusChanger, never()).paymentSucceeded(any(), anyList(), any());
-        verify(productRepository, never()).deductStock(anyLong(), anyInt());
+        verify(productStockService, never()).deduct(anyMap());
         verify(orderItemRepository).saveAll(itemsCaptor.capture());
         assertThat(itemsCaptor.getValue()).allMatch(i -> i.getStatus() == OrderItemStatus.PENDING);
     }
@@ -215,16 +216,14 @@ class OrderServiceTest {
     }
 
     @Test
-    @DisplayName("O-1 재고 부족 — OUT_OF_STOCK 결제 실패 + 기차감분 보상 복원")
+    @DisplayName("O-1 재고 부족 — OUT_OF_STOCK 결제 실패 (보상 복원은 ProductStockServiceTest)")
     void createOutOfStock() {
         com.jarvis.product.Product second = product(20L, 5000, 5000);
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productRepository.findById(20L)).thenReturn(Optional.of(second));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(anyLong())).thenReturn(List.of());
         when(paymentService.pay(anyString(), anyInt())).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 1)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(99));
-        when(productRepository.deductStock(20L, 1)).thenReturn(0);
+        when(productStockService.deduct(anyMap())).thenReturn(false);
 
         OrderCreateRequest request = new OrderCreateRequest(null,
                 List.of(new OrderCreateRequest.OrderLine(10L, null, 1, null),
@@ -234,7 +233,6 @@ class OrderServiceTest {
                 null, "MOCK_CARD");
         OrderCreateResponse response = orderService.create(1L, request);
 
-        verify(productRepository).restoreStock(10L, 1);
         verify(statusChanger).paymentFailed(any(Order.class), eq("OUT_OF_STOCK"));
         assertThat(response.failureReason()).isEqualTo("OUT_OF_STOCK");
     }
@@ -260,8 +258,7 @@ class OrderServiceTest {
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 2)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(98));
+        when(productStockService.deduct(anyMap())).thenReturn(true);
 
         OrderCreateRequest request = new OrderCreateRequest(List.of(5L), null, null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
@@ -286,8 +283,7 @@ class OrderServiceTest {
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 2)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(98));
+        when(productStockService.deduct(anyMap())).thenReturn(true);
 
         orderService.create(1L, new OrderCreateRequest(List.of(5L), null, null,
                 new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
@@ -308,8 +304,7 @@ class OrderServiceTest {
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 12000)).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 1)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(99));
+        when(productStockService.deduct(anyMap())).thenReturn(true);
         when(attributionResolver.resolveForConversion(context, 10L, 1L, null))
                 .thenReturn(new ConversionAttribution(REQUEST_ID, LIST_ID));
 
@@ -329,8 +324,7 @@ class OrderServiceTest {
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 12000)).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 1)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(99));
+        when(productStockService.deduct(anyMap())).thenReturn(true);
 
         OrderCreateResponse response = orderService.create(1L, new OrderCreateRequest(null,
                 List.of(new OrderCreateRequest.OrderLine(10L, null, 1,
@@ -381,6 +375,7 @@ class OrderServiceTest {
         when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(orderItemRepository.findAllByOrderId(1L)).thenReturn(List.of());
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
+        when(productStockService.deduct(anyMap())).thenReturn(true);
         when(cartItemRepository.findAllByMemberId(1L)).thenReturn(List.of());
 
         orderService.retryPayment(1L, 1L, new RetryPaymentRequest("MOCK_CARD"));
@@ -402,40 +397,12 @@ class OrderServiceTest {
         when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(orderItemRepository.findAllByOrderId(1L)).thenReturn(List.of(item));
         when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
-        when(productRepository.deductStock(10L, 2)).thenReturn(0);
+        when(productStockService.deduct(anyMap())).thenReturn(false);
 
         OrderCreateResponse response = orderService.retryPayment(1L, 1L, new RetryPaymentRequest("MOCK_CARD"));
 
         assertThat(response.failureReason()).isEqualTo("OUT_OF_STOCK");
         verify(cartItemRepository, never()).findAllByMemberId(anyLong());
-    }
-
-    @Test
-    @DisplayName("O-1 — 품절 로그는 전 품목 차감 성공 시에만 기록, 일부 실패로 보상 복원되면 미기록")
-    void stockOutLogOnlyOnFullSuccess() {
-        com.jarvis.product.Product second = product(20L, 5000, 5000);
-        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
-        when(productRepository.findById(20L)).thenReturn(Optional.of(second));
-        when(productOptionRepository.findAllByProductIdOrderByIdAsc(anyLong())).thenReturn(List.of());
-        when(paymentService.pay(anyString(), anyInt())).thenReturn(PaymentResult.approved());
-        // 10L 차감 성공 후 재고 0 도달(품절 로그 후보) → 20L 차감 실패로 전체 롤백
-        when(productRepository.deductStock(10L, 1)).thenReturn(1);
-        when(productRepository.findStockQuantity(10L)).thenReturn(Optional.of(0));
-        when(productRepository.deductStock(20L, 1)).thenReturn(0);
-
-        OrderCreateRequest request = new OrderCreateRequest(null,
-                List.of(new OrderCreateRequest.OrderLine(10L, null, 1, null),
-                        new OrderCreateRequest.OrderLine(20L, null, 1, null)),
-                null,
-                new OrderCreateRequest.AddressInput("김자비", "010-1234-5678", "06236", "서울", null),
-                null, "MOCK_CARD");
-        orderService.create(1L, request);
-
-        verify(productRepository).restoreStock(10L, 1);
-        verify(statusChanger).paymentFailed(any(Order.class), eq("OUT_OF_STOCK"));
-        // 허위 품절 로그가 남지 않아야 함
-        verify(productChangeLogRepository, never()).saveAll(anyList());
-        verify(productChangeLogRepository, never()).save(any());
     }
 
     @Test
