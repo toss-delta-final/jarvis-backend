@@ -1,5 +1,6 @@
 package com.jarvis.internal;
 
+import com.jarvis.cart.CartEventRecorder;
 import com.jarvis.cart.CartService;
 import com.jarvis.cart.dto.CartAddRequest;
 import com.jarvis.cart.dto.CartQuantityRequest;
@@ -38,7 +39,8 @@ public class InternalCartController {
             @Valid @RequestBody InternalCartAddRequest request) {
         CartService.CartAddResult result = cartService.addItem(request.userId(), request.guestId(),
                 new CartAddRequest(request.productId(), request.optionId(), request.quantity(),
-                        request.recommendationContext()));
+                        request.recommendationContext()),
+                chatSessionKey(request.chatSessionId()));
         return ApiResponse.success(InternalCartItemResponse.from(result.item()));
     }
 
@@ -66,10 +68,23 @@ public class InternalCartController {
     @DeleteMapping("/items/{cartItemId}")
     public ApiResponse<Void> removeItem(@PathVariable Long cartItemId,
                                         @RequestParam(required = false) Long userId,
-                                        @RequestParam(required = false) String guestId) {
+                                        @RequestParam(required = false) String guestId,
+                                        @RequestParam(required = false) String chatSessionId) {
         requireExactlyOneIdentity(userId, guestId, ErrorCode.VALIDATION_ERROR);
-        cartService.removeItem(userId, guestId, cartItemId);
+        cartService.removeItem(userId, guestId, cartItemId, chatSessionKey(chatSessionId));
         return ApiResponse.success(null);
+    }
+
+    /**
+     * 챗봇 경로의 분석용 세션 키 (노션 I-2·I-24 「C안 확정」) — FastAPI는 FE localStorage의 세션 키를
+     * 알 수 없으므로 채팅 sessionId 앞에 sentinel 접두사를 붙여 조립한다.
+     *
+     * @return null이면 이벤트만 건너뛴다 — 담기·삭제 자체는 정상 처리된다
+     */
+    private static String chatSessionKey(String chatSessionId) {
+        return chatSessionId == null || chatSessionId.isBlank()
+                ? null
+                : CartEventRecorder.CHAT_SESSION_KEY_PREFIX + chatSessionId;
     }
 
     /**

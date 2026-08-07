@@ -40,6 +40,7 @@ public class CartService {
     private final BrandRepository brandRepository;
     private final GuestService guestService;
     private final RecommendationAttributionResolver attributionResolver;
+    private final CartEventRecorder cartEventRecorder;
 
     /** C-2 결과 — issuedGuestId가 있으면 컨트롤러가 guest_id 쿠키를 새로 내린다 */
     public record CartAddResult(CartItemResponse item, String issuedGuestId) {
@@ -78,9 +79,15 @@ public class CartService {
         return CartResponse.of(items);
     }
 
-    /** C-2 — 동일 상품+옵션 존재 시 수량 합산(상한 99 클램프 — 02 D30과 동일 규칙) */
+    /**
+     * C-2 — 동일 상품+옵션 존재 시 수량 합산(상한 99 클램프 — 02 D30과 동일 규칙)
+     *
+     * @param sessionKey 분석용 세션 키 — 공개 경로는 {@code X-Session-Key} 헤더, 챗봇(I-2)은
+     *                   {@code chat:{chatSessionId}} sentinel. 없으면 이벤트만 건너뛴다(노션 C-2)
+     */
     @Transactional
-    public CartAddResult addItem(Long memberId, String guestId, CartAddRequest request) {
+    public CartAddResult addItem(Long memberId, String guestId, CartAddRequest request,
+                                 String sessionKey) {
         Product product = productRepository.findById(request.productId())
                 .filter(p -> p.getStatus() == ProductStatus.ON_SALE)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
@@ -122,6 +129,12 @@ public class CartService {
                     : CartItem.forGuest(guestId, request.productId(), request.optionId(),
                             request.quantity(), attribution));
         }
+        // quantity는 이번 요청분(delta)이지 합산 후 총량이 아니다 — 노션 E-1 properties 계약
+        cartEventRecorder.record(new CartEventRecorder.CartEvent(
+                CartEventRecorder.ADD_EVENT_TYPE, memberId, guestId, sessionKey,
+                request.productId(), request.optionId(), request.quantity(),
+                unitPrice(product, request.optionId()),
+                request.recommendationContext() == null ? null : request.recommendationContext().listId()));
         return new CartAddResult(new CartItemResponse(item.getId(), item.getQuantity()), issuedGuestId);
     }
 
@@ -136,10 +149,26 @@ public class CartService {
         return new CartItemResponse(item.getId(), item.getQuantity());
     }
 
-    /** C-4 */
+    /**
+     * C-4 — 삭제 성공(HTTP 200)에만 이벤트를 적재한다. 없는 항목(404)은 미적재다(노션 C-4·I-24):
+     * 이 API는 멱등하지 않아 삭제 버튼 연타의 두 번째가 404인데, 그것까지 세면 이벤트가 부풀려진다.
+     *
+     * <p>적재 재료를 <b>지우기 전에</b> 뽑는다 — 커밋 뒤엔 행이 없어 quantity·optionId를 알 수 없다.
+     */
     @Transactional
-    public void removeItem(Long memberId, String guestId, Long cartItemId) {
-        cartItemRepository.delete(findOwnedItem(memberId, guestId, cartItemId));
+    public void removeItem(Long memberId, String guestId, Long cartItemId, String sessionKey) {
+        CartItem item = findOwnedItem(memberId, guestId, cartItemId);
+        // 상품이 그 사이 삭제될 수 있는 경로는 없지만(FK RESTRICT), 이벤트 때문에 삭제를 막지는 않는다
+        int price = productRepository.findById(item.getProductId())
+                .map(product -> unitPrice(product, item.getOptionId())).orElse(0);
+        CartEventRecorder.CartEvent event = new CartEventRecorder.CartEvent(
+                CartEventRecorder.REMOVE_EVENT_TYPE, memberId, guestId, sessionKey,
+                item.getProductId(), item.getOptionId(),
+                // 삭제는 부분 차감이 없어 quantity가 곧 전량이다 (노션 C-4)
+                item.getQuantity(), price, item.getListId());
+
+        cartItemRepository.delete(item);
+        cartEventRecorder.record(event);
     }
 
     /**
@@ -176,6 +205,15 @@ public class CartService {
             cartItemRepository.delete(duplicate);
         }
         return Optional.of(head);
+    }
+
+    /** 이벤트 properties의 price — 노션 E-1 계약대로 {@code product.price + product_option.extra_price} */
+    private int unitPrice(Product product, Long optionId) {
+        if (optionId == null) {
+            return product.getPrice();
+        }
+        return product.getPrice() + productOptionRepository.findById(optionId)
+                .map(ProductOption::getExtraPrice).orElse(0);
     }
 
     /** 재고는 상품 단위(02 D33) — 옵션별 재고 없음. detail.availableStock로 남은 수량 동반 */

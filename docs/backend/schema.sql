@@ -323,17 +323,21 @@ CREATE TABLE wishlist (
 -- 기존 DB는 scripts/migrate-2026-08-07-drop-inquiry.sql로 정리한다.
 
 -- ------------------------------------------------------------
--- 행동 이벤트 (FE 수집, user_event 대체 — D31)
--- append-only — 예외: 게스트→회원 승계 시 member_id 백필 UPDATE 1회 (D5)
+-- 행동 이벤트 (FE 수집 + 서버 적재 — user_event 대체 D31, 2026-08-06 담기 2종 서버 이관)
+-- append-only — 고쳐 쓰지 않는다. 게스트→회원 승계도 백필하지 않고 guest.converted_member_id로 잇는다
+-- (구 주석 "승계 시 member_id 백필 UPDATE 1회"는 2026-08-07 정정 — 백필은 폐기됐고 코드에도 없다)
 -- ------------------------------------------------------------
 
 CREATE TABLE behavior_events (
     id              BIGINT      NOT NULL AUTO_INCREMENT,
     member_id       BIGINT      NULL,                      -- 로그인 시 JWT에서 서버 주입(body 신원 무시), 비로그인 NULL. 의도적으로 FK 없음 (D31)
     guest_id        CHAR(36)    NULL,                      -- 게스트 쿠키에서 서버 주입 — 승계용 (D5 패턴 유지)
-    session_key     VARCHAR(64) NOT NULL,                  -- FE SDK 생성, 30분 무활동 시 재발급
+    session_key     VARCHAR(64) NOT NULL,                  -- FE SDK 생성, 30분 무활동 시 재발급.
+                                                           -- 챗봇 경로(I-2·I-24)는 FE 세션 키를 알 수 없어 sentinel 'chat:{chatSessionId}'가 들어간다 —
+                                                           -- 브라우저 세션과 ID 공간이 다르므로 세션 단위 집계는 이 접두사를 제외해야 한다(CartEventRecorder.isBrowserSession)
     client_event_id CHAR(36)    NOT NULL,                  -- FE가 이벤트마다 생성하는 UUID — 중복 방지 (D35). NULL이면 UNIQUE가 아무 일도 안 해 재전송이 그대로 쌓인다 (D38)
-    event_type      VARCHAR(30) NOT NULL,                  -- FE 12종 + 서버 적재 1종(recommendation_generated) — 그 외는 수집 API가 버림. VARCHAR인 이유: 선택 이벤트 추가 시 무DDL 확장
+    event_type      VARCHAR(30) NOT NULL,                  -- FE 11종 + 서버 적재 3종(recommendation_generated·add_to_cart·remove_from_cart — 2026-08-06 개정) — 그 외는 수집 API가 버림.
+                                                           -- 서버 3종은 E-1 HTTP로 들어오면 드롭한다(위조 방지). VARCHAR인 이유: 선택 이벤트 추가 시 무DDL 확장
     product_id      BIGINT      NULL,                      -- 의도적으로 FK 없음(로그 적재 경량화). recommendation_generated는 목록 단위라 NULL
     properties      JSON        NULL,                      -- 타입별 부가정보. session_start의 ipHash는 서버 주입. schemaVersion·_incomplete·_timeShifted도 여기 (D38)
     occurred_at     DATETIME(6) NOT NULL,                  -- FE 발생 시각 (D38). created_at만으로는 브라우저 이벤트가 SDK 버퍼(10건/5초)만큼 밀려 서버 직접 적재 로그와 순서가 뒤집힌다. 이상치·누락은 서버가 created_at으로 대체하고 properties._timeShifted를 남긴다

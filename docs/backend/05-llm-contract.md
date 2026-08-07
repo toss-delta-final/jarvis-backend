@@ -170,7 +170,10 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **게스트(userId null)도 guestId로 담기 성공** (02 D30 — 2026-07-10 개정, 기존 403 유도 폐기). 로그인 유도는 결제 시점의 FE 몫 — LLM은 "장바구니에 담았어요. 주문하실 땐 로그인이 필요해요" 정도로만 안내.
 - 옵션 필요한데 optionId 없으면 400 `CART_OPTION_REQUIRED` + options 목록 반환 → LLM이 "어떤 색상으로 담을까요?"로 되물음. **(2026-07-18 구현 확정)** options는 envelope `error.detail.options[{optionId, name, extraPrice}]`로 실린다. **2026-08-06부터 여기 `optionId`는 문자열**(`"42"`) — 공개 C-2와 DTO를 공유해서다(§2 id 타입). 되보내는 요청 body의 optionId는 숫자·문자열 모두 받는다.
 - **재고 부족 시 400 `CART_STOCK_INSUFFICIENT` + `error.detail.availableStock`(2026-07-22 추가)** — 합산 후 수량이 재고를 넘으면. LLM은 "재고가 N개뿐이에요"로 안내. 재고는 상품 단위(옵션별 재고 없음, 02 D33)라 옵션 무관하게 상품 재고와 비교. C-2와 동일 CartService·동일 규칙.
-- 성공 응답에 cartItemId — action 이벤트에 사용. 행동 이벤트(behavior_events `add_to_cart`)는 서버 적재가 아니라 FE 배치 소관(04 §8 E-1 — 2026-07-17 전환).
+- 성공 응답에 cartItemId — action 이벤트에 사용.
+- **`chatSessionId`(선택, 2026-08-06 추가 · 2026-08-07 구현)** — FastAPI가 자기 채팅 sessionId를 싣는다. FastAPI는 FE localStorage의 `sessionKey`를 알 수 없으므로 Spring이 `"chat:"+chatSessionId`로 sentinel `session_key`를 조립해 이벤트에 적재한다(C안 확정). **없으면 담기는 정상 성공하고 이벤트만 스킵**된다.
+- **행동 이벤트는 서버가 적재한다**(2026-08-06 이관 — 구 "FE 배치 소관" 폐기). `CartService` afterCommit 지점이라 C-2와 완전히 같은 코드다. `quantity`=**delta**(이번 요청분) · `price`=`product.price`+`extra_price` · `client_event_id`=랜덤 UUIDv4. **AI는 `add_to_cart`를 E-1로 보내면 안 된다** — 서버 전용이 되어 드롭된다(이중 계상 방지).
+- 이벤트 귀속은 **E-1 ③.5 규칙(소유자 미검증)** 을 쓴다 — `cart_item` 저장용 3규칙과 분리돼 있어, 문맥 검증이 실패해 `cart_item`에 안 남아도 이벤트에는 붙을 수 있다.
 
 ### I-3. 인기 상품 `GET /internal/products/popular?size=12`
 - 무관 질문 시 카드 영역 유지용. 응답 형식 I-1과 동일.
@@ -235,7 +238,9 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - 신원은 query `userId`/`guestId` XOR 메아리(게스트 허용) — 위반 시 400 `VALIDATION_ERROR`(I-18의 `CART_QUERY_INVALID`와 **다르다** — 2026-08-05에 자원별 code 신설안이 채택되지 않았다). 성공은 `data: null`이며 `cartItemId`를 응답에 싣지 않는다(C-4 실측).
 - **AI가 I-18로 해소한 id는 인가 근거가 아니다.** 해소와 실행 사이 상태가 바뀔 수 있고 `cartItemId`가 연속 BIGINT라 열거 가능하므로, 소유자 재검증은 실행 시점에 `CartService`가 한다 — 남의 항목이면 403 `AUTH_FORBIDDEN`, 없으면 404 `CART_ITEM_NOT_FOUND`(두 번째 삭제도 404 — **멱등하지 않음**).
 - 삭제는 재고·상품 상태를 보지 않는다 — HIDDEN·품절도 삭제되며 `PRODUCT_NOT_FOUND`·`CART_STOCK_INSUFFICIENT`는 발생하지 않는다.
-- **복수 삭제는 항목별 반복 호출** — C-4가 bulk API를 두지 않기로 한 것을 internal도 따른다.
+- **복수 삭제는 항목별 반복 호출** — C-4가 bulk API를 두지 않기로 한 것을 internal도 따른다. 반복 호출이면 성공 건수만큼 `remove_from_cart`도 N건 적재된다.
+- **`remove_from_cart` 서버 적재(2026-08-06 신설 · 2026-08-07 구현)** — 삭제 성공 시 `CartService` afterCommit에서 적재한다. **적재 기준은 HTTP 200뿐이고 404는 미적재**다 — SSE `CART_REMOVED`는 404에서도 정상 종료로 방출되는 계약이라, 트리거를 SSE에 걸면 이 규칙이 무너진다. 반드시 HTTP 응답 코드 기준이다.
+- `quantity`=삭제된 `cart_item.quantity` **전량** · `price`=뺄 때 가격 · `session_key`=`chat:{chatSessionId}`(query `chatSessionId`, I-2와 동일 규칙).
 
 ### I-25. 챗봇 장바구니 수량 변경 `PATCH /internal/cart/items/{cartItemId}` (신설 2026-08-05 — AI 이슈 #285)
 - body `{ "quantity": 3 }`(1~99), 신원은 I-24와 같은 query XOR. 응답은 `{cartItemId, quantity}`(C-3 실측).

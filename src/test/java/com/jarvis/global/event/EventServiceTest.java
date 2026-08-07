@@ -230,6 +230,27 @@ class EventServiceTest {
                 .containsExactly("product_view");
     }
 
+    // 2026-08-06 이관 — 서버가 CartService에서 적재하므로 FE 전송분은 여기서 버린다.
+    // 드롭을 서버 적재와 같은 배포에서 켜야 그 사이 중복(1건 담기 → 2행)이 안 생긴다.
+    @Test
+    @DisplayName("E-1 — 장바구니 2종도 서버 전용이라 HTTP로 들어오면 드롭 (FE track 제거 전이어도)")
+    void cartEventTypesDropped() {
+        EventBatchRequest mixed = new EventBatchRequest(List.of(
+                new EventItem("u-1", "sess-1", "add_to_cart", 10L, null,
+                        Map.of("quantity", 1, "price", 1000), justNow(), null),
+                new EventItem("u-2", "sess-1", "remove_from_cart", 10L, null,
+                        Map.of("quantity", 1, "price", 1000), justNow(), null),
+                new EventItem("u-3", "sess-1", "product_view", 10L, null,
+                        Map.of("price", 1000), justNow(), null)));
+
+        eventService.collect(mixed, 1L, null, "1.2.3.4");
+
+        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        assertThat(eventsCaptor.getValue())
+                .extracting(BehaviorEvent::getEventType)
+                .containsExactly("product_view");
+    }
+
     // 정상이면 occurred_at은 created_at보다 살짝 과거다 — 미래면 브라우저 시계를 믿지 않는다
     @Test
     @DisplayName("E-1 — occurredAt이 수신 시각보다 미래면 수신 시각으로 대체 + _timeShifted")
