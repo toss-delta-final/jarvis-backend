@@ -1,6 +1,7 @@
 package com.jarvis.cart;
 
 import com.jarvis.global.entity.BaseTimeEntity;
+import com.jarvis.recommendation.ConversionAttribution;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -43,22 +44,63 @@ public class CartItem extends BaseTimeEntity {
     @Column(nullable = false)
     private int quantity;
 
-    public static CartItem forMember(Long memberId, Long productId, Long optionId, int quantity) {
+    /** 추천 카드에서 담았을 때만 채워진다 — 검증을 통과한 값만 들어온다 (노션 C-2·I-2) */
+    @Column(name = "recommendation_request_id", columnDefinition = "char(36)")
+    private String recommendationRequestId;
+
+    @Column(name = "list_id", length = 64)
+    private String listId;
+
+    public static CartItem forMember(Long memberId, Long productId, Long optionId, int quantity,
+                                     ConversionAttribution attribution) {
         CartItem item = new CartItem();
         item.memberId = memberId;
         item.productId = productId;
         item.optionId = optionId;
         item.quantity = quantity;
+        item.applyAttribution(attribution);
         return item;
     }
 
-    public static CartItem forGuest(String guestId, Long productId, Long optionId, int quantity) {
+    public static CartItem forGuest(String guestId, Long productId, Long optionId, int quantity,
+                                    ConversionAttribution attribution) {
         CartItem item = new CartItem();
         item.guestId = guestId;
         item.productId = productId;
         item.optionId = optionId;
         item.quantity = quantity;
+        item.applyAttribution(attribution);
         return item;
+    }
+
+    /**
+     * 재담기 시 출처 갱신 — 노션 O-1 「attribution 규칙」의 {@code last_valid_touch}를 따라
+     * <b>검증을 통과한 새 출처만 덮어쓴다.</b> 추천 없이 다시 담았다고 이전 출처를 지우면
+     * 마지막 접점이 아니라 "마지막 접점의 유무"로 귀속이 갈려 버린다.
+     */
+    public void applyAttribution(ConversionAttribution attribution) {
+        if (attribution == null || !attribution.isPresent()) {
+            return;
+        }
+        this.recommendationRequestId = attribution.recommendationRequestId();
+        this.listId = attribution.listId();
+    }
+
+    /** 주문 스냅샷으로 복사할 출처 (노션 O-1) — 담기 때 검증이 끝나 주문에선 재검증하지 않는다 */
+    public ConversionAttribution attribution() {
+        return listId == null ? ConversionAttribution.NONE
+                : new ConversionAttribution(recommendationRequestId, listId);
+    }
+
+    /**
+     * 게스트 라인이 회원 라인에 합산되며 사라질 때 출처를 물려준다 (02 D30 병합, 노션 O-1
+     * 「게스트→회원 병합」) — <b>빈 칸일 때만</b> 채운다. 채우는 건 정보 추가지만 덮는 건 손실이다.
+     */
+    void inheritAttributionFrom(CartItem source) {
+        if (this.listId == null) {
+            this.recommendationRequestId = source.recommendationRequestId;
+            this.listId = source.listId;
+        }
     }
 
     /** 합산 상한 99 클램프 — 로그인 병합 전용. 담기(C-2/I-2) 초과는 호출 전 400 (노션 C-2, 2026-07-18) */

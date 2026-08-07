@@ -1,5 +1,6 @@
 package com.jarvis.order.dto;
 
+import com.jarvis.recommendation.dto.RecommendationContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -22,13 +23,19 @@ public record OrderCreateRequest(
         @NotBlank(message = "결제 수단은 필수입니다.")
         @Size(max = 30, message = "결제 수단이 올바르지 않습니다.") String paymentMethod) {
 
-    /** 바로 구매 라인 — 검증 규칙은 장바구니 경유와 동일 (04 §4 두 경로 공통) */
+    /**
+     * 바로 구매 라인 — 검증 규칙은 장바구니 경유와 동일 (04 §4 두 경로 공통).
+     *
+     * <p>{@code recommendationContext}는 <b>이 경로에만</b> 실린다. 장바구니 경유({@code cartItemIds})는
+     * 담기 시점 출처가 {@code cart_item}에 이미 있어 복사만 하면 되므로 요청에 넣지 않는다(노션 O-1).
+     */
     public record OrderLine(
             @NotNull(message = "상품 ID는 필수입니다.") Long productId,
             Long optionId,
             @NotNull(message = "수량은 필수입니다.")
             @Min(value = 1, message = "수량은 1 이상이어야 합니다.")
-            @Max(value = 99, message = "수량은 99 이하여야 합니다.") Integer quantity) {
+            @Max(value = 99, message = "수량은 99 이하여야 합니다.") Integer quantity,
+            @Valid RecommendationContext recommendationContext) {
     }
 
     /** 배송지 직접 입력 — orders 스냅샷 컬럼과 동일 형상 */
