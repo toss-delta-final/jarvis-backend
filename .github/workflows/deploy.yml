@@ -135,6 +135,7 @@ jobs:
             APP_CLIENT_IP_FORWARDED_DEPTH=${{ vars.APP_CLIENT_IP_FORWARDED_DEPTH }}
             APP_COOKIE_SECURE=true
             INTERNAL_API_TOKEN=${{ secrets.INTERNAL_API_TOKEN }}
+            CUSTOMER_LABEL_SECRET=${{ secrets.CUSTOMER_LABEL_SECRET }}
             LLM_BASE_URL=${{ vars.FASTAPI_BASE_URL }}
             LLM_SSE_URL=${{ vars.FASTAPI_BASE_URL }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}

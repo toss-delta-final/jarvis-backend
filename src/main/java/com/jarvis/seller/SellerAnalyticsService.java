@@ -15,6 +15,7 @@ import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductChangeType;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
+import com.jarvis.seller.dto.BrandAccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
@@ -73,6 +74,7 @@ public class SellerAnalyticsService {
     private final AccountEventLogRepository accountEventLogRepository;
     private final ProductRepository productRepository;
     private final BrandRepository brandRepository;
+    private final CustomerLabeler customerLabeler;
     private final ObjectMapper objectMapper;
 
     /** I-7 — 4단 퍼널. 3단은 checkout_start properties.productIds의 자사 상품 포함 여부(Java 판정) */
@@ -123,6 +125,88 @@ public class SellerAnalyticsService {
         };
         return new AccountEventAggregateResponse(effectiveGroupBy, eventType, period.from(),
                 period.to(), rows);
+    }
+
+    /**
+     * I-8 자사 코호트 계정 이벤트 집계 (노션 I-8 — 2026-08-06 전역 → 브랜드 스코프 전환).
+     *
+     * <p>전환 배경: admin 파트가 없어 판매자 abuse 워커가 전역 API를 소비하게 됐고, 그 결과 판매자가
+     * 자사와 무관한 플랫폼 전체 신호를 보고 있었다. 코호트는 <b>I-16 churn과 같은 조인을 재사용</b>한다 —
+     * 다른 조인을 쓰면 같은 대화에서 두 워커가 모순된 수치를 낸다.
+     *
+     * <p>코호트가 비면 200 + 빈 rows다(노션 「이상 징후가 없으면 정상 결과」). 미존재 브랜드만 404.
+     */
+    public BrandAccountEventAggregateResponse brandAccountEvents(Long brandId, String groupBy,
+                                                                 String eventType,
+                                                                 AnalysisPeriod period) {
+        requireBrand(brandId);
+        LocalDateTime fromDt = period.from().atStartOfDay();
+        LocalDateTime toDt = period.to().plusDays(1).atStartOfDay();
+        String effectiveGroupBy = groupBy == null || groupBy.isBlank() ? "eventType" : groupBy;
+        if (!List.of("ip", "eventType", "hour").contains(effectiveGroupBy)) {
+            throw new BusinessException(ErrorCode.INVALID_GROUP_BY);
+        }
+
+        List<Long> cohort = behaviorEventRepository.findChurnCohortMemberIds(brandId, fromDt, toDt);
+        if (cohort.isEmpty()) {
+            return BrandAccountEventAggregateResponse.of(brandId, effectiveGroupBy, eventType,
+                    period.from(), period.to(), List.of());
+        }
+
+        List<?> rows = switch (effectiveGroupBy) {
+            case "ip" -> accountEventLogRepository
+                    .aggregateByIpForCohort(cohort, suspiciousMemberIds(brandId, fromDt, toDt),
+                            eventType, fromDt, toDt, IP_BUCKET_LIMIT)
+                    .stream().map(SellerAnalyticsService::toCohortIpRow).toList();
+            case "eventType" -> toBrandBuckets(accountEventLogRepository
+                    .countByEventTypeForCohort(cohort, eventType, fromDt, toDt));
+            default -> toBrandBuckets(accountEventLogRepository
+                    .countByHourForCohort(cohort, eventType, fromDt, toDt));
+        };
+        return BrandAccountEventAggregateResponse.of(brandId, effectiveGroupBy, eventType,
+                period.from(), period.to(), rows);
+    }
+
+    /**
+     * I-14와 <b>같은 어뷰징 기준</b>으로 자사 주문 이력상 의심 회원을 뽑는다 — 기준이 갈리면
+     * 같은 대화에서 I-8의 suspiciousMemberCount와 I-14의 isSuspicious가 서로 다른 답을 한다.
+     *
+     * @return 비어 있으면 센티널 — MariaDB에서 {@code IN ()}은 문법 오류라 빈 목록을 넘길 수 없다
+     */
+    private List<Long> suspiciousMemberIds(Long brandId, LocalDateTime from, LocalDateTime to) {
+        List<String> noStatusFilter = List.of("__NONE__");
+        Map<Long, Long> maxPerHour = orderStatusLogRepository
+                .maxSellerOrdersPerHourByMember(brandId, false, noStatusFilter, null, from, to)
+                .stream().collect(Collectors.toMap(OrderStatusLogRepository.MemberHourRow::getMemberId,
+                        OrderStatusLogRepository.MemberHourRow::getMaxPerHour));
+        List<Long> suspicious = orderStatusLogRepository
+                .aggregateSellerOrderEventsByMember(brandId, false, noStatusFilter, null, from, to,
+                        MAX_LIMIT)
+                .stream()
+                .filter(row -> {
+                    long orders = row.getOrderCount();
+                    double cancelRatio = orders == 0 ? 0.0 : (double) row.getCancelCount() / orders;
+                    return cancelRatio > SUSPICIOUS_CANCEL_RATIO
+                            || maxPerHour.getOrDefault(row.getMemberId(), 0L)
+                                    > SUSPICIOUS_MAX_ORDERS_PER_HOUR;
+                })
+                .map(OrderStatusLogRepository.MemberAggRow::getMemberId)
+                .toList();
+        return suspicious.isEmpty() ? List.of(-1L) : suspicious;
+    }
+
+    private static List<BrandAccountEventAggregateResponse.Bucket> toBrandBuckets(
+            List<AccountEventLogRepository.BucketCountRow> rows) {
+        return rows.stream()
+                .map(row -> new BrandAccountEventAggregateResponse.Bucket(row.getBucket(), row.getCnt()))
+                .toList();
+    }
+
+    private static BrandAccountEventAggregateResponse.IpRow toCohortIpRow(
+            AccountEventLogRepository.CohortIpAggRow row) {
+        return new BrandAccountEventAggregateResponse.IpRow(maskIp(row.getIp()),
+                row.getDistinctMembers(), row.getSuspiciousMembers(), row.getEventCount(),
+                toOffset(row.getFirstSeen()), toOffset(row.getLastSeen()));
     }
 
     /** I-13 — 자사 행동 이벤트 집계. groupBy=product(기본)|eventType|date (노션 I-13) */
@@ -193,14 +277,14 @@ public class SellerAnalyticsService {
             List<SellerOrderEventsResponse.MemberRow> rows = orderStatusLogRepository
                     .aggregateSellerOrderEventsByMember(brandId, applyToStatus, toStatuses, actorType,
                             fromDt, toDt, effectiveLimit)
-                    .stream().map(row -> toMemberRow(row, maxPerHour)).toList();
+                    .stream().map(row -> toMemberRow(brandId, row, maxPerHour)).toList();
             return new SellerOrderEventsResponse(brandId, period.from(), period.to(),
                     rows, rows.size(), null, null);
         }
         List<SellerOrderEventsResponse.Row> rows = orderStatusLogRepository
                 .findSellerOrderEvents(brandId, applyToStatus, toStatuses, actorType, fromDt, toDt,
                         effectiveLimit)
-                .stream().map(SellerAnalyticsService::toRow).toList();
+                .stream().map(row -> toRow(brandId, row)).toList();
         long total = orderStatusLogRepository
                 .countSellerOrderEvents(brandId, applyToStatus, toStatuses, actorType, fromDt, toDt);
         return new SellerOrderEventsResponse(brandId, period.from(), period.to(),
@@ -239,7 +323,9 @@ public class SellerAnalyticsService {
         LocalDateTime toDt = period.to().plusDays(1).atStartOfDay();
         List<Long> cohort = behaviorEventRepository.findChurnCohortMemberIds(brandId, fromDt, toDt);
         if (cohort.isEmpty()) {
-            return new SellerChurnResponse(brandId, period.from(), period.to(), inactiveDays, 0, 0.0,
+            // churnRate는 0.0이 아니라 null이다 — 분모가 없다는 뜻이지 "이탈이 없었다"가 아니다.
+            // 0으로 내려보내면 LLM이 "이탈 0%"로 보고한다 (노션 I-16).
+            return new SellerChurnResponse(brandId, period.from(), period.to(), inactiveDays, 0, null,
                     emptySignals(), List.of());
         }
         Map<Long, LocalDateTime> lastActivities = behaviorEventRepository.findLastActivities(cohort)
@@ -251,7 +337,7 @@ public class SellerAnalyticsService {
                 .filter(id -> lastActivities.getOrDefault(id, LocalDateTime.MIN).isBefore(cutoff))
                 .sorted(Comparator.comparing(id -> lastActivities.getOrDefault(id, LocalDateTime.MIN)))
                 .toList();
-        double churnRate = round3((double) churnedIds.size() / cohort.size());
+        Double churnRate = round3((double) churnedIds.size() / cohort.size());
 
         SellerChurnResponse.PreChurnSignals signals = churnedIds.isEmpty()
                 ? emptySignals()
@@ -279,9 +365,6 @@ public class SellerAnalyticsService {
 
     private List<SellerChurnResponse.Member> buildChurnMembers(
             Long brandId, List<Long> listed, Map<Long, LocalDateTime> lastActivities) {
-        Map<Long, LocalDateTime> lastLogins = accountEventLogRepository.findLastLogins(listed)
-                .stream().collect(Collectors.toMap(AccountEventLogRepository.LastLoginRow::getMemberId,
-                        AccountEventLogRepository.LastLoginRow::getLastLogin));
         Map<Long, Long> sessions = behaviorEventRepository
                 .countRecentSessions(listed, LocalDateTime.now().minusDays(SESSIONS_WINDOW_DAYS))
                 .stream().collect(Collectors.toMap(BehaviorEventRepository.MemberCntRow::getMemberId,
@@ -296,8 +379,8 @@ public class SellerAnalyticsService {
         behaviorEventRepository.findLastEventTypes(listed)
                 .forEach(row -> lastEvents.putIfAbsent(row.getMemberId(), row.getEventType()));
         return listed.stream()
-                .map(id -> new SellerChurnResponse.Member(id,
-                        toOffset(lastActivities.get(id)), toOffset(lastLogins.get(id)),
+                .map(id -> new SellerChurnResponse.Member(customerLabeler.label(brandId, id),
+                        toOffset(lastActivities.get(id)),
                         sessions.getOrDefault(id, 0L),
                         claims.getOrDefault(id, lastEvents.get(id))))
                 .toList();
@@ -533,21 +616,25 @@ public class SellerAnalyticsService {
                 toOffset(row.getFirstSeen()), toOffset(row.getLastSeen()));
     }
 
-    private static SellerOrderEventsResponse.Row toRow(OrderStatusLogRepository.OrderEventRow row) {
+    /** 라벨이 브랜드별로 달라야 해서(대조 추적 차단) brandId가 필요하다 — 그래서 static이 아니다 */
+    private SellerOrderEventsResponse.Row toRow(Long brandId,
+                                                OrderStatusLogRepository.OrderEventRow row) {
         return new SellerOrderEventsResponse.Row(row.getOrderId(), row.getOrderItemId(),
                 row.getFromStatus(), row.getToStatus(), row.getActorType(), row.getReason(),
-                row.getBuyerMemberId(), toOffset(row.getCreatedAt()));
+                customerLabeler.label(brandId, row.getBuyerMemberId()), toOffset(row.getCreatedAt()));
     }
 
-    private static SellerOrderEventsResponse.MemberRow toMemberRow(
-            OrderStatusLogRepository.MemberAggRow row, Map<Long, Long> maxPerHourByMember) {
+    private SellerOrderEventsResponse.MemberRow toMemberRow(
+            Long brandId, OrderStatusLogRepository.MemberAggRow row,
+            Map<Long, Long> maxPerHourByMember) {
         long orderCount = row.getOrderCount();
         long cancelCount = row.getCancelCount();
         double cancelRatio = orderCount == 0 ? 0.0 : round3((double) cancelCount / orderCount);
         long maxPerHour = maxPerHourByMember.getOrDefault(row.getMemberId(), 0L);
         boolean suspicious = cancelRatio > SUSPICIOUS_CANCEL_RATIO
                 || maxPerHour > SUSPICIOUS_MAX_ORDERS_PER_HOUR;
-        return new SellerOrderEventsResponse.MemberRow(row.getMemberId(), orderCount, cancelCount,
+        return new SellerOrderEventsResponse.MemberRow(
+                customerLabeler.label(brandId, row.getMemberId()), orderCount, cancelCount,
                 cancelRatio, maxPerHour, suspicious);
     }
 

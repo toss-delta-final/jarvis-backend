@@ -129,6 +129,7 @@ else
   STREAM_KEY=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null \
                | openssl pkcs8 -topk8 -nocrypt -outform DER | base64 | tr -d '\n')
   INTERNAL_TOKEN=$(openssl rand -hex 32)
+  CUSTOMER_LABEL_SECRET=$(openssl rand -base64 48 | tr -d '\n')
   KID="jarvis-local-$(date +%Y-%m)"
   cat > "$LOCAL_YML" <<EOF
 # setup-frontend-dev.sh가 생성한 로컬 설정 (gitignore — 03 §5). 시크릿은 이 머신 전용 랜덤 값.
@@ -149,13 +150,15 @@ app:
   stream-ticket:
     private-key: ${STREAM_KEY}
     kid: ${KID}
+  privacy:
+    customer-label-secret: ${CUSTOMER_LABEL_SECRET}
   internal:
     token: ${INTERNAL_TOKEN}
   llm:
     base-url: http://localhost:8000 # 로컬 FastAPI 미기동이어도 무해 (통지 실패는 warn 로그만)
     sse-url: http://localhost:8000  # CH-1 응답 llmSseUrl — FE가 직결할 SSE URL
 EOF
-  say "application-local.yml 생성 (JWT/스트림키/내부토큰 자동 생성)"
+  say "application-local.yml 생성 (JWT/스트림키/내부토큰/고객라벨키 자동 생성)"
 fi
 
 echo ""

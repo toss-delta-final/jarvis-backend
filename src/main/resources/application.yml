@@ -105,6 +105,12 @@ app:
     private-key: ${STREAM_TICKET_PRIVATE_KEY} # RS256 private key — base64(PKCS#8 DER), Spring만 보관 (03 §5)
     kid: ${STREAM_TICKET_KID}
     ttl-seconds: 60
+  # 고객 라벨 HMAC 키 (노션 I-14 2026-08-06 프라이버시 개정) — 판매자에게 memberId 대신 내려보내는
+  # 사례번호(A3F29C)의 키. 저장하지 않는 계산값이라 DDL 무변경. 값이 바뀌면 과거 라벨과 이어지지 않으므로
+  # 회전하려면 관리자 역조회 안내와 함께 해야 한다. 미주입 시 기동 실패(fail-fast — 없다고 memberId로
+  # 폴백하면 이 개정이 막으려던 재식별이 조용히 되살아난다)
+  privacy:
+    customer-label-secret: ${CUSTOMER_LABEL_SECRET}
   # internal 서비스 토큰 (03 D4 — FastAPI와 .env로 공유)
   internal:
     token: ${INTERNAL_API_TOKEN} # 로컬=application-local.yml, 배포=환경변수 주입(커밋 금지). FastAPI와 동일 이름·값의 org 공유 시크릿, 미주입 시 기동 실패(fail-fast)

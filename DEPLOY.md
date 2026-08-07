@@ -32,6 +32,7 @@ docker run -p 8080:8080 --env-file deploy.env jarvis-backend:dev
 | `JWT_SECRET` | AT/RT 서명(HS256) |
 | `STREAM_TICKET_PRIVATE_KEY` / `STREAM_TICKET_KID` | 스트림 티켓 RS256 private key(base64 PKCS#8 DER) + 키 ID |
 | `INTERNAL_API_TOKEN` | `/internal/**` 서비스 토큰 — **LLM(FastAPI)팀과 동일 값** (org 공유 시크릿) |
+| `CUSTOMER_LABEL_SECRET` | I-14 고객 라벨(사례번호) HMAC 키 — **우리 서버 전용**(공유 금지). 값이 바뀌면 과거 사례번호와 이어지지 않는다. `openssl rand -base64 48` |
 
 **선택 (기본값 있음):** `APP_COOKIE_SECURE`(기본 `true`), `LLM_BASE_URL`·`LLM_SSE_URL`(FastAPI 공개주소 — 보통 동일 값, 빈 값이면 통지 skip·채팅 degrade. 배포는 GitHub Variable `FASTAPI_BASE_URL`을 두 이름으로 주입).
 
