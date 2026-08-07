@@ -440,11 +440,6 @@ class SellerAnalyticsServiceTest {
                 }));
         when(behaviorEventRepository.countPriceIncreaseExposedMembers(eq(BRAND_ID), any()))
                 .thenReturn(1L);
-        when(accountEventLogRepository.findLastLogins(any()))
-                .thenReturn(List.of(new AccountEventLogRepository.LastLoginRow() {
-                    public Long getMemberId() { return 2L; }
-                    public LocalDateTime getLastLogin() { return LocalDateTime.now().minusDays(35); }
-                }));
         when(behaviorEventRepository.countRecentSessions(any(), any())).thenReturn(List.of());
         when(orderStatusLogRepository.findChurnedMemberClaims(eq(BRAND_ID), any()))
                 .thenReturn(List.of(new OrderStatusLogRepository.ClaimRow() {
@@ -466,11 +461,26 @@ class SellerAnalyticsServiceTest {
         assertThat(response.preChurnSignals().priceIncreaseExposed()).isEqualTo(1);
         assertThat(response.members()).hasSize(1);
         SellerChurnResponse.Member member = response.members().get(0);
-        assertThat(member.memberId()).isEqualTo(2L);
         assertThat(member.lastActivityAt()).isNotNull();
-        assertThat(member.lastLoginAt()).isNotNull();
+        // memberId가 아니라 라벨 · lastLoginAt은 제거됐다 (노션 I-16 2026-08-06)
+        assertThat(member.customerLabel()).isEqualTo(customerLabeler.label(BRAND_ID, 2L));
         assertThat(member.sessions30d()).isZero();
         assertThat(member.preChurnEvent()).isEqualTo("RETURNED(상품불량)");
+    }
+
+    // "이탈 0%"가 아니라 "계산할 모수가 없다" — 0.0으로 내려보내면 LLM이 그걸 0%로 보고한다
+    @Test
+    @DisplayName("I-16 — 코호트가 비면 churnRate는 0.0이 아니라 null (노션 I-16)")
+    void churnRateIsNullWhenCohortEmpty() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.findChurnCohortMemberIds(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+
+        SellerChurnResponse response = service.churn(BRAND_ID, PERIOD, 30);
+
+        assertThat(response.churnRate()).isNull();
+        assertThat(response.cohortSize()).isZero();
+        assertThat(response.members()).isEmpty();
     }
 
     // ---- I-8 자사 코호트 (노션 I-8 2026-08-06 전역 → 브랜드 스코프 전환) ----

@@ -323,7 +323,9 @@ public class SellerAnalyticsService {
         LocalDateTime toDt = period.to().plusDays(1).atStartOfDay();
         List<Long> cohort = behaviorEventRepository.findChurnCohortMemberIds(brandId, fromDt, toDt);
         if (cohort.isEmpty()) {
-            return new SellerChurnResponse(brandId, period.from(), period.to(), inactiveDays, 0, 0.0,
+            // churnRate는 0.0이 아니라 null이다 — 분모가 없다는 뜻이지 "이탈이 없었다"가 아니다.
+            // 0으로 내려보내면 LLM이 "이탈 0%"로 보고한다 (노션 I-16).
+            return new SellerChurnResponse(brandId, period.from(), period.to(), inactiveDays, 0, null,
                     emptySignals(), List.of());
         }
         Map<Long, LocalDateTime> lastActivities = behaviorEventRepository.findLastActivities(cohort)
@@ -335,7 +337,7 @@ public class SellerAnalyticsService {
                 .filter(id -> lastActivities.getOrDefault(id, LocalDateTime.MIN).isBefore(cutoff))
                 .sorted(Comparator.comparing(id -> lastActivities.getOrDefault(id, LocalDateTime.MIN)))
                 .toList();
-        double churnRate = round3((double) churnedIds.size() / cohort.size());
+        Double churnRate = round3((double) churnedIds.size() / cohort.size());
 
         SellerChurnResponse.PreChurnSignals signals = churnedIds.isEmpty()
                 ? emptySignals()
@@ -363,9 +365,6 @@ public class SellerAnalyticsService {
 
     private List<SellerChurnResponse.Member> buildChurnMembers(
             Long brandId, List<Long> listed, Map<Long, LocalDateTime> lastActivities) {
-        Map<Long, LocalDateTime> lastLogins = accountEventLogRepository.findLastLogins(listed)
-                .stream().collect(Collectors.toMap(AccountEventLogRepository.LastLoginRow::getMemberId,
-                        AccountEventLogRepository.LastLoginRow::getLastLogin));
         Map<Long, Long> sessions = behaviorEventRepository
                 .countRecentSessions(listed, LocalDateTime.now().minusDays(SESSIONS_WINDOW_DAYS))
                 .stream().collect(Collectors.toMap(BehaviorEventRepository.MemberCntRow::getMemberId,
@@ -380,8 +379,8 @@ public class SellerAnalyticsService {
         behaviorEventRepository.findLastEventTypes(listed)
                 .forEach(row -> lastEvents.putIfAbsent(row.getMemberId(), row.getEventType()));
         return listed.stream()
-                .map(id -> new SellerChurnResponse.Member(id,
-                        toOffset(lastActivities.get(id)), toOffset(lastLogins.get(id)),
+                .map(id -> new SellerChurnResponse.Member(customerLabeler.label(brandId, id),
+                        toOffset(lastActivities.get(id)),
                         sessions.getOrDefault(id, 0L),
                         claims.getOrDefault(id, lastEvents.get(id))))
                 .toList();

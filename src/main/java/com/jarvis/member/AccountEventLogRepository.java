@@ -14,11 +14,6 @@ public interface AccountEventLogRepository extends JpaRepository<AccountEventLog
         Long getCnt();
     }
 
-    interface LastLoginRow {
-        Long getMemberId();
-        LocalDateTime getLastLogin();
-    }
-
     interface IpAggRow {
         String getIp();
         Long getFailCount();
@@ -154,12 +149,6 @@ public interface AccountEventLogRepository extends JpaRepository<AccountEventLog
                                               @Param("from") LocalDateTime from,
                                               @Param("to") LocalDateTime to);
 
-    /** I-16 마지막 로그인의 단일 출처 = LOGIN_SUCCESS (02 D32) */
-    @Query(value = """
-            SELECT l.member_id AS memberId, MAX(l.created_at) AS lastLogin
-            FROM account_event_logs l
-            WHERE l.event_type = 'LOGIN_SUCCESS' AND l.member_id IN (:memberIds)
-            GROUP BY l.member_id
-            """, nativeQuery = true)
-    List<LastLoginRow> findLastLogins(@Param("memberIds") Collection<Long> memberIds);
+    // I-16 findLastLogins는 2026-08-06에 삭제했다 — lastLoginAt 제거로 이 조인 자체가 불필요해졌다.
+    // 마지막 로그인 시각은 계정 보안 정보라 판매자에게 회원 단위로 줄 이유가 없다(노션 I-16).
 }
