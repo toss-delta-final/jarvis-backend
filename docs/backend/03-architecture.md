@@ -205,6 +205,35 @@ com.jarvis
 - **`recommendation`은 컨트롤러가 없다**: 자기 입구 없이 cart·order·product·chat·global.event가 갖다 쓰는 지원 패키지(추천 귀속 해석 + 목록 영구 사본). `dto/`는 FastAPI 홈 추천 호출용.
 - **internal 컨트롤러는 자체 로직을 갖지 않고 도메인 서비스를 재사용한다.** 같은 행위(예: 담기)는 같은 서비스 메서드 하나로 — `/api`와 `/internal`은 신뢰 모델이 다른 입구일 뿐, 검증·처리 로직은 서비스 레이어에서 공유. (검증이 컨트롤러에 있으면 입구를 낼 때마다 복붙된다 — 01 체크리스트와 같은 맥락)
 
+#### 3층(Controller→Service→Repository) 밖에도 자리가 있다 (2026-08-07 명문화)
+
+3층은 **요청 하나가 지나가는 길**이지 전체 지도가 아니다. 평면 패키지라 나머지가 섞여 보이므로 넷으로 나눠 읽는다.
+
+| 자리 | 무엇 | 예 |
+|---|---|---|
+| **입구** | 밖에서 안으로 들어오는 문 | 컨트롤러 / 스케줄러(`OrderMockScheduler`) / 보안 필터(`JwtAuthenticationFilter`·`InternalTokenFilter`) |
+| **판단** | 서비스 + 엔티티 | §3-1 |
+| **출구** | 안에서 밖으로 나가는 문 | 리포지토리(DB) / 외부 API 클라이언트(`LlmNotifyClient`·`HomeRecommendationClient`) / 캐시(`RedisCache`) |
+| **받침** | 어느 길에도 안 속하고 옆에서 거드는 것 | 설정(`SecurityConfig`·`*Properties`) / 공통 응답·에러(`ApiResponse`·`ErrorCode`·`GlobalExceptionHandler`) |
+
+- **외부 API 클라이언트는 리포지토리와 같은 등급이다** — 나가는 문일 뿐이므로 판단을 넣지 않는다. "이 조건이면 안 보낸다"는 서비스가 정한다.
+- **보안 필터는 컨트롤러 *앞*이라 `GlobalExceptionHandler`가 닿지 않는다** — 그래서 필터발 401/403은 `EnvelopeAuthenticationEntryPoint`/`EnvelopeAccessDeniedHandler`가 직접 envelope를 쓴다(§3-1 Security 항). 3층 밖에 산다는 사실이 만든 예외다.
+- **둘 이상의 도메인이 쓰는 설정·상수는 `global/`로 옮긴다.** 한 도메인만 쓰면 그 도메인에 둔다. *현재 위반*: FastAPI 접속 설정 `chat.LlmProperties`를 `recommendation`이, internal 토큰 헤더 상수 `internal.InternalTokenFilter.HEADER`를 `recommendation`이 참조한다 — 공용인데 처음 쓴 도메인에 자리를 잡아 패키지 순환을 만들었다. 정리 대상.
+
+#### 이름으로 정체를 알 수 있게 (2026-08-07 신설)
+
+평면 패키지의 대가는 "이 파일이 무엇인가"가 폴더로 안 드러난다는 것이다. 접미사가 그 역할을 대신한다.
+
+| 정체 | 이름 규칙 | 예 |
+|---|---|---|
+| 층 | `~Controller` / `~Service` / `~Repository` | `OrderController` |
+| 엔티티 | **업무 명사 단독** (접미사 없음) | `Order`, `CartItem` |
+| enum | `~Status` / `~Type` | `OrderStatus`, `ClaimType` |
+| 부품 | **`~er`/`~or` 행위자 이름** | `OrderStatusChanger`, `SellerBrandResolver`, `CartEventRecorder` |
+
+- **`~Entity` 접미사는 붙이지 않는다** — 엔티티 이름이 곧 업무 용어라 `OrderEntity`는 말이 어색해진다.
+- **`@Service`는 컨트롤러가 부르는 유스케이스, `@Component`는 그 안에서 쓰는 부품**으로 가른다. 스프링에는 기능 차이가 없으므로(실제 동작이 다른 건 `@Repository` 하나뿐) 이건 순수한 팀 약속이다. 흔한 관례("도메인 로직이 있으면 `@Service`")와 다른데, 우리 부품 중 상당수(`OrderStatusChanger`·`SellerBrandResolver`·`CustomerLabeler`)가 도메인 규칙 덩어리라 그 기준으로는 갈리지 않는다. *현재 위반*: `ProductStockService`(부품인데 `@Service`+Service 이름) · `RecommendationListStore`(부품인데 `@Service`) · `MockPaymentService`(부품인데 Service 이름).
+
 ### 3-1. 코드 컨벤션 (2026-07-17 신설)
 
 > §3이 "어디에 두나"라면 여기는 "클래스 하나를 어떻게 쓰나". 전 Phase 공통 — 구현 세션은 이 규약과 다르게 짜지 않는다.
@@ -223,6 +252,12 @@ com.jarvis
     - **seller는 쓰기도 한다** — `SellerProductService`가 I-11/I-12(상품 수정·삭제) 경로에서 `Product`를 고치고 `product_change_logs`를 직접 남긴다. 즉 위 "읽기 전용" 조건 밖이며, **"변경하면 기록한다"가 product 안이 아니라 seller와 product 두 곳의 관행으로 유지된다.** 재고 쪽은 `ProductStockService`로 모았지만(2026-08-07) 가격·상태는 아직이다 — **상품 변경 일체를 product가 소유하도록 옮기는 게 남은 작업.**
   - **의존 방향은 소비자 → 피소비자 한 방향.** `ReviewRepository`가 seller DTO를 만들던 역방향 참조는 제거했다(2026-08-07 — 프로젝션을 `review.dto.BrandReviewRow`로 옮김). 같은 모양(하위 도메인이 소비자의 타입을 아는 것)이 다시 생기면 같은 방식으로 소유자 쪽에 둔다.
 - 실패는 null/boolean 반환이 아니라 **`BusinessException(ErrorCode)` 계열 throw** — D2 envelope 매핑과 자동 정합.
+- **바꾸면 반드시 남는 것은 "단일 관문"으로 묶는다** (2026-08-07 명문화). 상태·수량을 바꾸는 일과 그에 딸린 기록을 **한 메서드 안에** 두고, 엔티티의 변경 메서드는 공개 범위를 좁혀(package-private) 관문을 우회할 수 없게 한다. 호출자가 "바꾼 뒤 기록도 남겨야지"를 기억하는 구조는 호출자가 늘면 반드시 하나가 빠뜨린다.
+  - `OrderStatusChanger` — 주문/아이템 상태 전이 + `order_status_logs` (01 D12). `Order.markPaid()` 등은 `order` 패키지 밖에서 못 부른다.
+  - `ProductStockService` — 재고 조건부 차감·보상 복원 + 품절 로그 (02 D33).
+  - **아직 관문이 없는 곳**: 판매자의 상품 가격·상태 변경(I-11/I-12). `SellerProductService`가 `Product`를 직접 고치고 `product_change_logs`를 직접 남긴다 → "변경하면 기록"이 seller·product 두 곳의 관행으로 유지된다. **이관이 남은 작업 1순위.**
+- **트랜잭션 안에서 바깥(HTTP·Redis)을 기다리지 않는다** (2026-08-07 명문화). 열린 트랜잭션은 DB 커넥션을 점유하므로, 그 안에서 FastAPI 응답을 3초 기다리면 커넥션 풀이 마른다. 이미 실천 중인 예: `ChatSessionService.endSessionAsync()`는 "로그아웃처럼 `@Transactional` 안에서 호출하는 곳" 전용으로 따로 둔 비동기 경로다.
+  - 읽기 트랜잭션 안의 캐시 조회(`CategoryService`·`ProductService`의 `RedisCache`)는 허용 — fail-open이라 장애가 조회 실패로 번지지 않고 왕복이 짧다. **쓰기 트랜잭션 안에서는 금지.**
 
 **Entity — setter 없는 도메인**
 - `@Setter`/`@Data` 금지, `@NoArgsConstructor(access = PROTECTED)`, 생성은 정적 팩토리 또는 빌더.
@@ -234,6 +269,34 @@ com.jarvis
 - Java record, API 단위 네이밍(`SignupRequest`/`SignupResponse`) — 범용 `XxxDto` 금지(어느 API의 모양인지 이름으로 식별).
 - 요청 DTO를 응답에 재사용 금지. 엔티티→응답 변환은 `XxxResponse.from(entity)` 정적 팩토리로 모은다(서비스에 getter 나열 매핑 금지).
 - Bean Validation은 요청 DTO에, 실패는 D2의 `VALIDATION_ERROR + fields[]`로 핸들러가 일괄 변환.
+
+**OOP — 지금 상태를 지키는 방어 규칙 (2026-08-07 신설)**
+
+> 네 특성을 "잘 쓰자"로 두면 안 써도 될 곳에 쓰게 된다. 실제 코드를 재보니 캡슐화만 검사 가치가 있고
+> 상속·다형성은 **거의 안 쓰는 지금이 좋은 상태**라, 늘어나는 걸 막는 방향으로 적는다.
+
+- **캡슐화** — 필드는 전부 private, setter 금지, 상태 변경은 이름 있는 메서드로, **그 메서드도 필요한 만큼만 공개**한다. *현황: public 필드 0 · `@Setter`/`@Data` 0.*
+- **상속보다 조합** — 도메인 클래스끼리 상속하지 않는다. 상속은 프레임워크가 요구할 때만(`BaseTimeEntity`의 `createdAt/updatedAt`, `OncePerRequestFilter`, `RuntimeException`). 공통 로직이 필요하면 그 일을 하는 객체를 만들어 주입한다. *현황: 우리가 만든 도메인 상속 계층 0.*
+- **인터페이스는 구현이 둘 이상일 때만** — 구현이 하나면 만들지 않는다. 예외는 "곧 갈아끼울 자리"뿐이고 근거를 주석에 남긴다. *현황: `PaymentService` 1개(구현 `MockPaymentService` — 실 결제 교체 자리).*
+
+**동시성 — 무엇을 언제 쓰나 (2026-08-07 명문화)**
+
+> 장치별 결정은 01·02에 흩어져 있었고 선택 기준만 없었다. 아래는 코드에서 뽑은 것이다.
+
+| 상황 | 장치 | 사용처 |
+|---|---|---|
+| 읽고 → 계산하고 → 쓰는 사이에 끼어들 수 있다 | 비관적 락 `findByIdForUpdate` | 재결제(01 §2-1) · 장바구니 합산 · 판매자 상품 수정 |
+| 조건이 곧 갱신 대상이다 (재고 ≥ 수량) | **조건부 UPDATE 한 방** — 락보다 싸다 | 재고 차감(02 D33) · 아이템 상태 전이 |
+| 여러 행을 연달아 잠근다 | **항상 같은 순서로**(productId 오름차순) | `ProductStockService.deduct()` — 정렬 보장은 호출자가 아니라 관문이 진다 |
+| 서버 여러 대 중 하나만 해야 한다 | Redis `SETNX` | 채팅 세션 소유권 · 캐시 스탬피드 방지 |
+| 같은 요청이 두 번 와도 한 번만 | 멱등 키 | 추천 목록 저장(I-21) · 이벤트 수집(`client_event_id`) |
+
+**캐시** — `07-redis-design.md` §1을 따른다. 요약: TTL 없는 키 금지 · 사본(캐시)은 fail-open·원본(세션·락·카운터)은 fail-fast · 커밋 **전** 캐시 삭제 금지 · `KEYS` 금지.
+
+**테스트 (2026-08-07 신설)**
+
+- **손으로 쓴 쿼리(`@Query`)는 DB에 붙는 테스트로 검증한다.** 목(mock)은 "이 메서드를 불렀다"만 확인하므로 JPQL이 올바른 행을 가져오는지는 검증되지 않는다. *현황: DB에 붙는 테스트 0개인데 `OrderItemRepository` 445줄·`BehaviorEventRepository` 330줄·`ProductRepository` 250줄이 쿼리 덩어리다 — 미해결.*
+- **도메인마다 서비스 테스트가 있어야 한다.** *현황: `review`가 작성 경로 하나뿐(조회·신고 미커버) — 미해결.*
 
 **공통**
 - 의존성은 생성자 주입만(`@RequiredArgsConstructor`), 필드 `@Autowired` 금지.
@@ -255,6 +318,27 @@ com.jarvis
 - 전역 LAZY(Entity 항) 전제에서 **목록 조회의 N+1은 fetch join/`@EntityGraph`로 해소** — 리뷰 기준: 쿼리 로그에서 같은 SELECT가 행 수만큼 반복되면 N+1.
 - 수정은 "조회 → 엔티티 메서드 호출 → 커밋 시 더티체킹". `save()` 재호출로 UPDATE하지 않는다.
 - ID 전략은 `IDENTITY`(MariaDB auto_increment 정합). Hibernate 배치 INSERT 제약은 감수 — 대량 시드는 JdbcTemplate batch 허용(§4와 일관).
+
+### 3-2. 판정 기준 — 원칙이 아니라 도구 (2026-08-07 신설)
+
+> §3·§3-1이 "무엇을 지키나"라면 여기는 **"애매할 때 어떻게 판정하나"**다. 규칙이 아니라 재는 자다.
+
+**응집도는 높게, 결합도는 낮게.** 응집도 = 한 클래스 *안*의 것들이 서로 관련 있나(높아야 좋음). 결합도 = 클래스 *사이*가 얼마나 얽혔나(낮아야 좋음). **둘은 서로 민다** — 쪼갤수록 응집도는 오르지만 클래스가 늘어 결합도도 오른다. 그래서 판단은 언제나 **"쪼갰을 때 응집도 이득 > 결합도 손해인가"** 하나다.
+
+**클래스를 쪼갤지 판정하는 3단계** — 순서를 지킨다. 2단계가 결론이고 나머지는 힌트다.
+
+1. **소비자가 갈리나** (힌트) — 서로 다른 호출자 그룹이 서로 다른 메서드만 쓰면 의심한다.
+2. **안에서 덩어리가 갈리나** (**결론**) — 필드·private 헬퍼를 어느 메서드가 쓰는지 그려본다. 두 덩어리가 **아무것도 공유하지 않으면** 쪼갠다. 공유하면 쪼개도 복사되거나 서로 부르게 되므로 **그냥 둔다.**
+3. **git 기록** (참고) — `git log -- <파일>`로 "무엇 때문에 고쳐졌나"를 본다. 이유가 두 갈래로 반복되면 1·2단계를 더 진지하게 본다.
+
+*적용 사례 (2026-08-07)*
+
+| 대상 | 1단계 | 2단계 | 판정 |
+|---|---|---|---|
+| 재고 → `ProductStockService` | 갈림 | **안 겹침** — 조회 헬퍼를 하나도 안 씀 | **쪼갬** (PR #123) |
+| `ProductService`(376줄) | 갈림 (화면 / LLM / 내부) | **겹침** — `toCards`·`parseJson`·`popularIds`가 그룹을 가로지름 | **안 쪼갬** |
+
+`ProductService`는 git 기록상 LLM 요청 5회 · 화면 요청 4회로 갈려 있어 처음엔 분리 후보였으나, 2단계에서 공용 배관이 드러나 보류했다. **파일 길이는 판정 근거가 아니다** — 305줄 `CartService`는 이유가 하나라 그대로 두고, 376줄 `ProductService`도 덩어리가 하나라 그대로 둔다.
 
 ## 4. 기술 스택 & 버전
 
@@ -305,6 +389,11 @@ com.jarvis
 - [ ] 시크릿이 코드·yml에 리터럴로 없는가
 - [ ] 배포 compose에서 nginx만 `ports:` publish이고 나머지는 `expose`인가 (spring 8080 외부 노출 = nginx 우회 뒷문)
 - [ ] internal 컨트롤러가 도메인 서비스를 재사용하는가 (로직 복제 금지)
+- [ ] 남의 도메인 Repository를 **쓰기**로 쓰지 않는가 (읽기는 허용 — §3-1). 상태·수량 변경이 단일 관문을 지나는가
+- [ ] **쓰기 트랜잭션 안에서 HTTP·Redis를 기다리지 않는가** (§3-1 — 커넥션 풀 고갈)
+- [ ] 파일 이름이 정체를 드러내는가 — 엔티티=명사 / enum=`~Status`·`~Type` / 부품=`~er` / 층=접미사 (§3)
+- [ ] 둘 이상의 도메인이 쓰는 설정·상수가 `global/`에 있는가 (§3 — 패키지 순환의 원인)
+- [ ] 구현이 하나뿐인 인터페이스를 새로 만들지 않았는가, 도메인 클래스끼리 상속하지 않았는가 (§3-1 OOP)
 
 ## 7. 요청 시퀀스
 
