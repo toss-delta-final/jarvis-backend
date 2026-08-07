@@ -61,17 +61,18 @@ class InternalCartControllerTest {
     @Test
     @DisplayName("I-24 — 삭제 성공은 data null (C-4와 동일 — cartItemId를 싣지 않는다)")
     void removeItemReturnsNullData() {
-        ApiResponse<Void> response = controller.removeItem(55L, 123L, null);
+        ApiResponse<Void> response = controller.removeItem(55L, 123L, null, "chat-abc");
 
         assertThat(response.success()).isTrue();
         assertThat(response.data()).isNull();
-        verify(cartService).removeItem(123L, null, 55L);
+        // chatSessionId는 "chat:" sentinel로 조립돼 넘어간다 (노션 I-24 C안)
+        verify(cartService).removeItem(123L, null, 55L, "chat:chat-abc");
     }
 
     @Test
     @DisplayName("I-24 — 신원이 둘 다 없으면 VALIDATION_ERROR (I-18과 code가 갈린다)")
     void removeItemRejectsMissingIdentity() {
-        assertThatThrownBy(() -> controller.removeItem(55L, null, null))
+        assertThatThrownBy(() -> controller.removeItem(55L, null, null, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_ERROR);

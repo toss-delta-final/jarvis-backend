@@ -2,6 +2,7 @@ package com.jarvis.global.event;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jarvis.cart.CartEventRecorder;
 import com.jarvis.global.auth.TokenHasher;
 import com.jarvis.global.event.dto.EventBatchRequest;
 import com.jarvis.member.GuestRepository;
@@ -34,19 +35,26 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class EventService {
 
-    /** FE 12종 화이트리스트 (02 §4, 노션 E-1) — 그 외는 그 건만 버린다 */
+    /** FE가 보내는 11종 (노션 E-1 — 2026-08-06 개정으로 add_to_cart가 서버 적재로 빠져 12종→11종) */
     private static final Set<String> EVENT_TYPES = Set.of(
             "session_start", "page_view", "search", "product_view",
-            "add_to_cart", "checkout_start", "purchase_complete", "login",
+            "checkout_start", "purchase_complete", "login",
             "recommendation_impression", "product_visible", "product_click",
             "recommendation_dismiss");
     /**
-     * 서버만 적재하는 타입 (02 D38) — HTTP로 들어오면 화이트리스트와 무관하게 드롭한다.
-     * E-1은 인증이 없어 여기서 받으면 추천 발생 수를 마음대로 부풀릴 수 있고(CTR 분모 조작),
+     * 서버만 적재하는 3종 (02 D38, 노션 E-1 2026-08-06) — HTTP로 들어오면 화이트리스트와 무관하게
+     * 드롭한다. E-1은 인증이 없어 여기서 받으면 추천 발생 수·담기 수를 마음대로 부풀릴 수 있고,
      * server-side로 옮긴 의미가 사라진다.
+     *
+     * <p><b>장바구니 2종은 서버 적재와 같은 배포에서 드롭을 켠다</b>(2026-08-07 개정). 노션 구 문구는
+     * "FE track 제거 배포 이후"였는데, 그러면 그 사이 기간에 FE 전송과 서버 적재가 겹쳐 한 번 담았는데
+     * 2행이 쌓인다(양쪽이 각자 만든 {@code client_event_id}가 달라 UNIQUE로 못 막는다). 경계할 실패는
+     * <b>적재 없이 드롭만 켜는 것</b>이므로 기준을 "서버 적재가 있는 상태에서만 켠다"로 바꿨다.
      */
     private static final Set<String> SERVER_ONLY_EVENT_TYPES = Set.of(
-            RecommendationEventRecorder.EVENT_TYPE);
+            RecommendationEventRecorder.EVENT_TYPE,
+            CartEventRecorder.ADD_EVENT_TYPE,
+            CartEventRecorder.REMOVE_EVENT_TYPE);
     private static final String SESSION_START = "session_start";
 
     /**
@@ -58,7 +66,8 @@ public class EventService {
             "page_view", Set.of("pageType"),
             "search", Set.of("query", "resultsCount"),
             "product_view", Set.of("price"),
-            "add_to_cart", Set.of("quantity", "price"),
+            // add_to_cart·remove_from_cart는 서버 전용이 되어 이 경로로 못 들어온다 —
+            // 필수 키는 CartEventRecorder가 항상 채운다 (노션 E-1 2026-08-06)
             "checkout_start", Set.of("amount", "productIds"),
             "purchase_complete", Set.of("orderId", "amount"),
             "product_visible", Set.of("visibleRatio", "visibleMs"));

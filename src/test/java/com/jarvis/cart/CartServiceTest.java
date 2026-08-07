@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -44,6 +46,7 @@ class CartServiceTest {
     @Mock BrandRepository brandRepository;
     @Mock GuestService guestService;
     @Mock RecommendationAttributionResolver attributionResolver;
+    @Mock CartEventRecorder cartEventRecorder;
 
     @InjectMocks CartService cartService;
 
@@ -99,11 +102,11 @@ class CartServiceTest {
         when(option.getId()).thenReturn(77L);
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of(option));
 
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null), null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.CART_OPTION_REQUIRED);
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, 999L, 1, null)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, 999L, 1, null), null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.CART_OPTION_INVALID);
@@ -117,10 +120,10 @@ class CartServiceTest {
         ReflectionTestUtils.setField(existing, "id", 5L);
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(existing));
 
-        CartService.CartAddResult ok = cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null));
+        CartService.CartAddResult ok = cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null), null);
         assertThat(ok.item().quantity()).isEqualTo(99);
 
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null), null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_ERROR);
@@ -133,7 +136,7 @@ class CartServiceTest {
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 5, null)))
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 5, null), null))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> {
                     BusinessException ex = (BusinessException) e;
@@ -163,7 +166,7 @@ class CartServiceTest {
         when(cartItemRepository.findGuestLinesForUpdate(any(), any(), any())).thenReturn(List.of());
         when(guestService.ensureGuest(null)).thenReturn("issued-guest-id");
 
-        CartService.CartAddResult result = cartService.addItem(null, null, new CartAddRequest(10L, null, 2, null));
+        CartService.CartAddResult result = cartService.addItem(null, null, new CartAddRequest(10L, null, 2, null), null);
 
         assertThat(result.issuedGuestId()).isEqualTo("issued-guest-id");
         verify(guestService).ensureGuest(null);
@@ -187,6 +190,67 @@ class CartServiceTest {
         assertThat(guestNew.getGuestId()).isNull();
     }
 
+    // ---- 행동 이벤트 서버 적재 (노션 E-1·C-2·C-4 2026-08-06 이관) ----
+
+    @Test
+    @DisplayName("C-2 — quantity는 이번 요청분(delta), price는 옵션 추가금 포함")
+    void recordsAddEventWithDeltaAndOptionPrice() {
+        ProductOption option = mock(ProductOption.class, withSettings().strictness(Strictness.LENIENT));
+        when(option.getId()).thenReturn(77L);
+        when(option.getExtraPrice()).thenReturn(2000);
+        when(product.getPrice()).thenReturn(12000);
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of(option));
+        when(productOptionRepository.findById(77L)).thenReturn(Optional.of(option));
+        // 이미 3개 담겨 있는데 2개 더 담는다 — 합산은 5지만 이벤트는 2여야 한다
+        CartItem existing = CartItem.forMember(1L, 10L, 77L, 3, null);
+        ReflectionTestUtils.setField(existing, "id", 5L);
+        when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, 77L)).thenReturn(List.of(existing));
+
+        cartService.addItem(1L, null, new CartAddRequest(10L, 77L, 2, null), "sess-1");
+
+        ArgumentCaptor<CartEventRecorder.CartEvent> captor =
+                ArgumentCaptor.forClass(CartEventRecorder.CartEvent.class);
+        verify(cartEventRecorder).record(captor.capture());
+        CartEventRecorder.CartEvent event = captor.getValue();
+        assertThat(event.eventType()).isEqualTo(CartEventRecorder.ADD_EVENT_TYPE);
+        assertThat(event.quantity()).isEqualTo(2);          // 합산 결과 5가 아니다
+        assertThat(event.price()).isEqualTo(14000);         // 12000 + 옵션 2000
+        assertThat(event.optionId()).isEqualTo(77L);
+        assertThat(event.sessionKey()).isEqualTo("sess-1");
+    }
+
+    // 커밋 뒤엔 행이 없어 quantity·optionId를 알 수 없다 — 지우기 전에 뽑아야 한다
+    @Test
+    @DisplayName("C-4 — 삭제 이벤트는 지우기 전 값으로 만들고 quantity는 전량이다")
+    void recordsRemoveEventWithPreDeletionValues() {
+        when(product.getPrice()).thenReturn(12000);
+        CartItem owned = CartItem.forMember(1L, 10L, null, 4, null);
+        ReflectionTestUtils.setField(owned, "id", 5L);
+        when(cartItemRepository.findById(5L)).thenReturn(Optional.of(owned));
+
+        cartService.removeItem(1L, null, 5L, "sess-1");
+
+        ArgumentCaptor<CartEventRecorder.CartEvent> captor =
+                ArgumentCaptor.forClass(CartEventRecorder.CartEvent.class);
+        verify(cartEventRecorder).record(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo(CartEventRecorder.REMOVE_EVENT_TYPE);
+        assertThat(captor.getValue().quantity()).isEqualTo(4);   // 부분 차감 없음 — 전량
+        verify(cartItemRepository).delete(owned);
+    }
+
+    // 404는 미적재 — 삭제 버튼 연타의 두 번째까지 세면 이벤트가 부풀려진다 (노션 C-4)
+    @Test
+    @DisplayName("C-4 — 없는 항목(404)은 이벤트를 적재하지 않는다")
+    void doesNotRecordRemoveEventOnNotFound() {
+        when(cartItemRepository.findById(5L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> cartService.removeItem(1L, null, 5L, "sess-1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CART_ITEM_NOT_FOUND);
+        verifyNoInteractions(cartEventRecorder);
+    }
+
     // ---- 추천 귀속 (노션 C-2·I-2) ----
 
     private static final String LIST_ID = "9f2c1a7e4b8d43f5a0c6e1d97b3f8a24";
@@ -203,7 +267,7 @@ class CartServiceTest {
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
         when(attributionResolver.resolveForConversion(CONTEXT, 10L, 1L, null)).thenReturn(VERIFIED);
 
-        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT));
+        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT), null);
 
         verify(cartItemRepository).save(argThat(item ->
                 LIST_ID.equals(item.getListId()) && REQUEST_ID.equals(item.getRecommendationRequestId())));
@@ -219,7 +283,7 @@ class CartServiceTest {
                 .thenReturn(ConversionAttribution.NONE);
 
         CartService.CartAddResult result =
-                cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT));
+                cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT), null);
 
         assertThat(result.item().quantity()).isEqualTo(1);
         verify(cartItemRepository).save(argThat(item -> item.getListId() == null));
@@ -234,10 +298,10 @@ class CartServiceTest {
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of(existing));
         when(attributionResolver.resolveForConversion(CONTEXT, 10L, 1L, null)).thenReturn(VERIFIED);
 
-        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT));
+        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, CONTEXT), null);
         assertThat(existing.getListId()).isEqualTo(LIST_ID);
 
-        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null));
+        cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null), null);
         assertThat(existing.getListId()).isEqualTo(LIST_ID);
     }
 
