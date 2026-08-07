@@ -116,7 +116,8 @@ public class HomeRecommendationService {
         save(RecommendationList.ofHome(response.listId(), response.recommendationRequestId(),
                 memberId, RecommendationSource.AI_RECOMMENDED, cards.size(), LocalDateTime.now()),
                 cards, null);
-        return new RecommendedProductsResponse(RecommendationSource.AI_RECOMMENDED.name(),
+        // 응답 어휘는 DB(source=AI_RECOMMENDED)와 갈린다 — FE는 "개인화됐나"만 묻는다
+        return new RecommendedProductsResponse(RecommendedProductsResponse.PERSONALIZED,
                 response.recommendationRequestId(), response.listId(),
                 cards.stream().map(card -> RecommendedProductsResponse.Item.of(card,
                         reasons.get(card.productId()))).toList());
@@ -135,7 +136,9 @@ public class HomeRecommendationService {
         save(RecommendationList.ofHome(listId, requestId, memberId,
                 RecommendationSource.POPULAR_FALLBACK, cards.size(), LocalDateTime.now()),
                 cards, fallbackReason);
-        return new RecommendedProductsResponse(RecommendationSource.POPULAR_FALLBACK.name(),
+        // 원인 넷(프로필 없음·후보 부족·AI 에러·타임아웃)을 하나로 접는다 — FE 동작이 전부 같다.
+        // 원인을 주장하는 이름을 쓰면 나머지 셋에서 거짓말이 되고, FE가 잘못된 분기를 만든다
+        return new RecommendedProductsResponse(RecommendedProductsResponse.NOT_PERSONALIZED,
                 requestId, listId,
                 // 대체분엔 이유가 없다 — 키는 유지하고 null이다(CH-5와 동일 규칙)
                 cards.stream().map(card -> RecommendedProductsResponse.Item.of(card, null)).toList());

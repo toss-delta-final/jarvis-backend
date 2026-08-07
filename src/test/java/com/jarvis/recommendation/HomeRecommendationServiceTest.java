@@ -82,7 +82,7 @@ class HomeRecommendationServiceTest {
     }
 
     @Test
-    @DisplayName("P-5 — 개인화 성공이면 source=AI_RECOMMENDED, 상관키는 FastAPI가 준 값")
+    @DisplayName("P-5 — 개인화 성공이면 source=PERSONALIZED, 상관키는 FastAPI가 준 값")
     void personalizedUsesAiCorrelationKeys() {
         aiReturns(HomeRecommendationResponse.PERSONALIZED,
                 List.of(new HomeRecommendationResponse.Item(101L, "최근 선호 가격대에 맞아요")));
@@ -90,7 +90,7 @@ class HomeRecommendationServiceTest {
 
         RecommendedProductsResponse response = service.recommend(MEMBER_ID);
 
-        assertThat(response.source()).isEqualTo("AI_RECOMMENDED");
+        assertThat(response.source()).isEqualTo("PERSONALIZED");
         assertThat(response.recommendationRequestId()).isEqualTo(AI_REQUEST_ID);
         assertThat(response.listId()).isEqualTo(AI_LIST_ID);
         assertThat(response.items()).hasSize(1);
@@ -99,14 +99,14 @@ class HomeRecommendationServiceTest {
 
     // 상관키가 없으면 FE가 인기상품 카드에 대해 쏘는 노출·클릭이 부모 없는 고아가 되어 버려진다
     @Test
-    @DisplayName("P-5 — 프로필 없음이면 인기상품 대체, 상관키는 Spring이 새로 발급한다")
+    @DisplayName("P-5 — 개인화 불가면 source=NOT_PERSONALIZED, 상관키는 Spring이 새로 발급한다")
     void fallbackStillIssuesCorrelationKeys() {
         aiReturns("NO_PROFILE", List.of());
         when(productService.getPopularCards(anyInt())).thenReturn(List.of(card(1L), card(2L)));
 
         RecommendedProductsResponse response = service.recommend(MEMBER_ID);
 
-        assertThat(response.source()).isEqualTo("POPULAR_FALLBACK");
+        assertThat(response.source()).isEqualTo("NOT_PERSONALIZED");
         assertThat(response.recommendationRequestId()).isNotBlank();
         assertThat(response.listId()).isNotBlank().doesNotContain("-");
         assertThat(response.items()).hasSize(2);
@@ -123,7 +123,7 @@ class HomeRecommendationServiceTest {
 
         RecommendedProductsResponse response = service.recommend(MEMBER_ID);
 
-        assertThat(response.source()).isEqualTo("POPULAR_FALLBACK");
+        assertThat(response.source()).isEqualTo("NOT_PERSONALIZED");
         verify(recommendationEventRecorder).recordHomeGenerated(any(),
                 eq(HomeRecommendationClient.AI_TIMEOUT));
     }
@@ -160,6 +160,22 @@ class HomeRecommendationServiceTest {
         assertThat(saved.getSessionId()).isNull();   // 홈엔 채팅 세션이 없다
     }
 
+    // 응답은 "개인화됐나"에, DB는 "어디서 왔나"에 답한다 — AI 추천 성과 집계가 DB 값에 의존하므로
+    // 응답 어휘를 바꿀 때 DB까지 따라 바꾸면 그 집계가 대체분을 배제하지 못한다
+    @Test
+    @DisplayName("P-5 — 대체분은 응답 NOT_PERSONALIZED / DB POPULAR_FALLBACK으로 어휘가 갈린다")
+    void wireAndDbVocabulariesDiffer() {
+        aiReturns("NO_PROFILE", List.of());
+        when(productService.getPopularCards(anyInt())).thenReturn(List.of(card(1L)));
+
+        RecommendedProductsResponse response = service.recommend(MEMBER_ID);
+
+        assertThat(response.source()).isEqualTo("NOT_PERSONALIZED");
+        verify(recommendationListStore).saveAll(listCaptor.capture(), anyList());
+        assertThat(listCaptor.getValue().get(0).getSource())
+                .isEqualTo(RecommendationSource.POPULAR_FALLBACK);
+    }
+
     @Test
     @DisplayName("P-5 — 개인화는 캐시하고 대체분은 캐시하지 않는다 (대체분 상관키는 매번 새로)")
     void cachesPersonalizedOnly() {
@@ -189,7 +205,7 @@ class HomeRecommendationServiceTest {
 
         RecommendedProductsResponse response = service.recommend(MEMBER_ID);
 
-        assertThat(response.source()).isEqualTo("POPULAR_FALLBACK");
+        assertThat(response.source()).isEqualTo("NOT_PERSONALIZED");
         verify(valueOperations, never()).set(any(), any(), any(java.time.Duration.class));
     }
 
