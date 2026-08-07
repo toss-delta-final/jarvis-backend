@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -202,5 +203,125 @@ class SellerSalesServiceTest {
         assertThatThrownBy(() -> AnalysisPeriod.of("2026-07-10", "2026-07-01"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PERIOD);
+    }
+
+    // ---- AI 추천 성과 (「AI 추천 성과」 2026-08-06 제안 · 2026-08-07 구현) ----
+
+    private static OrderItemRepository.AttributionRow attribution(long confirmed, long estimated,
+                                                                  long orders) {
+        OrderItemRepository.AttributionRow row = mock(OrderItemRepository.AttributionRow.class);
+        when(row.getConfirmedSales()).thenReturn(confirmed);
+        when(row.getEstimatedSales()).thenReturn(estimated);
+        when(row.getAiOrderCount()).thenReturn(orders);
+        return row;
+    }
+
+    private static OrderItemRepository.CoverageRow coverage(long paid, long observed) {
+        OrderItemRepository.CoverageRow row = mock(OrderItemRepository.CoverageRow.class);
+        when(row.getPaidOrders()).thenReturn(paid);
+        // 분모가 0이면 관측 수를 읽기 전에 null로 끊는다 — 그 경로에선 이 스터빙이 안 쓰인다
+        lenient().when(row.getObservedOrders()).thenReturn(observed);
+        return row;
+    }
+
+    private static BehaviorEventRepository.RecommendationFunnelRow funnel(Long impression,
+                                                                         Long click, Long cart) {
+        BehaviorEventRepository.RecommendationFunnelRow row =
+                mock(BehaviorEventRepository.RecommendationFunnelRow.class);
+        when(row.getImpression()).thenReturn(impression);
+        when(row.getClick()).thenReturn(click);
+        when(row.getAddToCart()).thenReturn(cart);
+        return row;
+    }
+
+    /** 대시보드 나머지 블록은 이 테스트들의 관심사가 아니라 최소만 채운다 */
+    private Brand stubDashboardBasics() {
+        lenient().when(orderItemRepository.countSellerItemsByStatus(BRAND_ID)).thenReturn(List.of());
+        lenient().when(orderStatusLogRepository.avgSellerDeliverySeconds(BRAND_ID)).thenReturn(null);
+        lenient().when(behaviorEventRepository.countActiveVisitors(eq(BRAND_ID), any())).thenReturn(0L);
+        lenient().when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(),
+                any())).thenReturn(List.of());
+        lenient().when(productRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
+        Brand brand = mock(Brand.class);
+        lenient().when(brand.getId()).thenReturn(BRAND_ID);
+        return brand;
+    }
+
+    // 직접 매출은 총액에서 차감해 만든다 — 그래야 합이 총액과 달라질 수 없다
+    @Test
+    @DisplayName("S-1 AI 성과 — confirmed+estimated+direct = totalSales 항등식이 성립한다")
+    void aiAttributionIdentityHolds() {
+        Brand brand = stubDashboardBasics();
+        OrderItemRepository.AttributionRow attr = attribution(820000, 360000, 34);
+        OrderItemRepository.CoverageRow cov = coverage(100, 93);
+        BehaviorEventRepository.RecommendationFunnelRow fun = funnel(8200L, 1490L, 610L);
+        when(orderItemRepository.aggregateAiAttribution(eq(BRAND_ID), any(), any(), anyInt()))
+                .thenReturn(attr);
+        when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any()))
+                .thenReturn(totals(4600000, 40, 50), totals(0, 0, 0), totals(4600000, 40, 50));
+        when(behaviorEventRepository.aggregateRecommendationFunnel(eq(BRAND_ID), any(), any()))
+                .thenReturn(fun);
+        when(orderItemRepository.aggregateCollectionCoverage(eq(BRAND_ID), any(), any()))
+                .thenReturn(cov);
+        when(orderItemRepository.countSellerPurchaseOrders(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(61L);
+
+        SellerSummaryResponse.AiAttribution ai =
+                service.summary(brand, null, null, null, null).aiAttribution();
+
+        assertThat(ai.confirmedSales() + ai.estimatedSales() + ai.directSales())
+                .isEqualTo(ai.totalSales());
+        assertThat(ai.aiSales()).isEqualTo(1180000);
+        assertThat(ai.aiShare()).isEqualTo(25.7);          // 1180000/4600000
+        assertThat(ai.aiOrderCount()).isEqualTo(34);
+        assertThat(ai.windowDays()).isEqualTo(7);
+        assertThat(ai.policyVersion()).isEqualTo("v1");
+        assertThat(ai.funnel().purchase()).isEqualTo(61);  // 구매 단만 주문 정본에서 센다
+        assertThat(ai.coverage()).isEqualTo(0.93);
+    }
+
+    // "AI 매출 0%"가 아니라 "계산할 모수가 없다" — I-16 churnRate와 같은 규칙이다
+    @Test
+    @DisplayName("S-1 AI 성과 — 매출이 0이면 aiShare는 0이 아니라 null")
+    void aiShareIsNullWithoutSales() {
+        Brand brand = stubDashboardBasics();
+        OrderItemRepository.AttributionRow attr = attribution(0, 0, 0);
+        OrderItemRepository.CoverageRow cov = coverage(0, 0);
+        BehaviorEventRepository.RecommendationFunnelRow fun = funnel(null, null, null);
+        when(orderItemRepository.aggregateAiAttribution(eq(BRAND_ID), any(), any(), anyInt()))
+                .thenReturn(attr);
+        when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any()))
+                .thenReturn(totals(0, 0, 0));
+        when(behaviorEventRepository.aggregateRecommendationFunnel(eq(BRAND_ID), any(), any()))
+                .thenReturn(fun);
+        when(orderItemRepository.aggregateCollectionCoverage(eq(BRAND_ID), any(), any()))
+                .thenReturn(cov);
+        when(orderItemRepository.countSellerPurchaseOrders(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(0L);
+
+        SellerSummaryResponse.AiAttribution ai =
+                service.summary(brand, null, null, null, null).aiAttribution();
+
+        assertThat(ai.aiShare()).isNull();
+        assertThat(ai.coverage()).isNull();
+        // SUM은 대상 행이 없으면 0이 아니라 NULL이다 — 그대로 내보내면 FE가 터진다
+        assertThat(ai.funnel().impression()).isZero();
+    }
+
+    // 귀속 집계 하나 때문에 대시보드 전체가 500이 되면 안 된다
+    @Test
+    @DisplayName("S-1 AI 성과 — 집계가 실패해도 이 블록만 null이고 나머지는 정상 응답한다")
+    void aiAttributionFailureIsIsolated() {
+        Brand brand = stubDashboardBasics();
+        when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any()))
+                .thenReturn(totals(0, 0, 0));
+        when(orderItemRepository.aggregateAiAttribution(eq(BRAND_ID), any(), any(), anyInt()))
+                .thenThrow(new RuntimeException("귀속 쿼리 실패"));
+
+        SellerSummaryResponse response = service.summary(brand, null, null, null, null);
+
+        assertThat(response.aiAttribution()).isNull();
+        assertThat(response.orderStatus()).isNotNull();
+        assertThat(response.salesTrend()).isNotNull();
     }
 }

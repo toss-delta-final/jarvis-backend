@@ -298,4 +298,33 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
                                           @Param("from") LocalDateTime from,
                                           @Param("to") LocalDateTime to,
                                           @Param("maxSeconds") int maxSeconds);
+
+    interface RecommendationFunnelRow {
+        Long getImpression();
+        Long getClick();
+        Long getAddToCart();
+    }
+
+    /**
+     * S-1 추천 퍼널 3단 (「AI 추천 성과」) — 노출 → 클릭 → 담기. 구매 단은 주문 정본이라
+     * {@code OrderItemRepository}가 따로 센다(I-13 purchaseComplete와 같은 이유 — 이벤트로는
+     * 상품 귀속이 구조적으로 불가능하다).
+     *
+     * <p>{@code AI_RECOMMENDED} 목록에 귀속된 이벤트만 센다 — P-5 대체분({@code POPULAR_FALLBACK})은
+     * AI가 뽑은 게 아니라 제외다. 자사 스코프는 {@code product_id} 컬럼 조인이며, 세 이벤트 모두
+     * 그 컬럼이 채워져 있어 귀속 경로가 하나다.
+     */
+    @Query(value = """
+            SELECT SUM(CASE WHEN be.event_type = 'product_visible' THEN 1 ELSE 0 END) AS impression,
+                   SUM(CASE WHEN be.event_type = 'product_click' THEN 1 ELSE 0 END) AS click,
+                   SUM(CASE WHEN be.event_type = 'add_to_cart' THEN 1 ELSE 0 END) AS addToCart
+            FROM behavior_events be
+            JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
+            JOIN recommendation_list rl ON rl.list_id = be.list_id AND rl.source = 'AI_RECOMMENDED'
+            WHERE be.event_type IN ('product_visible', 'product_click', 'add_to_cart')
+              AND be.created_at >= :from AND be.created_at < :to
+            """, nativeQuery = true)
+    RecommendationFunnelRow aggregateRecommendationFunnel(@Param("brandId") Long brandId,
+                                                          @Param("from") LocalDateTime from,
+                                                          @Param("to") LocalDateTime to);
 }
