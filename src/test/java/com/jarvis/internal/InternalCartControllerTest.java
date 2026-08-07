@@ -12,6 +12,7 @@ import com.jarvis.cart.dto.CartQuantityRequest;
 import com.jarvis.global.response.ApiResponse;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
+import com.jarvis.internal.dto.InternalCartItemResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,11 +37,12 @@ class InternalCartControllerTest {
         when(cartService.changeQuantity(123L, null, 55L, 3))
                 .thenReturn(new CartItemResponse(55L, 3));
 
-        ApiResponse<CartItemResponse> response =
+        ApiResponse<InternalCartItemResponse> response =
                 controller.changeQuantity(55L, new CartQuantityRequest(3), 123L, null);
 
         assertThat(response.success()).isTrue();
-        assertThat(response.data()).isEqualTo(new CartItemResponse(55L, 3));
+        // internal은 id를 숫자로 유지한다 — 공개 CartItemResponse의 @StringId가 새어 나가면 안 된다
+        assertThat(response.data()).isEqualTo(new InternalCartItemResponse(55L, 3));
     }
 
     @Test
@@ -50,7 +52,7 @@ class InternalCartControllerTest {
         when(cartService.changeQuantity(null, guestId, 55L, 2))
                 .thenReturn(new CartItemResponse(55L, 2));
 
-        ApiResponse<CartItemResponse> response =
+        ApiResponse<InternalCartItemResponse> response =
                 controller.changeQuantity(55L, new CartQuantityRequest(2), null, guestId);
 
         assertThat(response.data().quantity()).isEqualTo(2);
@@ -67,23 +69,23 @@ class InternalCartControllerTest {
     }
 
     @Test
-    @DisplayName("I-24 — 신원이 둘 다 없으면 CART_QUERY_INVALID (서비스 호출 없음)")
+    @DisplayName("I-24 — 신원이 둘 다 없으면 VALIDATION_ERROR (I-18과 code가 갈린다)")
     void removeItemRejectsMissingIdentity() {
         assertThatThrownBy(() -> controller.removeItem(55L, null, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.CART_QUERY_INVALID);
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
         verifyNoInteractions(cartService);
     }
 
     @Test
-    @DisplayName("I-25 — 신원을 둘 다 주장하면 CART_QUERY_INVALID (서비스 호출 없음)")
+    @DisplayName("I-25 — 신원을 둘 다 주장하면 VALIDATION_ERROR (I-18과 code가 갈린다)")
     void changeQuantityRejectsAmbiguousIdentity() {
         assertThatThrownBy(() ->
                 controller.changeQuantity(55L, new CartQuantityRequest(3), 123L, "guest-uuid"))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.CART_QUERY_INVALID);
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
         verifyNoInteractions(cartService);
     }
 }
