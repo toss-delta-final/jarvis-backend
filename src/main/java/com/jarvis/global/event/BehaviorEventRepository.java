@@ -63,18 +63,7 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
                                                @Param("from") LocalDateTime from,
                                                @Param("to") LocalDateTime to);
 
-    /** S-1 상품별 조회수·담김수 (04 §7) */
-    @Query(value = """
-            SELECT be.product_id AS productId, be.event_type AS eventType, COUNT(*) AS cnt
-            FROM behavior_events be
-            JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
-            WHERE be.event_type IN ('product_view', 'add_to_cart')
-              AND be.created_at >= :from AND be.created_at < :to
-            GROUP BY be.product_id, be.event_type
-            """, nativeQuery = true)
-    List<ProductTypeCountRow> countSellerEventsByProduct(@Param("brandId") Long brandId,
-                                                         @Param("from") LocalDateTime from,
-                                                         @Param("to") LocalDateTime to);
+    // countSellerEventsByProduct는 2026-08-06 제거 — 유일한 소비처였던 S-1 products[]가 사라졌다.
 
     /**
      * S-1 실시간 방문자 — 최근 30분 자사 상품 관련 이벤트의 distinct session_key (노션 S-1).
@@ -264,4 +253,49 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
             """, nativeQuery = true)
     long countPriceIncreaseExposedMembers(@Param("brandId") Long brandId,
                                           @Param("memberIds") Collection<Long> memberIds);
+
+    interface DwellSampleRow {
+        Long getProductId();
+        Long getDwellSeconds();
+    }
+
+    /**
+     * I-13 체류시간 표본 (노션 I-13 2026-08-06 신설) — 같은 {@code session_key} 안에서
+     * {@code product_view}부터 <b>다음 이벤트까지</b>의 초 차이다. 끝 이벤트 종류는 한정하지 않는다 —
+     * 담기든 타 상품 조회든 주문서 진입이든 그게 이탈 시각이다.
+     *
+     * <p><b>{@code page_leave}를 수집하지 않아 세션의 마지막 조회는 표본에서 빠진다.</b> 구조적
+     * 한계이며 버그가 아니다 — 응답의 {@code dwellSource}가 이 사실을 표기한다.
+     *
+     * <p>이상치 3종을 여기서 거른다 — ① {@code properties._timeShifted}(브라우저 시계를 못 믿어
+     * 서버가 시각을 대체한 행) ② 음수(시계 역전 잔여분) ③ 1800초 초과(세션 30분 무활동 재발급과 정합).
+     * 상한은 <b>BE 고정</b>이다 — 호출마다 달라지면 같은 질문에 다른 숫자가 나온다.
+     *
+     * <p>중앙값·평균은 서비스에서 계산한다. SQL 창함수로 접으면 이 저장소엔 DB 테스트가 없어
+     * <b>숫자가 맞는지 증명할 방법이 없다</b> — 표본을 그대로 받아 Java에서 접는 편이 검증 가능하다.
+     *
+     * <p>챗봇 sentinel 세션({@code chat:...})은 자연히 빠진다 — 그 세션엔 {@code product_view}가
+     * 없기 때문이다(FE만 발화한다). 브라우저 세션에서 조회한 뒤 챗봇으로 담으면 두 이벤트가 다른
+     * {@code session_key}라 이어지지 않아 그 표본이 통째로 누락된다(노션 I-2 한계 ②).
+     */
+    @Query(value = """
+            SELECT s.product_id AS productId,
+                   TIMESTAMPDIFF(SECOND, s.occurred_at, s.next_at) AS dwellSeconds
+            FROM (SELECT be.product_id, be.event_type, be.occurred_at, be.properties,
+                         LEAD(be.occurred_at) OVER (
+                             PARTITION BY be.session_key ORDER BY be.occurred_at, be.id) AS next_at
+                  FROM behavior_events be
+                  WHERE be.created_at >= :from AND be.created_at < :to) s
+            JOIN product p ON p.id = s.product_id AND p.brand_id = :brandId
+            WHERE s.event_type = 'product_view'
+              AND s.next_at IS NOT NULL
+              AND (:productId IS NULL OR s.product_id = :productId)
+              AND COALESCE(JSON_EXTRACT(s.properties, '$._timeShifted'), FALSE) <> TRUE
+              AND TIMESTAMPDIFF(SECOND, s.occurred_at, s.next_at) BETWEEN 0 AND :maxSeconds
+            """, nativeQuery = true)
+    List<DwellSampleRow> findDwellSamples(@Param("brandId") Long brandId,
+                                          @Param("productId") Long productId,
+                                          @Param("from") LocalDateTime from,
+                                          @Param("to") LocalDateTime to,
+                                          @Param("maxSeconds") int maxSeconds);
 }

@@ -63,9 +63,17 @@ public class SellerAnalyticsService {
     private static final int SESSIONS_WINDOW_DAYS = 30;
     private static final String CHECKOUT_START = "checkout_start";
     private static final String PURCHASE_COMPLETE = "purchase_complete";
-    /** I-13 상품 연계 4종 (노션 I-13) — counts 키는 camelCase */
+    /**
+     * I-13 상품 연계 5종 (노션 I-13 — 2026-08-06 remove_from_cart 편입) — counts 키는 camelCase.
+     * 삭제 이벤트도 서버 적재지만 product_id가 채워져 조회·담기와 귀속 경로가 같다.
+     */
     private static final List<String> I13_EVENT_TYPES =
-            List.of("product_view", "add_to_cart", CHECKOUT_START, PURCHASE_COMPLETE);
+            List.of("product_view", "add_to_cart", "remove_from_cart",
+                    CHECKOUT_START, PURCHASE_COMPLETE);
+    /** 체류시간 이상치 상한 — 세션 30분 무활동 재발급과 정합. BE 고정이라 호출자가 못 바꾼다 */
+    private static final int DWELL_CAP_SECONDS = 1800;
+    /** page_leave 없이 이벤트 차분으로 냈다는 표기 — 판정 기준이 바뀌면 이 값도 바뀐다 */
+    private static final String DWELL_SOURCE_NEXT_EVENT = "next_event";
 
     private final BehaviorEventRepository behaviorEventRepository;
     private final OrderItemRepository orderItemRepository;
@@ -421,8 +429,17 @@ public class SellerAnalyticsService {
                                 BehaviorEventRepository.ProductVisitorRow::getVisitors));
         Map<Long, String> names = productRepository.findAllByBrandId(brandId).stream()
                 .collect(Collectors.toMap(Product::getId, Product::getName));
+        // 판매 수량은 매출 계열이라 I-6·S-1과 같은 산식을 쓴다 — 화면 간 숫자가 갈리면 안 된다
+        Map<Long, Long> salesQuantities = types.contains(PURCHASE_COMPLETE)
+                ? orderItemRepository.sumSellerSalesByProduct(brandId, fromDt, toDt).stream()
+                        .collect(Collectors.toMap(
+                                OrderItemRepository.ProductQuantityRow::getProductId,
+                                OrderItemRepository.ProductQuantityRow::getQuantity))
+                : Map.of();
+        Map<Long, DwellStats> dwellByProduct = dwellByProduct(brandId, productId, types, fromDt, toDt);
         List<SellerEventsResponse.ProductRow> rows = countsByProduct.entrySet().stream()
-                .map(e -> toProductRow(e.getKey(), names.get(e.getKey()), e.getValue(), visitors, types))
+                .map(e -> toProductRow(e.getKey(), names.get(e.getKey()), e.getValue(), visitors,
+                        salesQuantities, dwellByProduct, types))
                 .sorted(Comparator
                         .comparingLong((SellerEventsResponse.ProductRow r) -> r.counts().values()
                                 .stream().mapToLong(Long::longValue).sum())
@@ -494,6 +511,8 @@ public class SellerAnalyticsService {
     private SellerEventsResponse.ProductRow toProductRow(Long productId, String productName,
                                                          Map<String, Long> rawCounts,
                                                          Map<Long, Long> visitors,
+                                                         Map<Long, Long> salesQuantities,
+                                                         Map<Long, DwellStats> dwellByProduct,
                                                          List<String> types) {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String type : types) {
@@ -503,11 +522,56 @@ public class SellerAnalyticsService {
                 ? fraction(rawCounts.getOrDefault("add_to_cart", 0L),
                         rawCounts.getOrDefault("product_view", 0L))
                 : null;
-        return new SellerEventsResponse.ProductRow(productId, productName, counts, viewToCartRate,
-                visitors.getOrDefault(productId, 0L));
+        // 0은 "안 팔림", null은 "미조회" — eventType 필터에 purchase_complete가 없으면 후자다
+        Long salesQuantity = types.contains(PURCHASE_COMPLETE)
+                ? salesQuantities.getOrDefault(productId, 0L)
+                : null;
+        DwellStats dwell = dwellByProduct.get(productId);
+        return new SellerEventsResponse.ProductRow(productId, productName, counts, salesQuantity,
+                dwell == null ? null : dwell.median(),
+                dwell == null ? null : dwell.average(),
+                dwell == null ? null : dwell.sampleCount(),
+                dwell == null ? null : DWELL_SOURCE_NEXT_EVENT,
+                viewToCartRate, visitors.getOrDefault(productId, 0L));
     }
 
-    /** eventType 파라미터 파싱 — 콤마 복수, 4종 외 값은 INVALID_GROUP_BY (노션 I-13) */
+    /** 표본이 0이면 행 자체를 만들지 않는다 — 4필드가 통째로 null이어야 하기 때문(노션 I-13) */
+    private record DwellStats(Double median, Double average, Long sampleCount) {
+
+        static DwellStats of(List<Long> samples) {
+            List<Long> sorted = samples.stream().sorted().toList();
+            int size = sorted.size();
+            double median = size % 2 == 1
+                    ? sorted.get(size / 2)
+                    : (sorted.get(size / 2 - 1) + sorted.get(size / 2)) / 2.0;
+            double average = sorted.stream().mapToLong(Long::longValue).average().orElse(0);
+            return new DwellStats(round1(median), round1(average), (long) size);
+        }
+
+        private static double round1(double value) {
+            return Math.round(value * 10) / 10.0;
+        }
+    }
+
+    /**
+     * 체류시간 — {@code product_view}가 조회 대상이 아니면 계산 자체를 하지 않는다(4필드 null).
+     * 표본은 이상치를 거른 뒤 상품별로 접는다.
+     */
+    private Map<Long, DwellStats> dwellByProduct(Long brandId, Long productId, List<String> types,
+                                                 LocalDateTime fromDt, LocalDateTime toDt) {
+        if (!types.contains("product_view")) {
+            return Map.of();
+        }
+        Map<Long, List<Long>> samples = behaviorEventRepository
+                .findDwellSamples(brandId, productId, fromDt, toDt, DWELL_CAP_SECONDS).stream()
+                .collect(Collectors.groupingBy(BehaviorEventRepository.DwellSampleRow::getProductId,
+                        Collectors.mapping(BehaviorEventRepository.DwellSampleRow::getDwellSeconds,
+                                Collectors.toList())));
+        return samples.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> DwellStats.of(e.getValue())));
+    }
+
+    /** eventType 파라미터 파싱 — 콤마 복수, 5종 외 값은 INVALID_GROUP_BY (노션 I-13) */
     private static List<String> parseEventTypes(String eventType) {
         if (eventType == null || eventType.isBlank()) {
             return I13_EVENT_TYPES;
@@ -520,13 +584,24 @@ public class SellerAnalyticsService {
         return I13_EVENT_TYPES.stream().filter(requested::contains).toList();
     }
 
+    /**
+     * counts 키는 event_type의 camelCase다(노션 I-13). 구현은 <b>일반 변환</b>이다 — 구 switch는
+     * {@code default -> "purchaseComplete"}라, 2026-08-06에 {@code remove_from_cart}를 편입하자
+     * 그 카운트가 조용히 purchaseComplete에 합산됐다. 타입이 늘 때마다 case를 잊으면 같은 사고가
+     * 반복되므로 매핑 표를 없앴다.
+     */
     private static String camel(String eventType) {
-        return switch (eventType) {
-            case "product_view" -> "productView";
-            case "add_to_cart" -> "addToCart";
-            case CHECKOUT_START -> "checkoutStart";
-            default -> "purchaseComplete";
-        };
+        StringBuilder camel = new StringBuilder(eventType.length());
+        boolean upperNext = false;
+        for (char c : eventType.toCharArray()) {
+            if (c == '_') {
+                upperNext = true;
+                continue;
+            }
+            camel.append(upperNext ? Character.toUpperCase(c) : c);
+            upperNext = false;
+        }
+        return camel.toString();
     }
 
     /** checkout_start 이벤트 중 자사(또는 지정 상품) 귀속분 — 매칭 상품 집합 포함 */

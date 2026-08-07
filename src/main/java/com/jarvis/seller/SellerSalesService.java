@@ -72,10 +72,9 @@ public class SellerSalesService {
         SellerSummaryResponse.Today todayBlock = today(brandId, today);
         SellerSummaryResponse.SalesTrend salesTrend = salesTrend(brandId, to, trend);
         SellerSummaryResponse.LowStock lowStock = lowStock(brandId, threshold);
-        List<SellerSummaryResponse.ProductMetric> products = productMetrics(brandId, from, to);
 
         return new SellerSummaryResponse(new SellerSummaryResponse.Period(from, to),
-                orderStatus, todayBlock, salesTrend, lowStock, products);
+                orderStatus, todayBlock, salesTrend, lowStock);
     }
 
     /** 주문상태 카드 — 현재 스냅샷. counts 6종 0채움, activeTotal은 CANCELLED·RETURNED 제외 합 */
@@ -146,26 +145,8 @@ public class SellerSalesService {
     }
 
     /** 상품별 퍼널 — from..to 기간, 판매수 desc → 조회수 desc (구 스키마 유지) */
-    private List<SellerSummaryResponse.ProductMetric> productMetrics(Long brandId, LocalDate from, LocalDate to) {
-        LocalDateTime fromDt = from.atStartOfDay();
-        LocalDateTime toDt = to.plusDays(1).atStartOfDay();
-        Map<Long, Long> salesByProduct = orderItemRepository
-                .sumSellerSalesByProduct(brandId, fromDt, toDt).stream()
-                .collect(Collectors.toMap(OrderItemRepository.ProductQuantityRow::getProductId,
-                        OrderItemRepository.ProductQuantityRow::getQuantity));
-        Map<Long, Map<String, Long>> eventsByProduct = new HashMap<>();
-        behaviorEventRepository.countSellerEventsByProduct(brandId, fromDt, toDt)
-                .forEach(row -> eventsByProduct
-                        .computeIfAbsent(row.getProductId(), k -> new HashMap<>())
-                        .put(row.getEventType(), row.getCnt()));
-        return productRepository.findAllByBrandId(brandId).stream()
-                .map(p -> toMetric(p, salesByProduct, eventsByProduct))
-                .sorted(Comparator
-                        .comparingLong(SellerSummaryResponse.ProductMetric::salesCount).reversed()
-                        .thenComparing(Comparator
-                                .comparingLong(SellerSummaryResponse.ProductMetric::viewCount).reversed()))
-                .toList();
-    }
+    // S-1 products[] 블록은 2026-08-06 제거됐다 — 소비처가 0건이었고 I-13 groupBy=product가
+    // 같은 정보를 더 풍부하게(salesQuantity·체류시간까지) 준다. 서브쿼리 6→5로 줄었다.
 
     /** (오늘 - 어제) / 어제 × 100, 소수 1자리. 어제가 0이면 null(FE "—") */
     private static Double changeRate(long todayValue, long yesterdayValue) {
@@ -298,14 +279,5 @@ public class SellerSalesService {
             history.add(sales);
         }
         return points;
-    }
-
-    private static SellerSummaryResponse.ProductMetric toMetric(
-            Product product, Map<Long, Long> salesByProduct,
-            Map<Long, Map<String, Long>> eventsByProduct) {
-        Map<String, Long> events = eventsByProduct.getOrDefault(product.getId(), Map.of());
-        return new SellerSummaryResponse.ProductMetric(product.getId(), product.getName(),
-                events.getOrDefault("product_view", 0L), events.getOrDefault("add_to_cart", 0L),
-                salesByProduct.getOrDefault(product.getId(), 0L));
     }
 }
