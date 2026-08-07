@@ -229,6 +229,10 @@ com.jarvis
 - **필터에서 터진 401/403도 envelope로.** 필터 체인은 `GlobalExceptionHandler`(디스패처 서블릿 안) 바깥이라 그냥 두면 스프링 기본 응답이 나간다 → `AuthenticationEntryPoint`(401)/`AccessDeniedHandler`(403)가 직접 envelope JSON을 쓴다. D2의 401 2종 분리는 JWT 필터가 부재/만료를 구분해 request attribute로 넘기고 EntryPoint가 `AUTH_REQUIRED`/`AUTH_TOKEN_EXPIRED`로 분기.
 - **`SessionCreationPolicy.STATELESS` + csrf/formLogin/httpBasic disable**(JWT·세션 미사용). 단 **RT 쿠키(refresh·logout)는 CSRF 표면이 남는다** → RT 쿠키에 `SameSite=Strict` 부여로 봉쇄(FE·BE 동일 사이트라 부작용 없음, D3의 `Path=/api/auth` 최소화와 세트).
 - **인증 선택 경로**(E-1 등 "permitAll이지만 JWT 있으면 검증"): JWT 필터는 permitAll 여부와 무관하게 "토큰 없으면 통과, 있으면 파싱해 SecurityContext 세팅, 파싱 실패 시 실패 처리"로 동작하는 구조로 짠다.
+- **만료 토큰의 게스트 강등 차단**(2026-08-07): 위 구조는 permitAll 경로에서 만료 토큰을 **조용히 통과**시킨다. 대부분은 그게 맞지만 **신원에 따라 응답이 달라지는 게스트 허용 경로**(`/api/cart`·`/api/chat/`·`/api/events`)에서는 회원이 게스트로 강등돼 *빈 장바구니를 자기 것으로 보고*, 200이라 FE가 재발급 기회조차 얻지 못한다 → 이 세 접두사에 한해 필터가 그 자리에서 `AUTH_TOKEN_EXPIRED`를 쓴다(EntryPoint 재사용 — envelope·401 2종 분기가 갈라지지 않게).
+  - **공개 카탈로그는 제외** — 로그인 여부로 내용이 같은데, 쿠키 수명(14일) > 토큰 수명(30분)이라 오래 방치한 브라우저엔 만료 쿠키가 남아 있다. 401을 내면 RT까지 만료된 사람은 재발급도 실패해 **구경만 하러 온 사용자가 로그인 화면으로 튕긴다.**
+  - **`/api/auth/**`도 제외** — 만료 AT 쿠키는 `Path=/`라 재발급·로그아웃·재로그인 요청에 그대로 실린다. 끊으면 A-4가 자기를 막아 무한 루프가 되고(04 A-4) 재로그인 경로가 사라진다.
+  - **변조 토큰은 종전대로 통과**(게스트 취급) — 재발급으로 고쳐지지 않아 401을 내도 사용자가 할 수 있는 게 없다.
 - **account_event_logs 적재 지점**: A-2 로그인은 formLogin이 아니라 컨트롤러 방식(AuthenticationManager 직접 호출)이라 Security Success/FailureHandler가 자동 발화하지 않음 → **AuthService의 성공/실패 지점에서 직접 적재**(02 D32의 "핸들러에 심음"을 이 지점으로 구체화 — 02에 주석 반영).
 
 **JPA 구현 규약**
