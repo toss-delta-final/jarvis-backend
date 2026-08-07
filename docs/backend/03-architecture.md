@@ -179,20 +179,28 @@ docker 내부망:  spring ─▶ mariadb:3306, redis:6379 / spring ◀▶ fastap
 ```
 com.jarvis
 ├── global
-│   ├── config/          # Security, Redis, WebClient, Async, Scheduling
-│   ├── auth/            # JWT provider·필터, OAuth 핸들러, 게스트 쿠키
+│   ├── config/          # Security, JPA Auditing, Async, Scheduling
+│   ├── auth/            # JWT provider·필터, 쿠키 매니저(AT/RT/게스트), 토큰 에폭
 │   ├── response/        # ApiResponse envelope, ErrorCode enum, GlobalExceptionHandler
-│   └── event/           # 이벤트 수집 API(E-1)·behavior_events 적재
+│   ├── event/           # 이벤트 수집 API(E-1)·behavior_events 적재
+│   ├── cache/           # RedisCache — 읽기 캐시 공용 진입점(07 §3-1, cache-aside)
+│   ├── ratelimit/       # LoginRateLimiter — Redis 기반 로그인 시도 제한
+│   └── entity/          # BaseTimeEntity (createdAt/updatedAt 공통 상속)
 ├── member    ├── brand     ├── category  ├── product
-├── cart      ├── order     ├── claim     ├── review
-├── wishlist  ├── address
-├── chat      # 채팅 세션 + 스트림 티켓 발급(RS256/JWKS) — SSE는 FastAPI 직결(D5)
-├── internal  # /internal/* 컨트롤러 (LLM 콜백 전용)
-└── seller    # 판매자 지표 조회
+├── cart      ├── order     ├── review    ├── wishlist
+├── address
+├── chat           # 채팅 세션 + 스트림 티켓 발급(RS256/JWKS) — SSE는 FastAPI 직결(D5)
+├── recommendation # 추천 목록 사본(02 D38)·귀속 해석·홈 추천 클라이언트 — 컨트롤러 없는 지원 패키지
+├── internal       # /internal/* 컨트롤러 (LLM 콜백 전용)
+└── seller         # 판매자 지표 조회
 ```
 
 각 도메인 패키지 내부: `XxxController` / `XxxService` / `XxxRepository` / `dto/` / (필요시) `Xxx` 엔티티. 컨트롤러에 비즈니스 로직 금지, 엔티티를 API로 노출 금지 (CLAUDE.md).
 
+**하위 폴더는 `dto/` 하나뿐이다** — 레이어 폴더(`controller/`, `service/`, `repository/`)를 만들지 않는다. D1이 "order를 열면 주문의 전부가 보인다"를 노린 것인데 안에서 다시 레이어로 쪼개면 그 이득이 사라진다. enum·`@ConfigurationProperties`·스케줄러도 같은 평면에 둔다. `src/test/java`도 같은 트리를 미러링.
+
+- **`claim`은 독립 패키지가 아니라 `order/` 안에 있다 (2026-08-07 문서 정정)**: `Claim`·`ClaimController`·`ClaimService`·`ClaimRepository`·`ClaimStatus`·`ClaimType`. 취소·반품은 주문 상태 머신(01 §6)의 전이를 그대로 타므로 `ClaimService`가 `OrderStatusChanger`·`OrderRepository`·`OrderItemRepository`를 직접 쓴다 — 분리하면 이 셋이 전부 패키지 경계를 넘는다. **다만 `order/`는 평면 파일 23개 + dto 12개로 전 패키지 중 가장 크다** — 다음에 커지면 분리 1순위.
+- **`recommendation`은 컨트롤러가 없다**: 자기 입구 없이 cart·order·product·chat·global.event가 갖다 쓰는 지원 패키지(추천 귀속 해석 + 목록 영구 사본). `dto/`는 FastAPI 홈 추천 호출용.
 - **internal 컨트롤러는 자체 로직을 갖지 않고 도메인 서비스를 재사용한다.** 같은 행위(예: 담기)는 같은 서비스 메서드 하나로 — `/api`와 `/internal`은 신뢰 모델이 다른 입구일 뿐, 검증·처리 로직은 서비스 레이어에서 공유. (검증이 컨트롤러에 있으면 입구를 낼 때마다 복붙된다 — 01 체크리스트와 같은 맥락)
 
 ### 3-1. 코드 컨벤션 (2026-07-17 신설)
@@ -208,6 +216,9 @@ com.jarvis
 - 클래스에 `@Transactional(readOnly = true)`, 쓰기 메서드에만 `@Transactional` 오버라이드 — 실수로 새는 더티체킹 쓰기 차단 + 읽기 최적화.
 - 검증 경계: **형식**(이메일 포맷, 8자+영문숫자)은 요청 DTO의 Bean Validation, **상태·자격**(중복, 전이 가능, 소유권)은 서비스. 이 경계가 무너지면 `/internal` 입구를 낼 때 검증이 복붙된다(§3 internal 항과 같은 근거).
 - 타 도메인 접근은 그 도메인의 **서비스를 경유** — 타 도메인 Repository 직접 주입 금지(도메인 규칙 우회 방지).
+  - **예외: `seller/` 집계 서비스 (2026-08-07 명문화).** 판매자 지표는 order·product·brand·review·member의 행을 **가로질러 숫자 하나로 접는 read model**이라, 도메인 서비스를 경유하면 각 도메인이 "판매자 통계용" 조회 메서드를 떠안는다(도메인 규칙 보호가 아니라 오염). 대신 **쓰기 금지 + 소유권 필터 필수**를 조건으로 건다 — 모든 조회는 `SellerBrandResolver`가 확인한 brandId로 스코핑하고(§3 ⑥·⑦), seller는 타 도메인 엔티티를 저장하지 않는다.
+  - **미해결 (승인 아님, 기록)**: 위 예외 밖에서도 `OrderService`(타 도메인 repo 8개), `CartService`(3), `ReviewService`(3), `HomeRecommendationService`(3), `WishlistService`(1), `global.event.EventService`(1)가 규칙을 어기고 있다. 신규 코드는 규칙을 따르고, 위 6개는 손댈 일이 생길 때 서비스 경유로 되돌린다.
+  - **의존 방향은 소비자 → 피소비자 한 방향.** 현재 [`ReviewRepository`가 `seller.dto.SellerReviewRow`를 참조](../../src/main/java/com/jarvis/review/ReviewRepository.java)해 화살표가 거꾸로 박혀 있다(리뷰만 고치려 해도 seller가 딸려온다) — 정리 대상.
 - 실패는 null/boolean 반환이 아니라 **`BusinessException(ErrorCode)` 계열 throw** — D2 envelope 매핑과 자동 정합.
 
 **Entity — setter 없는 도메인**
