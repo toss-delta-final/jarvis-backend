@@ -16,7 +16,7 @@ import com.jarvis.product.Product;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.review.ReviewRepository;
 import com.jarvis.seller.dto.SellerReviewListResponse;
-import com.jarvis.seller.dto.SellerReviewRow;
+import com.jarvis.review.dto.BrandReviewRow;
 import com.jarvis.seller.dto.SellerReviewStatsResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -45,8 +45,8 @@ class SellerReviewServiceTest {
 
     @InjectMocks private SellerReviewService service;
 
-    private static SellerReviewRow row(long id, long productId, int rating, String nickname) {
-        return new SellerReviewRow(id, productId, "여행용 파우치", rating, "지퍼가 고장났어요",
+    private static BrandReviewRow row(long id, long productId, int rating, String nickname) {
+        return new BrandReviewRow(id, productId, "여행용 파우치", rating, "지퍼가 고장났어요",
                 nickname, LocalDateTime.of(2026, 7, 21, 12, 0));
     }
 
@@ -59,10 +59,10 @@ class SellerReviewServiceTest {
     @Test
     @DisplayName("목록: 크롤링 리뷰의 authorNickname은 author_name으로 채워진다 (02 D19)")
     void listIncludesCrawledReviews() {
-        List<SellerReviewRow> rows = List.of(row(7L, 3L, 2, "자비스"), row(8L, 3L, 5, "11번가구매자"));
+        List<BrandReviewRow> rows = List.of(row(7L, 3L, 2, "자비스"), row(8L, 3L, 5, "11번가구매자"));
 
         when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
-        when(reviewRepository.findSellerReviewsLatest(eq(BRAND_ID), any(), anyBoolean(), any(),
+        when(reviewRepository.findBrandReviewsLatest(eq(BRAND_ID), any(), anyBoolean(), any(),
                 any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(rows, Pageable.unpaged(), 47));
 
@@ -80,9 +80,9 @@ class SellerReviewServiceTest {
     void statsFillsAllRatingKeys() {
         when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
         // 5점 2건, 2점 1건만 존재 — 4·3·1점은 행이 없다
-        when(reviewRepository.countSellerReviewsByRating(eq(BRAND_ID), any(), anyBoolean(), any(),
+        when(reviewRepository.countBrandReviewsByRating(eq(BRAND_ID), any(), anyBoolean(), any(),
                 any(), any())).thenReturn(List.<Object[]>of(new Object[]{5, 2L}, new Object[]{2, 1L}));
-        when(reviewRepository.aggregateSellerReviewsByProduct(eq(BRAND_ID), any(), anyBoolean(), any(),
+        when(reviewRepository.aggregateBrandReviewsByProduct(eq(BRAND_ID), any(), anyBoolean(), any(),
                 any(), any())).thenReturn(List.<Object[]>of(new Object[]{3L, "여행용 파우치", 3L, 4.0}));
 
         SellerReviewStatsResponse res = service.stats(BRAND_ID, null, null, PERIOD);
@@ -101,9 +101,9 @@ class SellerReviewServiceTest {
     @DisplayName("stats: 리뷰 0건이면 averageRating은 null이다 — 0이 아님 (I-16 규칙)")
     void statsAverageIsNullWhenEmpty() {
         when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
-        when(reviewRepository.countSellerReviewsByRating(eq(BRAND_ID), any(), anyBoolean(), any(),
+        when(reviewRepository.countBrandReviewsByRating(eq(BRAND_ID), any(), anyBoolean(), any(),
                 any(), any())).thenReturn(List.of());
-        when(reviewRepository.aggregateSellerReviewsByProduct(eq(BRAND_ID), any(), anyBoolean(), any(),
+        when(reviewRepository.aggregateBrandReviewsByProduct(eq(BRAND_ID), any(), anyBoolean(), any(),
                 any(), any())).thenReturn(List.of());
 
         SellerReviewStatsResponse res = service.stats(BRAND_ID, null, null, PERIOD);

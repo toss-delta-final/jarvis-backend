@@ -1,7 +1,7 @@
 package com.jarvis.review;
 
+import com.jarvis.review.dto.BrandReviewRow;
 import com.jarvis.review.dto.ReviewRow;
-import com.jarvis.seller.dto.SellerReviewRow;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -58,7 +58,7 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     // 크롤링 리뷰(member_id NULL, 02 D19)도 포함하므로 Member는 left join이고 닉네임은 coalesce다.
     // applyRating은 빈 컬렉션을 IN에 넣지 않으려는 플래그 — I-14 toStatus 전례.
 
-    String SELLER_WHERE = """
+    String BRAND_WHERE = """
             from Review r
               join Product p on p.id = r.productId
               left join Member m on m.id = r.memberId
@@ -69,37 +69,37 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
               and r.createdAt >= :from and r.createdAt < :to
             """;
 
-    String SELLER_SELECT = "select new com.jarvis.seller.dto.SellerReviewRow("
+    String BRAND_SELECT = "select new com.jarvis.review.dto.BrandReviewRow("
             + "r.id, r.productId, p.name, r.rating, r.content, "
             + "coalesce(m.nickname, r.authorName), r.createdAt) ";
-    String SELLER_COUNT = "select count(r) " + SELLER_WHERE;
+    String BRAND_COUNT = "select count(r) " + BRAND_WHERE;
 
-    @Query(value = SELLER_SELECT + SELLER_WHERE + " order by r.createdAt desc, r.id desc",
-            countQuery = SELLER_COUNT)
-    Page<SellerReviewRow> findSellerReviewsLatest(
+    @Query(value = BRAND_SELECT + BRAND_WHERE + " order by r.createdAt desc, r.id desc",
+            countQuery = BRAND_COUNT)
+    Page<BrandReviewRow> findBrandReviewsLatest(
             @Param("brandId") Long brandId, @Param("productId") Long productId,
             @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
             @Param("from") LocalDateTime from, @Param("to") LocalDateTime to, Pageable pageable);
 
     /** ratingAsc = 낮은 순 고정 — P-3의 sort=rating(높은 순)과 이름을 가른 이유다(노션 I-31 결정 1) */
-    @Query(value = SELLER_SELECT + SELLER_WHERE + " order by r.rating asc, r.id desc",
-            countQuery = SELLER_COUNT)
-    Page<SellerReviewRow> findSellerReviewsRatingAsc(
+    @Query(value = BRAND_SELECT + BRAND_WHERE + " order by r.rating asc, r.id desc",
+            countQuery = BRAND_COUNT)
+    Page<BrandReviewRow> findBrandReviewsRatingAsc(
             @Param("brandId") Long brandId, @Param("productId") Long productId,
             @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
             @Param("from") LocalDateTime from, @Param("to") LocalDateTime to, Pageable pageable);
 
     /** [rating, count] — stats distribution. 없는 별점은 행이 없으므로 서비스가 0으로 채운다 */
-    @Query("select r.rating, count(r) " + SELLER_WHERE + " group by r.rating")
-    List<Object[]> countSellerReviewsByRating(
+    @Query("select r.rating, count(r) " + BRAND_WHERE + " group by r.rating")
+    List<Object[]> countBrandReviewsByRating(
             @Param("brandId") Long brandId, @Param("productId") Long productId,
             @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
             @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 
     /** [productId, productName, count, avg] — stats byProduct. count 내림차순, 동률은 productId 오름차순 */
-    @Query("select r.productId, p.name, count(r), avg(r.rating) " + SELLER_WHERE
+    @Query("select r.productId, p.name, count(r), avg(r.rating) " + BRAND_WHERE
             + " group by r.productId, p.name order by count(r) desc, r.productId asc")
-    List<Object[]> aggregateSellerReviewsByProduct(
+    List<Object[]> aggregateBrandReviewsByProduct(
             @Param("brandId") Long brandId, @Param("productId") Long productId,
             @Param("applyRating") boolean applyRating, @Param("ratings") Collection<Integer> ratings,
             @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);

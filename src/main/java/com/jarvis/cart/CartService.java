@@ -16,8 +16,10 @@ import com.jarvis.product.ProductStatus;
 import com.jarvis.product.PurchaseState;
 import com.jarvis.recommendation.ConversionAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -169,6 +171,58 @@ public class CartService {
 
         cartItemRepository.delete(item);
         cartEventRecorder.record(event);
+    }
+
+    /** 주문이 지목한 장바구니 라인 (O-1) — 상품·옵션·수량만 필요한 호출자를 위해 행 식별자를 함께 준다 */
+    public record PurchasedLine(Long productId, String optionName) {
+    }
+
+    /**
+     * O-1 장바구니 경유 주문이 읽어가는 라인 — 존재·소유권 검증까지 여기서 한다.
+     * "이 행이 이 회원 것인가"는 장바구니 규칙이라 주문이 판단할 일이 아니다.
+     *
+     * @throws BusinessException 요청 id 중 없는 게 있거나 남의 행이 섞이면 CART_ITEM_NOT_FOUND
+     */
+    public List<CartItem> getOwnedLines(Long memberId, List<Long> cartItemIds) {
+        List<CartItem> cartItems = cartItemRepository.findAllById(cartItemIds);
+        boolean allOwned = cartItems.stream().allMatch(item -> memberId.equals(item.getMemberId()));
+        if (cartItems.size() != new HashSet<>(cartItemIds).size() || !allOwned) {
+            throw new BusinessException(ErrorCode.CART_ITEM_NOT_FOUND);
+        }
+        return cartItems;
+    }
+
+    /** O-1 장바구니 경유 결제 성공 — 주문에 쓴 행을 그대로 지운다 (04 §4) */
+    @Transactional
+    public void removeOrderedLines(List<CartItem> orderedLines) {
+        cartItemRepository.deleteAll(orderedLines);
+    }
+
+    /**
+     * O-2 결제 성공 — 주문한 것과 같은 (상품, 옵션)의 장바구니 행이 남아 있으면 지운다 (04 §4).
+     * 바로 구매·재결제는 장바구니를 거치지 않아 지울 행 id를 모르므로 내용으로 찾는다.
+     *
+     * <p>주문 쪽 타입을 받지 않는다 — 장바구니가 주문을 알면 의존이 양방향이 된다.
+     */
+    @Transactional
+    public void removeLinesMatching(Long memberId, List<PurchasedLine> purchased) {
+        List<CartItem> cartLines = cartItemRepository.findAllByMemberId(memberId);
+        if (cartLines.isEmpty()) {
+            return;
+        }
+        Map<Long, String> optionNames = productOptionRepository
+                .findAllById(cartLines.stream().map(CartItem::getOptionId).filter(Objects::nonNull).toList())
+                .stream().collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
+        List<CartItem> matched = cartLines.stream()
+                .filter(cartLine -> {
+                    String optionName = cartLine.getOptionId() == null ? null
+                            : optionNames.get(cartLine.getOptionId());
+                    return purchased.stream().anyMatch(line ->
+                            line.productId().equals(cartLine.getProductId())
+                                    && Objects.equals(line.optionName(), optionName));
+                })
+                .toList();
+        cartItemRepository.deleteAll(matched);
     }
 
     /**
