@@ -8,6 +8,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -243,6 +246,153 @@ class SellerAnalyticsServiceTest {
     }
 
     @Test
+    // ---- I-13 2026-08-06 신설분 (salesQuantity · 체류시간 4필드 · eventType 5종) ----
+
+    private static BehaviorEventRepository.DwellSampleRow dwell(long productId, long seconds) {
+        BehaviorEventRepository.DwellSampleRow row =
+                mock(BehaviorEventRepository.DwellSampleRow.class);
+        when(row.getProductId()).thenReturn(productId);
+        when(row.getDwellSeconds()).thenReturn(seconds);
+        return row;
+    }
+
+    private static OrderItemRepository.ProductQuantityRow quantity(long productId, long qty) {
+        OrderItemRepository.ProductQuantityRow row =
+                mock(OrderItemRepository.ProductQuantityRow.class);
+        when(row.getProductId()).thenReturn(productId);
+        when(row.getQuantity()).thenReturn(qty);
+        return row;
+    }
+
+    private void stubProductBranchBasics() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        stubBrandProducts(37L);
+        when(behaviorEventRepository.countSellerEventsByProductType(eq(BRAND_ID), any(), any(), any(),
+                any())).thenReturn(List.of(productTypeCount(37L, "product_view", 10)));
+        when(behaviorEventRepository.countSellerVisitorsByProduct(eq(BRAND_ID), any(), any(), any(),
+                any())).thenReturn(List.of());
+        lenient().when(orderItemRepository.countSellerPurchaseOrdersByProduct(eq(BRAND_ID), any(),
+                any(), any())).thenReturn(List.of());
+    }
+
+    // 61건 / 74개는 "주문당 평균 1.2개"다 — 단위가 달라 직접 비교하면 안 된다
+    @Test
+    @DisplayName("I-13 — salesQuantity는 판매 수량이고 purchaseComplete(건수)와 단위가 다르다")
+    void fillsSalesQuantity() {
+        stubProductBranchBasics();
+        OrderItemRepository.ProductQuantityRow qty = quantity(37L, 74L);
+        when(orderItemRepository.sumSellerSalesByProduct(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of(qty));
+        when(behaviorEventRepository.findDwellSamples(eq(BRAND_ID), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+
+        SellerEventsResponse response = service.events(BRAND_ID, null, null, "product", PERIOD);
+
+        assertThat(response.rows().get(0).salesQuantity()).isEqualTo(74L);
+    }
+
+    // 0은 "안 팔림", null은 "미조회" — 구분이 없으면 LLM이 "판매 0"으로 오보한다
+    @Test
+    @DisplayName("I-13 — eventType에 purchase_complete가 없으면 salesQuantity는 null (0이 아니다)")
+    void salesQuantityIsNullWhenNotRequested() {
+        stubProductBranchBasics();
+        when(behaviorEventRepository.findDwellSamples(eq(BRAND_ID), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+
+        SellerEventsResponse response =
+                service.events(BRAND_ID, "product_view,add_to_cart", null, "product", PERIOD);
+
+        assertThat(response.rows().get(0).salesQuantity()).isNull();
+        verify(orderItemRepository, never()).sumSellerSalesByProduct(any(), any(), any());
+    }
+
+    // 체류시간은 롱테일이라 평균은 방치 탭에 흔들린다 — 중앙값이 주 지표다
+    @Test
+    @DisplayName("I-13 — 체류시간은 중앙값·평균·표본수·산출방식 4종으로 내려간다")
+    void fillsDwellStats() {
+        stubProductBranchBasics();
+        when(orderItemRepository.sumSellerSalesByProduct(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+        // 10·20·30·900 → 중앙값 25, 평균 240
+        List<BehaviorEventRepository.DwellSampleRow> samples = List.of(
+                dwell(37L, 10), dwell(37L, 20), dwell(37L, 30), dwell(37L, 900));
+        when(behaviorEventRepository.findDwellSamples(eq(BRAND_ID), any(), any(), any(), anyInt()))
+                .thenReturn(samples);
+
+        SellerEventsResponse.ProductRow row =
+                service.events(BRAND_ID, null, null, "product", PERIOD).rows().get(0);
+
+        assertThat(row.medianDwellSeconds()).isEqualTo(25.0);
+        assertThat(row.avgDwellSeconds()).isEqualTo(240.0);
+        assertThat(row.dwellSampleCount()).isEqualTo(4L);
+        assertThat(row.dwellSource()).isEqualTo("next_event");
+    }
+
+    @Test
+    @DisplayName("I-13 — 체류시간 표본이 없으면 4필드 모두 null (0이 아니다)")
+    void dwellIsNullWithoutSamples() {
+        stubProductBranchBasics();
+        when(orderItemRepository.sumSellerSalesByProduct(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+        when(behaviorEventRepository.findDwellSamples(eq(BRAND_ID), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+
+        SellerEventsResponse.ProductRow row =
+                service.events(BRAND_ID, null, null, "product", PERIOD).rows().get(0);
+
+        assertThat(row.medianDwellSeconds()).isNull();
+        assertThat(row.avgDwellSeconds()).isNull();
+        assertThat(row.dwellSampleCount()).isNull();
+        assertThat(row.dwellSource()).isNull();
+    }
+
+    // 이상치 상한은 BE 고정이다 — 호출마다 달라지면 같은 질문에 다른 숫자가 나온다
+    @Test
+    @DisplayName("I-13 — 체류시간 이상치 상한 1800초를 쿼리에 고정해 넘긴다")
+    void dwellCapIsFixed() {
+        stubProductBranchBasics();
+        when(orderItemRepository.sumSellerSalesByProduct(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+        when(behaviorEventRepository.findDwellSamples(eq(BRAND_ID), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+
+        service.events(BRAND_ID, null, null, "product", PERIOD);
+
+        verify(behaviorEventRepository).findDwellSamples(eq(BRAND_ID), any(), any(), any(), eq(1800));
+    }
+
+    // product_view가 조회 대상이 아니면 체류시간을 계산할 근거 자체가 없다
+    @Test
+    @DisplayName("I-13 — eventType에 product_view가 없으면 체류시간 쿼리를 아예 안 돈다")
+    void skipsDwellWithoutProductView() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        stubBrandProducts(37L);
+        when(behaviorEventRepository.countSellerEventsByProductType(eq(BRAND_ID), any(), any(), any(),
+                any())).thenReturn(List.of(productTypeCount(37L, "add_to_cart", 4)));
+        when(behaviorEventRepository.countSellerVisitorsByProduct(eq(BRAND_ID), any(), any(), any(),
+                any())).thenReturn(List.of());
+
+        service.events(BRAND_ID, "add_to_cart", null, "product", PERIOD);
+
+        verify(behaviorEventRepository, never())
+                .findDwellSamples(any(), any(), any(), any(), anyInt());
+    }
+
+    // 담김도 삭제도 활동이다 — 삭제가 잦은 상품의 순위가 올라가는 건 의도된 변경(노션 I-13)
+    @Test
+    @DisplayName("I-13 — eventType 5종에 remove_from_cart가 편입됐다")
+    void acceptsRemoveFromCart() {
+        stubProductBranchBasics();
+        // purchase_complete를 안 물었으므로 판매 수량 쿼리는 돌지 않는다
+        when(behaviorEventRepository.findDwellSamples(eq(BRAND_ID), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+
+        SellerEventsResponse response =
+                service.events(BRAND_ID, "product_view,remove_from_cart", null, "product", PERIOD);
+
+        assertThat(response.rows().get(0).counts()).containsKey("removeFromCart");
+    }
+
     @DisplayName("I-13 groupBy=eventType — purchaseComplete가 I-7 purchase 단과 같은 쿼리·같은 값 (#62)")
     void eventsByTypePurchaseMatchesFunnel() {
         when(brandRepository.existsById(BRAND_ID)).thenReturn(true);

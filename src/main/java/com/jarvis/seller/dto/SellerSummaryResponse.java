@@ -10,8 +10,7 @@ import java.util.Map;
  * 전 구간 brandId는 JWT 도출값을 WHERE에 고정(클라이언트 주장 무시, IDOR). 금액은 KRW 정수, 비율만 소수 1자리.
  */
 public record SellerSummaryResponse(Period period, OrderStatus orderStatus, Today today,
-                                    SalesTrend salesTrend, LowStock lowStock,
-                                    List<ProductMetric> products) {
+                                    SalesTrend salesTrend, LowStock lowStock) {
 
     public record Period(LocalDate from, LocalDate to) {
     }
@@ -43,8 +42,6 @@ public record SellerSummaryResponse(Period period, OrderStatus orderStatus, Toda
         }
     }
 
-    /** (화면 없음, AI·타 화면 소비) 상품별 퍼널 — 조회수·담김수 = behavior_events, 판매수 = order_item 집계. */
-    public record ProductMetric(@StringId Long productId, String name, long viewCount, long cartCount,
-                                long salesCount) {
-    }
+    // ProductMetric(products[])은 2026-08-06 제거 — 소비처가 0건이었고, I-13 groupBy=product가
+    // 같은 정보를 더 풍부하게 준다(salesQuantity·체류시간 포함). FE 타입 정의 정리는 그쪽 몫이다.
 }

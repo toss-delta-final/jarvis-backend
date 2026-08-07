@@ -148,10 +148,6 @@ class SellerSalesServiceTest {
         when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(), any()))
                 .thenReturn(List.of());
         when(productRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
-        when(orderItemRepository.sumSellerSalesByProduct(eq(BRAND_ID), any(), any())).thenReturn(List.of());
-        when(behaviorEventRepository.countSellerEventsByProduct(eq(BRAND_ID), any(), any()))
-                .thenReturn(List.of());
-        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of());
         Brand brand = mock(Brand.class);
         when(brand.getId()).thenReturn(BRAND_ID);
 
