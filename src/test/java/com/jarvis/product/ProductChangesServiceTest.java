@@ -102,12 +102,17 @@ class ProductChangesServiceTest {
         assertThat(onSale.name()).isEqualTo("상품1");
         assertThat(onSale.rating()).isEqualTo(4.6);
         assertThat(onSale.reviewCount()).isEqualTo(82L);
+        // brandId는 이름과 별개로 싣는다 (2026-08-07 AI팀 요청) — internal이라 숫자다
+        assertThat(onSale.brandId()).isEqualTo(20L);
+        assertThat(onSale.brand()).isEqualTo("브랜드");
 
         ProductChangesResponse.Item hidden = items.get(1);
         assertThat(hidden.status()).isEqualTo("HIDDEN");
         assertThat(hidden.name()).isNull();
         assertThat(hidden.price()).isNull();
         assertThat(hidden.rating()).isNull();
+        // brandId도 다른 계산 입력값과 같이 생략된다
+        assertThat(hidden.brandId()).isNull();
         assertThat(hidden.updatedAt()).isNotNull();
     }
 

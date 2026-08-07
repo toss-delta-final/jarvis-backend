@@ -210,7 +210,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 ### I-17. 상품 정보 배치 pull `GET /internal/products/changes?since=&limit=` (벡터DB 동기화 — §1-2-2)
 - FastAPI가 주기 배치로 변경분 pull: `since` 커서 + `limit`(기본 500, 1~500 클램프), 초기 전체 구축은 `since="0"`.
 - **정렬·커서(2026-07-23 LLM 합의)**: `(updatedAt ASC, productId ASC)` 고정. `nextCursor`는 마지막 항목의 `(updatedAt, productId)`를 **Base64URL 인코딩**한 불투명 문자열 — AI는 해석하지 않고 다음 `since`로 그대로 전달, Spring이 디코딩해 `updatedAt > cur.updatedAt OR (= AND id > cur.id)` keyset 조회. 잘못된/변조 커서는 **400 `INVALID_CURSOR`** → AI는 `since="0"` 전체 재구축 폴백.
-- **응답**: envelope `{success, data:{items[], nextCursor, hasMore}}`. `items[].status`는 `ON_SALE|HIDDEN`(HIDDEN도 포함 — AI가 해당 생성물 삭제). ON_SALE은 `name·category·brand·price·rating·reviewCount·attributes` 동반(평점·리뷰수는 저장 없이 조회 시 집계 — 02 D9, `product.updated_at` 스냅샷), HIDDEN은 `productId·status·updatedAt`만. `hasMore=true`면 `nextCursor` 필수, 빈 결과는 `items=[]`·요청 `since` echo.
+- **응답**: envelope `{success, data:{items[], nextCursor, hasMore}}`. `items[].status`는 `ON_SALE|HIDDEN`(HIDDEN도 포함 — AI가 해당 생성물 삭제). ON_SALE은 `name·category·brandId·brand·price·rating·reviewCount·attributes` 동반(**`brandId`는 2026-08-07 AI팀 요청 추가** — 이름은 표시·검색 입력이고 id는 조인 키라 역할이 달라 둘 다 싣는다. internal이라 숫자 BIGINT)(평점·리뷰수는 저장 없이 조회 시 집계 — 02 D9, `product.updated_at` 스냅샷), HIDDEN은 `productId·status·updatedAt`만. `hasMore=true`면 `nextCursor` 필수, 빈 결과는 `items=[]`·요청 `since` echo.
 - 코드: `ProductService#getChanges`, `ProductChangeCursor`(Base64URL 코덱), `ProductRepository#findChangesSince`.
 
 ### I-18. 챗봇 장바구니 조회 `GET /internal/cart`
