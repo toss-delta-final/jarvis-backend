@@ -150,7 +150,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 
 공통: `X-Internal-Token` 필수. 응답은 BE 공통 envelope. 타임아웃 권장 3s. **여기 없는 쓰기 작업은 존재하지 않는다** (주문 생성·클레임·후기는 LLM이 못 함 — 결제 자동화 범위는 "담기까지").
 
-🔄 **id 타입 (2026-08-06)**: 공개 API는 id를 **문자열**로 내보내지만(04 §0 — JS 안전 정수 초과), **`/internal`은 숫자를 유지한다**. Python은 정밀도 손실이 없어 바꿀 이유가 없고, jarvis-ai의 Pydantic 스키마(`product_id: int`)를 이득 없이 흔들게 된다. **예외 하나** — `CART_OPTION_REQUIRED`의 `error.detail.options[].optionId`는 공개 C-2와 I-2가 같은 CartService·같은 DTO를 지나 문자열로 나간다(§I-2). ⚠️ **LLM 팀 조치 필요**: 판매자 draft 이벤트(§1-3)의 `productId`는 FastAPI가 FE로 직송하므로 BE 변경이 닿지 않는다 — FE가 한 화면에서 숫자/문자열을 섞어 받지 않으려면 그쪽도 문자열로 내보내야 한다. 구매자 추천은 SSE가 카드를 싣지 않아(§1-2-1 경로 B) CH-5로 전부 덮인다.
+🔄 **id 타입 (2026-08-06)**: 공개 API는 id를 **문자열**로 내보내지만(04 §0 — JS 안전 정수 초과), **`/internal`은 숫자를 유지한다**. Python은 정밀도 손실이 없어 바꿀 이유가 없고, jarvis-ai의 Pydantic 스키마(`product_id: int`)를 이득 없이 흔들게 된다. **예외 하나** — `CART_OPTION_REQUIRED`의 `error.detail.options[].optionId`는 공개 C-2와 I-2가 같은 CartService·같은 DTO를 지나 문자열로 나간다(§I-2). **[2026-08-07]** 이 예외가 실제로 하나가 됐다 — 그전까지 I-2·I-25(`cartItemId`)·I-26·I-28(`productId`)이 공개 DTO를 함께 쓰다 문자열을 흘리고 있었다. internal 전용 응답 DTO를 분리해 숫자로 되돌렸다(Pydantic lax 모드가 `"55"`를 조용히 55로 강제 변환해 아무도 눈치채지 못하고 있었다). ⚠️ **LLM 팀 조치 필요**: 판매자 draft 이벤트(§1-3)의 `productId`는 FastAPI가 FE로 직송하므로 BE 변경이 닿지 않는다 — FE가 한 화면에서 숫자/문자열을 섞어 받지 않으려면 그쪽도 문자열로 내보내야 한다. 구매자 추천은 SSE가 카드를 싣지 않아(§1-2-1 경로 B) CH-5로 전부 덮인다.
 
 ### I-1. 상품 검색 (추천 1왕복 · 후보 조회) `GET /internal/products/search`
 - **역할**: 추천 2왕복 중 **라운드1** — 정형조건으로 MariaDB 후보를 좁혀 **리랭킹용 최소필드**만 반환(1-2-1). 표시 데이터는 안 준다(CH-5 카드 부착 담당).
@@ -229,7 +229,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - **listId 엔트로피(2026-07-18 시큐리티 리뷰)**: CH-5는 게스트 허용 공개 조회라 listId가 사실상 bearer 키다 — FastAPI는 listId를 **UUID급 무작위(≥128bit)**로 생성해야 한다(순번·타임스탬프 등 추측 가능한 형식 금지).
 
 ### I-24. 챗봇 장바구니 삭제 `DELETE /internal/cart/items/{cartItemId}` (신설 2026-08-05 — AI 이슈 #285)
-- 신원은 query `userId`/`guestId` XOR 메아리(게스트 허용) — 위반 시 400 `CART_QUERY_INVALID`(I-18과 같은 코드). 성공은 `data: null`이며 `cartItemId`를 응답에 싣지 않는다(C-4 실측).
+- 신원은 query `userId`/`guestId` XOR 메아리(게스트 허용) — 위반 시 400 `VALIDATION_ERROR`(I-18의 `CART_QUERY_INVALID`와 **다르다** — 2026-08-05에 자원별 code 신설안이 채택되지 않았다). 성공은 `data: null`이며 `cartItemId`를 응답에 싣지 않는다(C-4 실측).
 - **AI가 I-18로 해소한 id는 인가 근거가 아니다.** 해소와 실행 사이 상태가 바뀔 수 있고 `cartItemId`가 연속 BIGINT라 열거 가능하므로, 소유자 재검증은 실행 시점에 `CartService`가 한다 — 남의 항목이면 403 `AUTH_FORBIDDEN`, 없으면 404 `CART_ITEM_NOT_FOUND`(두 번째 삭제도 404 — **멱등하지 않음**).
 - 삭제는 재고·상품 상태를 보지 않는다 — HIDDEN·품절도 삭제되며 `PRODUCT_NOT_FOUND`·`CART_STOCK_INSUFFICIENT`는 발생하지 않는다.
 - **복수 삭제는 항목별 반복 호출** — C-4가 bulk API를 두지 않기로 한 것을 internal도 따른다.
@@ -244,7 +244,7 @@ DB가 둘(커머스 MariaDB=Spring / 벡터=FastAPI)이라 조회가 둘로 갈�
 - `POST /internal/wishlist`(body `{userId, productId}`) · `DELETE /internal/wishlist/{productId}?userId=` · `GET /internal/wishlist?userId=`. M-4~6과 같은 `WishlistService`를 재사용한다.
 - **역할 검사는 하지 않는다**(§0-1). FE용 M-4~6의 403은 `/api/wishlist/**`에 걸린 `hasRole("USER")` 가드가 만들어내는 값이라 internal 레인에는 대응물이 없다 — 찜은 위험 3축(금전·타인 영향·권한 변경) 어디에도 걸리지 않으므로 검사할 문 자체를 만들지 않는다. 초안의 `403 AUTH_FORBIDDEN` 조항은 이 근거로 삭제하기로 합의했다(2026-08-05).
 - **게스트 찜은 존재하지 않는다**(M-4). `guestId`를 받지 않으며 게스트 발화는 internal 호출 없이 AI가 로그인 안내로 degrade한다 — 폐기된 `GUEST_NOT_ALLOWED`를 되살리지 않는다.
-- 신원 검증 코드는 **입구에 따라 갈린다**: query 신원(I-27·I-28) 누락은 400 `WISHLIST_QUERY_INVALID`(I-18의 자원별 query code 전례), body 신원(I-26) 누락은 400 `VALIDATION_ERROR` + `fields`(I-2 전례).
+- 신원 검증은 입구와 무관하게 400 `VALIDATION_ERROR`다 — query 신원(I-27·I-28)과 body 신원(I-26·`fields` 동반) 모두. 2026-08-05에 자원별 code 신설안이 채택되지 않아 구 `WISHLIST_QUERY_INVALID`는 2026-08-07 제거했다.
 - **추가와 해제는 비대칭이다.** I-26은 상품을 조회해 없으면 404 `PRODUCT_NOT_FOUND`지만, I-27은 상품을 보지 않고 찜 행만 찾으므로 **없는 상품과 안 찜한 상품이 모두 404 `WISHLIST_NOT_FOUND`**다 — AI는 응답만으로 둘을 구별할 수 없으니 "찜 목록에 없어요"로 안내를 통일한다. 두 번째 해제도 404(비멱등).
 - **HIDDEN·품절도 찜할 수 있다**(M-5) — 재입고를 기다리는 정상 패턴이라 담기(I-2)의 재고 검증과 다르다. 중복 찜은 409 `WISHLIST_DUPLICATE`, 그 앞단 검증을 빠져나간 경합은 409 `RESOURCE_CONFLICT`(AI 처리는 동일).
 - I-28은 I-27의 지칭 해소용("어제 찜한 이어폰")이며 조회이므로 `action` 이벤트가 없다 — I-18과 같이 `token` 텍스트로 답한다. 찜이 없어도 200 + 빈 배열이고, 찜한 뒤 HIDDEN·품절이 된 상품도 목록에 남아 "찜해 둔 상품이지만 지금은 담을 수 없어요" 안내에 쓸 수 있다. 페이징 없이 MVP 전량 반환.

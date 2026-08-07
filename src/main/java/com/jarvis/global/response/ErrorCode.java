@@ -77,9 +77,9 @@ public enum ErrorCode {
     NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "아직 제공하지 않는 기능입니다."),
     // I-17 상품 동기화 커서 — 해석 불가/변조 시 AI는 since="0" 전체 재구축으로 폴백 (노션 I-17)
     INVALID_CURSOR(HttpStatus.BAD_REQUEST, "커서가 유효하지 않습니다."),
+    // I-18 전용 — I-24·I-25는 같은 XOR 위반이지만 VALIDATION_ERROR다(2026-08-05 확정:
+    // 합의되지 않은 새 code를 계약에 만들지 않는다). 찜(I-27·I-28)도 같은 이유로 이 계열을 쓰지 않는다
     CART_QUERY_INVALID(HttpStatus.BAD_REQUEST, "userId 또는 guestId 중 하나만 지정해야 합니다."),
-    // I-27·I-28 — 찜은 회원 전용이라 guestId가 없다(M-4). query 신원 누락 전용 (body 검증은 I-2와 같이 VALIDATION_ERROR)
-    WISHLIST_QUERY_INVALID(HttpStatus.BAD_REQUEST, "userId가 필요합니다."),
     ORDER_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
 
     // seller (04 §7·§10 — Phase 6)

@@ -2,12 +2,12 @@ package com.jarvis.internal;
 
 import com.jarvis.cart.CartService;
 import com.jarvis.cart.dto.CartAddRequest;
-import com.jarvis.cart.dto.CartItemResponse;
 import com.jarvis.cart.dto.CartQuantityRequest;
 import com.jarvis.global.response.ApiResponse;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.internal.dto.InternalCartAddRequest;
+import com.jarvis.internal.dto.InternalCartItemResponse;
 import com.jarvis.internal.dto.InternalCartResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -34,29 +34,31 @@ public class InternalCartController {
 
     /** I-2 — 옵션 필요 시 400 CART_OPTION_REQUIRED + error.detail.options (05 §I-2) */
     @PostMapping("/items")
-    public ApiResponse<CartItemResponse> addItem(@Valid @RequestBody InternalCartAddRequest request) {
+    public ApiResponse<InternalCartItemResponse> addItem(
+            @Valid @RequestBody InternalCartAddRequest request) {
         CartService.CartAddResult result = cartService.addItem(request.userId(), request.guestId(),
                 new CartAddRequest(request.productId(), request.optionId(), request.quantity()));
-        return ApiResponse.success(result.item());
+        return ApiResponse.success(InternalCartItemResponse.from(result.item()));
     }
 
     /** I-18 — 응답 item에 productName·optionName 포함(LLM이 그대로 발화), 빈 장바구니도 200 (05 §I-18) */
     @GetMapping
     public ApiResponse<InternalCartResponse> getCart(@RequestParam(required = false) Long userId,
                                                      @RequestParam(required = false) String guestId) {
-        requireExactlyOneIdentity(userId, guestId);
+        requireExactlyOneIdentity(userId, guestId, ErrorCode.CART_QUERY_INVALID);
         return ApiResponse.success(InternalCartResponse.from(cartService.getCart(userId, guestId)));
     }
 
     /** I-25 — 합산이 아니라 치환이라 보낸 값 자체를 재고와 비교. 합산은 I-2 재호출 (05 §I-25) */
     @PatchMapping("/items/{cartItemId}")
-    public ApiResponse<CartItemResponse> changeQuantity(@PathVariable Long cartItemId,
-                                                        @Valid @RequestBody CartQuantityRequest request,
-                                                        @RequestParam(required = false) Long userId,
-                                                        @RequestParam(required = false) String guestId) {
-        requireExactlyOneIdentity(userId, guestId);
-        return ApiResponse.success(
-                cartService.changeQuantity(userId, guestId, cartItemId, request.quantity()));
+    public ApiResponse<InternalCartItemResponse> changeQuantity(
+            @PathVariable Long cartItemId,
+            @Valid @RequestBody CartQuantityRequest request,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String guestId) {
+        requireExactlyOneIdentity(userId, guestId, ErrorCode.VALIDATION_ERROR);
+        return ApiResponse.success(InternalCartItemResponse.from(
+                cartService.changeQuantity(userId, guestId, cartItemId, request.quantity())));
     }
 
     /** I-24 — 복수 삭제는 항목별 반복 호출(C-4와 같이 bulk 없음), 두 번째 삭제는 404 (05 §I-24) */
@@ -64,18 +66,23 @@ public class InternalCartController {
     public ApiResponse<Void> removeItem(@PathVariable Long cartItemId,
                                         @RequestParam(required = false) Long userId,
                                         @RequestParam(required = false) String guestId) {
-        requireExactlyOneIdentity(userId, guestId);
+        requireExactlyOneIdentity(userId, guestId, ErrorCode.VALIDATION_ERROR);
         cartService.removeItem(userId, guestId, cartItemId);
         return ApiResponse.success(null);
     }
 
     /**
-     * userId XOR guestId — 둘 다 없거나 둘 다 있으면 400 (05 §I-18).
-     * 신원은 AI가 검증한 티켓 sub의 메아리라 요청이 둘을 동시에 주장할 수 없다.
+     * userId XOR guestId — 둘 다 없거나 둘 다 있으면 400. 신원은 AI가 검증한 티켓 sub의 메아리라
+     * 요청이 둘을 동시에 주장할 수 없다.
+     *
+     * <p><b>code가 엔드포인트마다 다르다</b> — I-18은 계약이 여전히 {@code CART_QUERY_INVALID}이고
+     * (노션 I-18), I-24·I-25는 2026-08-05에 "합의되지 않은 새 code를 계약에 만들지 않는다"는
+     * 이유로 {@code VALIDATION_ERROR} 재사용이 확정됐다. 검사는 하나인데 결론이 갈리므로
+     * 호출측이 code를 넘긴다.
      */
-    private void requireExactlyOneIdentity(Long userId, String guestId) {
+    private void requireExactlyOneIdentity(Long userId, String guestId, ErrorCode code) {
         if ((userId == null) == (guestId == null)) {
-            throw new BusinessException(ErrorCode.CART_QUERY_INVALID);
+            throw new BusinessException(code);
         }
     }
 }
