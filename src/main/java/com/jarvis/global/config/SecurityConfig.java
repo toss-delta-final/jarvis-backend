@@ -82,7 +82,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/orders/**", "/api/order-items/**", "/api/claims/**",
                                 "/api/reviews/**", "/api/wishlist/**", "/api/addresses/**",
-                                "/api/inquiries/**", "/api/members/**").hasRole("USER")
+                                "/api/members/**").hasRole("USER")
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)

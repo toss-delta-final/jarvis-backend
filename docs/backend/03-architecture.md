@@ -185,7 +185,7 @@ com.jarvis
 │   └── event/           # 이벤트 수집 API(E-1)·behavior_events 적재
 ├── member    ├── brand     ├── category  ├── product
 ├── cart      ├── order     ├── claim     ├── review
-├── wishlist  ├── address   ├── inquiry
+├── wishlist  ├── address
 ├── chat      # 채팅 세션 + 스트림 티켓 발급(RS256/JWKS) — SSE는 FastAPI 직결(D5)
 ├── internal  # /internal/* 컨트롤러 (LLM 콜백 전용)
 └── seller    # 판매자 지표 조회
