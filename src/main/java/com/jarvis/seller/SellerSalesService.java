@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
  * S-1 요약 + I-6 매출 시계열 (04 §7·§10) — 집계 규칙 공유: PAID 주문의 order_item 중
  * PENDING/CANCELLED/RETURNED 제외. LLM에는 집계만 준다(raw 미노출 — 05 §I-6).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -41,6 +43,11 @@ public class SellerSalesService {
     private static final int MOVING_WINDOW = 7;
     private static final int MIN_WINDOW = 3;
     private static final double ANOMALY_THRESHOLD_PCT = 30.0;
+
+    /** 귀속 창 — O-1 「attribution 규칙」 그대로. 집계 시점 기준이라 바꿔서 재계산할 수 있다 */
+    private static final int ATTRIBUTION_WINDOW_DAYS = 7;
+    /** 귀속 창·이벤트 범위를 바꾸면 올린다 — 같은 기간 숫자가 달라지므로 비교 기준을 남긴다 */
+    private static final String ATTRIBUTION_POLICY_VERSION = "v1";
 
     private final OrderItemRepository orderItemRepository;
     private final OrderStatusLogRepository orderStatusLogRepository;
@@ -74,7 +81,8 @@ public class SellerSalesService {
         SellerSummaryResponse.LowStock lowStock = lowStock(brandId, threshold);
 
         return new SellerSummaryResponse(new SellerSummaryResponse.Period(from, to),
-                orderStatus, todayBlock, salesTrend, lowStock);
+                orderStatus, todayBlock, salesTrend, lowStock,
+                aiAttribution(brandId, from, to));
     }
 
     /** 주문상태 카드 — 현재 스냅샷. counts 6종 0채움, activeTotal은 CANCELLED·RETURNED 제외 합 */
@@ -146,7 +154,65 @@ public class SellerSalesService {
 
     /** 상품별 퍼널 — from..to 기간, 판매수 desc → 조회수 desc (구 스키마 유지) */
     // S-1 products[] 블록은 2026-08-06 제거됐다 — 소비처가 0건이었고 I-13 groupBy=product가
-    // 같은 정보를 더 풍부하게(salesQuantity·체류시간까지) 준다. 서브쿼리 6→5로 줄었다.
+    // 같은 정보를 더 풍부하게(salesQuantity·체류시간까지) 준다.
+
+    /**
+     * AI 추천 경유 매출 (「AI 추천 성과」 2026-08-06 제안 · 2026-08-07 구현).
+     *
+     * <p><b>실패를 격리한다</b> — 귀속 집계 하나 때문에 대시보드 전체가 500이 되면 안 되므로,
+     * 실패 시 이 블록만 {@code null}로 내려간다. 나머지 5개 서브쿼리는 종전대로 하나라도 실패하면
+     * 500이다(그건 화면의 뼈대라 부분 응답이 더 위험하다).
+     */
+    private SellerSummaryResponse.AiAttribution aiAttribution(Long brandId, LocalDate from,
+                                                              LocalDate to) {
+        try {
+            LocalDateTime fromDt = from.atStartOfDay();
+            LocalDateTime toDt = to.plusDays(1).atStartOfDay();
+
+            OrderItemRepository.AttributionRow attribution = orderItemRepository
+                    .aggregateAiAttribution(brandId, fromDt, toDt, ATTRIBUTION_WINDOW_DAYS);
+            long confirmed = attribution.getConfirmedSales();
+            long estimated = attribution.getEstimatedSales();
+            long total = orderItemRepository.sumSellerSales(brandId, fromDt, toDt).getSales();
+            long ai = confirmed + estimated;
+            // 금액의 권위는 order_item이다 — AI 매출만 산출하고 직접 매출은 총액에서 차감해 만든다.
+            // 그래야 합이 총액과 달라질 수 없다. 음수가 나오면 두 산식이 갈렸다는 뜻이라 드러낸다.
+            long direct = total - ai;
+            if (direct < 0) {
+                log.warn("AI 귀속 합계가 총매출을 넘었다 — 산식 불일치 의심 (brandId={}, ai={}, total={})",
+                        brandId, ai, total);
+                direct = 0;
+            }
+
+            BehaviorEventRepository.RecommendationFunnelRow funnel = behaviorEventRepository
+                    .aggregateRecommendationFunnel(brandId, fromDt, toDt);
+            OrderItemRepository.CoverageRow coverage = orderItemRepository
+                    .aggregateCollectionCoverage(brandId, fromDt, toDt);
+
+            return new SellerSummaryResponse.AiAttribution(
+                    ATTRIBUTION_POLICY_VERSION, ATTRIBUTION_WINDOW_DAYS,
+                    total, ai, confirmed, estimated, direct,
+                    // 분모가 0이면 null — 0%가 아니라 "계산할 모수가 없다"는 뜻이다
+                    total == 0 ? null : Math.round(ai * 1000.0 / total) / 10.0,
+                    attribution.getAiOrderCount(),
+                    new SellerSummaryResponse.AiAttribution.Funnel(
+                            zeroIfNull(funnel.getImpression()), zeroIfNull(funnel.getClick()),
+                            zeroIfNull(funnel.getAddToCart()),
+                            orderItemRepository.countSellerPurchaseOrders(brandId, null, fromDt, toDt)),
+                    coverage.getPaidOrders() == 0 ? null
+                            : Math.round(coverage.getObservedOrders() * 100.0
+                                    / coverage.getPaidOrders()) / 100.0);
+        } catch (Exception e) {
+            log.warn("AI 추천 성과 집계 실패 — 이 블록만 비우고 대시보드는 내려보낸다 (brandId={})",
+                    brandId, e);
+            return null;
+        }
+    }
+
+    /** SUM은 대상 행이 없으면 0이 아니라 NULL이다 */
+    private static long zeroIfNull(Long value) {
+        return value == null ? 0L : value;
+    }
 
     /** (오늘 - 어제) / 어제 × 100, 소수 1자리. 어제가 0이면 null(FE "—") */
     private static Double changeRate(long todayValue, long yesterdayValue) {

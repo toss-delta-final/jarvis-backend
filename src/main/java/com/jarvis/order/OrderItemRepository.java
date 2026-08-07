@@ -331,4 +331,115 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             """, nativeQuery = true)
     List<Long> findRecentPurchasedProductIds(@Param("memberId") Long memberId,
                                              @Param("limit") int limit);
+
+    interface AttributionRow {
+        Long getConfirmedSales();
+        Long getEstimatedSales();
+        Long getAiOrderCount();
+    }
+
+    /**
+     * S-1 AI 추천 성과 — 귀속 판정 (「AI 추천 성과」 제안 2026-08-06 · 구현 2026-08-07).
+     *
+     * <p><b>판정 단위는 order_item 한 줄</b>이다. 한 주문에 AI 추천 상품과 직접 발견 상품이 섞이므로
+     * 주문 단위로는 나눌 수 없다. 금액·스코프·상태 3종 제외는 <b>기존 매출 산식을 그대로 재사용</b>한다 —
+     * 다른 산식을 쓰면 대시보드 안에서 숫자가 갈린다.
+     *
+     * <p><b>확정 귀속</b>: 담기 이벤트에 추천 출처가 기록돼 있고 담기~결제 간격이 창 이내.
+     * 담기 자체가 확정적 의사 표시라 <b>경합하지 않는다</b> — 담은 뒤 상세를 다시 봐도 판정이 안 바뀐다.
+     *
+     * <p><b>추정 귀속</b>: 담기 기록은 없으나 창 안에 추천 카드의 노출·클릭이 있는 경우(바로구매·홈 추천
+     * 경유). 확정과 달리 <b>경합한다</b> — 추천 접촉과 비추천 접촉(상세 직접 진입) 중 결제에 더 가까운
+     * 쪽이 이긴다(O-1 {@code last_valid_touch}). 동시각이면 추천이 이긴다({@code >=}).
+     *
+     * <p><b>게스트 구간을 이어붙인다</b> — {@code behavior_events}는 승계 시 백필하지 않으므로
+     * {@code guest.converted_member_id} 조인이 <b>필수</b>다. 빼면 가입 직전에 한참 둘러본 회원의
+     * 접촉이 통째로 빠져 AI 매출이 과소집계된다(제안서가 "조인을 제거해 단순화" 쪽으로 추측했던 지점).
+     *
+     * <p>{@code POPULAR_FALLBACK} 목록(P-5 대체분)은 {@code source} 조건으로 자동 배제된다 —
+     * AI가 뽑은 게 아니라 인기상품으로 대신한 것이라 추천 성과가 아니다.
+     */
+    @Query(value = """
+            SELECT COALESCE(SUM(CASE WHEN confirmed = 1 THEN amount END), 0) AS confirmedSales,
+                   COALESCE(SUM(CASE WHEN confirmed = 0 AND estimated = 1 THEN amount END), 0)
+                       AS estimatedSales,
+                   COUNT(DISTINCT CASE WHEN confirmed = 1 OR estimated = 1 THEN orderId END)
+                       AS aiOrderCount
+            FROM (
+              SELECT oi.order_id AS orderId,
+                     oi.price * oi.quantity AS amount,
+                     EXISTS (SELECT 1 FROM behavior_events be
+                             LEFT JOIN guest g ON g.id = be.guest_id
+                             JOIN recommendation_list rl ON rl.list_id = be.list_id
+                                                        AND rl.source = 'AI_RECOMMENDED'
+                             WHERE be.event_type = 'add_to_cart'
+                               AND be.product_id = oi.product_id
+                               AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
+                               AND be.occurred_at <= o.paid_at
+                               AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY) AS confirmed,
+                     (COALESCE((SELECT MAX(be.occurred_at) FROM behavior_events be
+                                LEFT JOIN guest g ON g.id = be.guest_id
+                                JOIN recommendation_list rl ON rl.list_id = be.list_id
+                                                           AND rl.source = 'AI_RECOMMENDED'
+                                WHERE be.event_type IN ('product_visible', 'product_click')
+                                  AND be.product_id = oi.product_id
+                                  AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
+                                  AND be.occurred_at <= o.paid_at
+                                  AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY),
+                               '1000-01-01')
+                      >= COALESCE((SELECT MAX(be.occurred_at) FROM behavior_events be
+                                   LEFT JOIN guest g ON g.id = be.guest_id
+                                   WHERE be.event_type = 'product_view'
+                                     AND be.list_id IS NULL
+                                     AND be.product_id = oi.product_id
+                                     AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
+                                     AND be.occurred_at <= o.paid_at
+                                     AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY),
+                                  '1000-01-01')
+                      AND EXISTS (SELECT 1 FROM behavior_events be
+                                  LEFT JOIN guest g ON g.id = be.guest_id
+                                  JOIN recommendation_list rl ON rl.list_id = be.list_id
+                                                             AND rl.source = 'AI_RECOMMENDED'
+                                  WHERE be.event_type IN ('product_visible', 'product_click')
+                                    AND be.product_id = oi.product_id
+                                    AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
+                                    AND be.occurred_at <= o.paid_at
+                                    AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY)) AS estimated
+              FROM order_item oi
+              JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+              JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+              WHERE oi.status NOT IN ('PENDING', 'CANCELLED', 'RETURNED')
+                AND o.paid_at >= :from AND o.paid_at < :to
+            ) lines
+            """, nativeQuery = true)
+    AttributionRow aggregateAiAttribution(@Param("brandId") Long brandId,
+                                          @Param("from") LocalDateTime from,
+                                          @Param("to") LocalDateTime to,
+                                          @Param("windowDays") int windowDays);
+
+    /**
+     * S-1 수집 커버리지 — 기간 내 자사 상품 포함 PAID 주문 수 대비 {@code purchase_complete}
+     * 이벤트로 관측된 주문 수. 0.93이면 결제 이벤트 7%가 유실되는 파이프라인이라는 뜻이고,
+     * AI 매출도 유사한 비율로 과소집계되고 있다고 읽는다(수집 장애 조기 감지에도 쓴다).
+     */
+    @Query(value = """
+            SELECT COUNT(DISTINCT o.id) AS paidOrders,
+                   COUNT(DISTINCT CASE WHEN EXISTS (
+                       SELECT 1 FROM behavior_events be
+                       WHERE be.event_type = 'purchase_complete'
+                         AND JSON_UNQUOTE(JSON_EXTRACT(be.properties, '$.orderId')) = CAST(o.id AS CHAR)
+                   ) THEN o.id END) AS observedOrders
+            FROM orders o
+            JOIN order_item oi ON oi.order_id = o.id
+            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+            WHERE o.status = 'PAID' AND o.paid_at >= :from AND o.paid_at < :to
+            """, nativeQuery = true)
+    CoverageRow aggregateCollectionCoverage(@Param("brandId") Long brandId,
+                                            @Param("from") LocalDateTime from,
+                                            @Param("to") LocalDateTime to);
+
+    interface CoverageRow {
+        Long getPaidOrders();
+        Long getObservedOrders();
+    }
 }
