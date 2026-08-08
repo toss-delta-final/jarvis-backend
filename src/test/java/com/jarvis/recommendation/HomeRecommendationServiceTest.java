@@ -112,6 +112,9 @@ class HomeRecommendationServiceTest {
         assertThat(response.items()).hasSize(2);
         // 대체분엔 이유가 없다 — 키는 유지하고 null (CH-5와 동일 규칙)
         assertThat(response.items().get(0).reason()).isNull();
+        // NO_PROFILE(AI 어휘) → PROFILE_MISSING(우리 사유 어휘) 매핑 — 노션 I-22 outcome 처리표
+        verify(recommendationEventRecorder).recordHomeGenerated(any(),
+                eq(HomeRecommendationClient.PROFILE_MISSING));
     }
 
     @Test
@@ -207,6 +210,10 @@ class HomeRecommendationServiceTest {
 
         assertThat(response.source()).isEqualTo("NOT_PERSONALIZED");
         verify(valueOperations, never()).set(any(), any(), any(java.time.Duration.class));
+        // AI는 개인화에 성공했지만 우리가 전부 버린 경우다 — 사유 어휘가 4종뿐이라 "후보 부족"과
+        // 같은 값으로 적재된다. 이 겹침은 의도이고, 원인 구분은 서비스 로그가 진다
+        verify(recommendationEventRecorder).recordHomeGenerated(any(),
+                eq(HomeRecommendationClient.INSUFFICIENT_CANDIDATES));
     }
 
     @Test
