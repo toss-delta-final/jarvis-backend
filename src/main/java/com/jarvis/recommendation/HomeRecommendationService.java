@@ -192,6 +192,25 @@ public class HomeRecommendationService {
         }
     }
 
+    /**
+     * C-27 — 취향이 바뀌면 이 회원의 개인화 홈 캐시를 버린다(노션 M-12·M-13·M-15·M-16).
+     * 캐시에 담기는 건 <b>개인화 성공 결과뿐</b>이라(인기상품 대체는 캐시하지 않는다) 남아 있다는 건
+     * 곧 <b>바뀌기 전 취향으로 만든 추천이 남아 있다</b>는 뜻이다. 비우지 않으면 사용자가 취향을
+     * 지웠는데도 최대 10분간 그 추천이 홈에 뜬다 — "지웠다"고 해놓고 계속 쓰는 셈이다.
+     *
+     * <p>AI는 자기 데이터만 지울 수 있고 이 키는 Spring 소유라, 무효화는 우리 몫이다.
+     * 실패해도 예외를 올리지 않는다 — TTL 10분이 백스톱이고, 캐시 때문에 취향 변경 자체가
+     * 실패하면 안 된다.
+     */
+    public void evictCache(Long memberId) {
+        try {
+            redisTemplate.delete(CACHE_KEY_PREFIX + memberId);
+        } catch (Exception e) {
+            log.warn("P-5 캐시 무효화 실패 — 최대 {}분간 이전 추천이 남는다 (memberId={})",
+                    CACHE_TTL.toMinutes(), memberId, e);
+        }
+    }
+
     private RecommendedProductsResponse readCache(Long memberId) {
         try {
             String cached = redisTemplate.opsForValue().get(CACHE_KEY_PREFIX + memberId);
