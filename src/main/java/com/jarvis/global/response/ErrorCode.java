@@ -64,6 +64,14 @@ public enum ErrorCode {
     WISHLIST_NOT_FOUND(HttpStatus.NOT_FOUND, "찜한 상품이 아닙니다."),
     ADDRESS_LAST_UNDELETABLE(HttpStatus.BAD_REQUEST, "유일한 배송지는 삭제할 수 없습니다."),
 
+    // AI 취향 프로필 (노션 M-11~M-16 · I-32~I-37) — 레인 공통 코드는 변환하지만 PROFILE_*는
+    // AI가 준 값을 그대로 FE에 노출한다. 두 레인이 자원 코드를 공유하는 C-2↔I-2와 같은 구도다.
+    PROFILE_EDGE_NOT_FOUND(HttpStatus.NOT_FOUND, "취향 항목을 찾을 수 없습니다."),
+    // detail.graphVersion에 최신 값을 실어 FE가 M-11로 다시 읽고 재시도하게 한다
+    PROFILE_VERSION_CONFLICT(HttpStatus.CONFLICT, "다른 곳에서 변경되었습니다."),
+    // 위 409와 FE 대응이 반대라 코드를 나눈다 — 이쪽은 재시도해도 소용없다 (구매 이력 파생)
+    PROFILE_EDGE_NOT_EDITABLE(HttpStatus.CONFLICT, "구매 기록에서 만들어진 항목은 수정할 수 없습니다."),
+
     // chat (04 §6 — Phase 5)
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "채팅 세션이 만료되었거나 존재하지 않습니다."),
     SESSION_FORBIDDEN(HttpStatus.FORBIDDEN, "본인 세션이 아닙니다."),
