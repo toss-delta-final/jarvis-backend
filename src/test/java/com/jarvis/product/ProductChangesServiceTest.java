@@ -105,14 +105,17 @@ class ProductChangesServiceTest {
         // brandId는 이름과 별개로 싣는다 (2026-08-07 AI팀 요청) — internal이라 숫자다
         assertThat(onSale.brandId()).isEqualTo(20L);
         assertThat(onSale.brand()).isEqualTo("브랜드");
+        // description은 I-17 한정 추가 (2026-08-08 AI팀 요청)
+        assertThat(onSale.description()).isEqualTo("상품1 상세 설명");
 
         ProductChangesResponse.Item hidden = items.get(1);
         assertThat(hidden.status()).isEqualTo("HIDDEN");
         assertThat(hidden.name()).isNull();
         assertThat(hidden.price()).isNull();
         assertThat(hidden.rating()).isNull();
-        // brandId도 다른 계산 입력값과 같이 생략된다
+        // brandId·description도 다른 계산 입력값과 같이 생략된다
         assertThat(hidden.brandId()).isNull();
+        assertThat(hidden.description()).isNull();
         assertThat(hidden.updatedAt()).isNotNull();
     }
 
@@ -122,6 +125,7 @@ class ProductChangesServiceTest {
         when(p.getStatus()).thenReturn(ProductStatus.ON_SALE);
         when(p.getUpdatedAt()).thenReturn(updatedAt);
         when(p.getName()).thenReturn("상품" + id);
+        when(p.getDescription()).thenReturn("상품" + id + " 상세 설명");
         when(p.getPrice()).thenReturn(1000);
         when(p.getCategoryId()).thenReturn(10L);
         when(p.getBrandId()).thenReturn(20L);

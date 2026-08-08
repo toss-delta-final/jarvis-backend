@@ -210,7 +210,7 @@ public class ProductService {
             }
             RatingStats s = stats.getOrDefault(p.getId(), RatingStats.EMPTY);
             return ProductChangesResponse.Item.onSale(p.getId(), updatedAt, p.getName(),
-                    categoryNames.get(p.getCategoryId()), p.getBrandId(),
+                    p.getDescription(), categoryNames.get(p.getCategoryId()), p.getBrandId(),
                     brandNames.get(p.getBrandId()),
                     p.getPrice(), s.average(), s.count(), parseJson(p.getAttributes()));
         }).toList();
