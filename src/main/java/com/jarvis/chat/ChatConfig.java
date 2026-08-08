@@ -3,6 +3,7 @@ package com.jarvis.chat;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
@@ -10,7 +11,15 @@ import org.springframework.web.client.RestClient;
 @EnableConfigurationProperties({StreamTicketProperties.class, ChatProperties.class, LlmProperties.class})
 public class ChatConfig {
 
-    /** Spring→FastAPI 아웃바운드 — 타임아웃 필수 (03 §5: 연결 2s/응답 3s 기준) */
+    /**
+     * Spring→FastAPI 아웃바운드 — 타임아웃 필수 (03 §5: 연결 2s/응답 3s 기준).
+     *
+     * <p>{@code @Primary}는 아래 {@link #profileWriteRestClient()}가 생기면서 붙였다. 기존 주입부
+     * ({@code LlmNotifyClient}·{@code HomeRecommendationClient})는 타입으로 받고 있어 후보가 둘이
+     * 되는데, 파라미터 이름 폴백에 기대면 <b>이름이 바뀌는 순간 기동 자체가 실패</b>한다. 컨텍스트를
+     * 띄우는 테스트가 없어 그 실패는 배포에서야 드러난다 — 기본값을 명시해 그 경로를 없앤다.
+     */
+    @Primary
     @Bean
     public RestClient llmRestClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();

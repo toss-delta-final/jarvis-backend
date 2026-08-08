@@ -40,7 +40,7 @@ public class ProfileGraphClient {
     private final ObjectMapper objectMapper;
     private final String internalToken;
 
-    public ProfileGraphClient(RestClient llmRestClient,
+    public ProfileGraphClient(@Qualifier("llmRestClient") RestClient llmRestClient,
                               @Qualifier("profileWriteRestClient") RestClient profileWriteRestClient,
                               LlmProperties llmProperties, ObjectMapper objectMapper,
                               @Value("${app.internal.token:}") String internalToken) {
