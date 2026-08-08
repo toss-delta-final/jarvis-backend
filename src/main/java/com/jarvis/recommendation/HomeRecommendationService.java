@@ -67,7 +67,20 @@ public class HomeRecommendationService {
                 writeCache(memberId, personalized);
                 return personalized;
             }
+            // 이벤트에 남는 사유는 "후보 부족"과 같지만 원인이 반대쪽이다 — AI는 개인화에 성공했고
+            // 우리가 판매 불가·미등록으로 전부 버린 것이다(재고·상태, 또는 AI 인덱스와의 id 드리프트).
+            // 사유 어휘는 노션 P-5가 4종으로 못박아 두어 늘리지 않고, 구분은 이 로그가 진다
+            log.warn("P-5 개인화 카드 전량 드롭 — 인기상품 대체 (memberId={}, aiItems={})",
+                    memberId, result.response().items().size());
             return fallback(memberId, HomeRecommendationClient.INSUFFICIENT_CANDIDATES);
+        }
+        // 200인데 개인화가 아닌 응답(NO_PROFILE·후보 부족)은 예외가 아니라 클라이언트도 로그를
+        // 남기지 않는다 — 여기서 안 남기면 대체 사유가 behavior_events에만 남아 서버 로그로는
+        // "왜 개인화가 안 됐나"를 전혀 알 수 없다. 상관키가 빠진 PERSONALIZED도 이 가지로 온다
+        if (result.response() != null) {
+            log.info("P-5 개인화 불가 — 인기상품 대체 (memberId={}, outcome={}, aiItems={})",
+                    memberId, result.response().outcome(),
+                    result.response().items() == null ? 0 : result.response().items().size());
         }
         return fallback(memberId, fallbackReason(result));
     }

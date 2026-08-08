@@ -59,7 +59,11 @@ public class HomeRecommendationClient {
 
     public Result recommend(HomeRecommendationRequest request) {
         if (llmProperties.baseUrl() == null || llmProperties.baseUrl().isBlank()) {
-            // FastAPI 미기동(로컬) — 홈이 죽으면 안 되므로 인기상품으로 간다
+            // FastAPI 미기동(로컬) — 홈이 죽으면 안 되므로 인기상품으로 간다.
+            // 조용히 빠지면 배포 환경에서 이 설정 누락이 "개인화가 영영 안 됨"으로만 보이고
+            // 호출 자체를 안 했으니 아래 catch의 warn도 안 찍힌다 — 그래서 여기서 남긴다
+            log.warn("I-22 미호출 — app.llm.base-url이 비어 있다. 홈 추천은 전량 인기상품 대체다 "
+                    + "(memberId={})", request.memberId());
             return Result.failed(AI_ERROR);
         }
         try {
