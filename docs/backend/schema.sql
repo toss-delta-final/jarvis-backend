@@ -282,7 +282,10 @@ CREATE TABLE review (
     updated_at     DATETIME    NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uk_review_order_item (order_item_id),       -- NULL 다중 허용 → 크롤링 리뷰와 공존 (D19)
-    KEY idx_review_product (product_id),
+    -- (product_id, status, rating) 커버링 — 평점 집계가 인덱스만으로 끝나 테이블을 다시 읽지 않는다.
+    -- product_id 단독이던 것을 2026-08-09에 확장: I-1은 후보 수 상한이 없어(05 §I-1) 매칭된 상품
+    -- 전부를 한 번에 집계하는데, status·rating이 인덱스에 없어 행마다 테이블을 되짚고 있었다.
+    KEY idx_review_product (product_id, status, rating),
     CONSTRAINT chk_review_rating CHECK (rating BETWEEN 1 AND 5),
     CONSTRAINT fk_review_order_item FOREIGN KEY (order_item_id) REFERENCES order_item (id) ON DELETE RESTRICT,
     CONSTRAINT fk_review_product    FOREIGN KEY (product_id)    REFERENCES product (id)    ON DELETE RESTRICT,
