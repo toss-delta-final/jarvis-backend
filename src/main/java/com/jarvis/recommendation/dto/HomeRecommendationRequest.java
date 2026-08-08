@@ -24,10 +24,8 @@ public record HomeRecommendationRequest(Long memberId, int limit, Signals signal
      */
     public record Signals(List<Long> recentlyViewedProductIds, List<Long> cartProductIds,
                           List<Long> recentPurchasedProductIds) {
-
-        public boolean isEmpty() {
-            return recentlyViewedProductIds.isEmpty() && cartProductIds.isEmpty()
-                    && recentPurchasedProductIds.isEmpty();
-        }
+        // 편의 메서드를 두지 않는다 — Jackson이 레코드의 getter 모양 메서드를 프로퍼티로 승격시키고,
+        // FastAPI 요청 모델은 extra=forbid라 계약에 없는 키 하나에 본문 전체가 400이 된다.
+        // isEmpty()가 "empty": false로 나가 홈 추천이 전량 대체됐다(2026-08-08)
     }
 }
