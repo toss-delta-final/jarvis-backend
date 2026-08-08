@@ -44,16 +44,12 @@ public class SellerSalesService {
     private static final int MIN_WINDOW = 3;
     private static final double ANOMALY_THRESHOLD_PCT = 30.0;
 
-    /** 귀속 창 — O-1 「attribution 규칙」 그대로. 집계 시점 기준이라 바꿔서 재계산할 수 있다 */
-    private static final int ATTRIBUTION_WINDOW_DAYS = 7;
-    /** 귀속 창·이벤트 범위를 바꾸면 올린다 — 같은 기간 숫자가 달라지므로 비교 기준을 남긴다 */
-    private static final String ATTRIBUTION_POLICY_VERSION = "v1";
-
     private final OrderItemRepository orderItemRepository;
     private final OrderStatusLogRepository orderStatusLogRepository;
     private final BehaviorEventRepository behaviorEventRepository;
     private final ProductRepository productRepository;
     private final BrandRepository brandRepository;
+    private final SellerAttributionService sellerAttributionService;
 
     private static final int DEFAULT_LOW_STOCK = 10;
     private static final int DEFAULT_TREND_DAYS = 7;
@@ -162,56 +158,22 @@ public class SellerSalesService {
      * <p><b>실패를 격리한다</b> — 귀속 집계 하나 때문에 대시보드 전체가 500이 되면 안 되므로,
      * 실패 시 이 블록만 {@code null}로 내려간다. 나머지 5개 서브쿼리는 종전대로 하나라도 실패하면
      * 500이다(그건 화면의 뼈대라 부분 응답이 더 위험하다).
+     *
+     * <p><b>이 catch는 집계가 별도 트랜잭션일 때만 의미가 있다</b> — 집계를
+     * {@link SellerAttributionService}(REQUIRES_NEW)로 뺀 이유다. 같은 트랜잭션 안에서 실패하면
+     * 예외가 경계를 지나며 rollback-only로 마킹돼, 여기서 잡아도 커밋 시점에
+     * UnexpectedRollbackException으로 되돌아온다. 2026-08-08 S-1 전건 500이 그 경로였다.
+     * 집계를 이 클래스 안으로 다시 인라인하면 그 버그가 그대로 복구된다.
      */
     private SellerSummaryResponse.AiAttribution aiAttribution(Long brandId, LocalDate from,
                                                               LocalDate to) {
         try {
-            LocalDateTime fromDt = from.atStartOfDay();
-            LocalDateTime toDt = to.plusDays(1).atStartOfDay();
-
-            OrderItemRepository.AttributionRow attribution = orderItemRepository
-                    .aggregateAiAttribution(brandId, fromDt, toDt, ATTRIBUTION_WINDOW_DAYS);
-            long confirmed = attribution.getConfirmedSales();
-            long estimated = attribution.getEstimatedSales();
-            long total = orderItemRepository.sumSellerSales(brandId, fromDt, toDt).getSales();
-            long ai = confirmed + estimated;
-            // 금액의 권위는 order_item이다 — AI 매출만 산출하고 직접 매출은 총액에서 차감해 만든다.
-            // 그래야 합이 총액과 달라질 수 없다. 음수가 나오면 두 산식이 갈렸다는 뜻이라 드러낸다.
-            long direct = total - ai;
-            if (direct < 0) {
-                log.warn("AI 귀속 합계가 총매출을 넘었다 — 산식 불일치 의심 (brandId={}, ai={}, total={})",
-                        brandId, ai, total);
-                direct = 0;
-            }
-
-            BehaviorEventRepository.RecommendationFunnelRow funnel = behaviorEventRepository
-                    .aggregateRecommendationFunnel(brandId, fromDt, toDt);
-            OrderItemRepository.CoverageRow coverage = orderItemRepository
-                    .aggregateCollectionCoverage(brandId, fromDt, toDt);
-
-            return new SellerSummaryResponse.AiAttribution(
-                    ATTRIBUTION_POLICY_VERSION, ATTRIBUTION_WINDOW_DAYS,
-                    total, ai, confirmed, estimated, direct,
-                    // 분모가 0이면 null — 0%가 아니라 "계산할 모수가 없다"는 뜻이다
-                    total == 0 ? null : Math.round(ai * 1000.0 / total) / 10.0,
-                    attribution.getAiOrderCount(),
-                    new SellerSummaryResponse.AiAttribution.Funnel(
-                            zeroIfNull(funnel.getImpression()), zeroIfNull(funnel.getClick()),
-                            zeroIfNull(funnel.getAddToCart()),
-                            orderItemRepository.countSellerPurchaseOrders(brandId, null, fromDt, toDt)),
-                    coverage.getPaidOrders() == 0 ? null
-                            : Math.round(coverage.getObservedOrders() * 100.0
-                                    / coverage.getPaidOrders()) / 100.0);
+            return sellerAttributionService.aggregate(brandId, from, to);
         } catch (Exception e) {
             log.warn("AI 추천 성과 집계 실패 — 이 블록만 비우고 대시보드는 내려보낸다 (brandId={})",
                     brandId, e);
             return null;
         }
-    }
-
-    /** SUM은 대상 행이 없으면 0이 아니라 NULL이다 */
-    private static long zeroIfNull(Long value) {
-        return value == null ? 0L : value;
     }
 
     /** (오늘 - 어제) / 어제 × 100, 소수 1자리. 어제가 0이면 null(FE "—") */
