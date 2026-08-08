@@ -332,12 +332,34 @@ FastAPI의 **회원 프로필 버퍼(승격 전 발화)를 지금 프로필로 �
 - 구 계약 폐기: snake_case `session_id`/`user_id`/`guest_id`, `S-` 접두 정규식, checkpointer 삭제 부수효과, `200 {cleared}` 응답, `403 SESSION_FORBIDDEN`(노션 I-20 「제외된 구계약」).
 - 구 "세션 만료 시 `DELETE {LLM_BASE_URL}/sessions/{id}` 통지(OPEN)" 항목을 대체 — 2026-07-17 확정.
 
+### I-32~I-37. AI 취향 프로필 (M-11~M-16 프록시) — **방향 예외(Spring→FastAPI)**
+
+> 🔶 **노션 초안 기준 선구현(2026-08-09)** — 10개 페이지가 아직 `초안 — AI팀 확인 대기`다. 본문은 2026-08-08 BE↔AI 합의가 반영된 상태이고, 확정되면 이 절과 코드를 함께 재검토한다.
+
+| No. | Method | 경로 | 프록시 대상 | `If-Match` |
+|---|---|---|---|---|
+| I-32 | GET | `/internal/profile/{userId}/graph` | M-11 | — |
+| I-33 | PATCH | `/internal/profile/{userId}/graph/edges/{edgeId}` | M-12 | 필수 |
+| I-34 | DELETE | `/internal/profile/{userId}/graph/edges/{edgeId}` | M-13 | 필수 |
+| I-36 | POST | `/internal/profile/{userId}/graph/reset` | M-15 | 필수 |
+| I-37 | PUT | `/internal/profile/{userId}/personalization` | M-16 | **선택** |
+
+I-35(되돌리기)는 M-14와 함께 폐기(2026-08-07) — 개별 삭제는 즉시 물리 삭제이고 undo 창이 없다. 대신 **재파생 차단 표식이 영구히 남아** 다음 처리가 같은 취향을 되살리지 못한다.
+
+- **인증**: `X-Internal-Token`. **사용자 AT를 AI로 포워딩하지 않는다.** `userId`는 Spring이 로그인 세션에서만 도출한다 — 경로·쿼리·본문 어디서도 받지 않는다(FE 값을 믿으면 남의 프로필을 열 수 있다).
+- **본문 무손실 통과**: 요청·응답 모두 `JsonNode`로 흘려보낸다. 필드를 DTO에 매핑하면 AI가 필드를 추가했을 때 **아무 에러 없이 사라진다** — 실제로 노션 예시가 축약본이라 `lastConfirmedAt`·`truncated`·`usagePolicy`가 빠져 있었다(2026-08-08). 값을 실제로 쓰는 I-22가 타입 DTO인 것과 기준이 다르다: **해석하면 DTO, 통과하면 통과형.**
+- **오류 매핑**: 레인 공통 코드는 변환(`BAD_REQUEST`→`VALIDATION_ERROR`, `INTERNAL_TOKEN_INVALID`→`AUTH_REQUIRED`, `UPSTREAM_*`→`INTERNAL_ERROR`)하되 **`PROFILE_*`는 보존**한다 — FE가 두 종류의 409를 구분해야 대응이 갈린다(하나는 재조회 후 재시도, 하나는 재시도해도 소용없음). `error.detail.graphVersion`은 위치를 그대로 유지해 넘긴다. AI 오류 본문은 `{"error":{…}}` 봉투·평문 양쪽을 모두 받아들인다(계약이 봉투 유무를 명시하지 않았다).
+- **`If-Match` 무변형**: `"g42"`와 `g42`는 동등하고 재따옴표·정규화는 금지다(C-21). `*`·약한 태그(`W/"…"`)·누락·빈 값은 400 `VALIDATION_ERROR`로 **Spring이 먼저 거른다**(왕복을 아끼고 코드를 정확히 낸다). M-16만 보냈을 때에 한해 형식을 본다.
+- **🔴 C-27 홈 추천 캐시 무효화**: M-12·M-13·M-15·M-16 **성공 시** Spring이 P-5 개인화 캐시(`p5:home:{회원id}` · TTL 10분)를 지운다. AI는 자기 데이터만 지울 수 있고 이 키는 Spring 소유라 무효화는 우리 몫이다. 안 지우면 **취향을 지웠는데 그 취향으로 만든 추천이 최대 10분간 홈에 남는다.** 조회(M-11)는 캐시를 건드리지 않고, 실패한 호출도 마찬가지다(AI 상태가 그대로라 버릴 이유가 없다).
+- **타임아웃**: 쓰기 4종 **4s**(AI 응답 예산 3s + 여유 1s), 조회 **3s**(예산 2s + 여유 1s). 같은 값으로 두면 Spring이 먼저 끊어 AI의 `504 UPSTREAM_TIMEOUT`을 받아볼 수 없다. 구현 후 실측해 재조정한다.
+- 코드: `com.jarvis.profile.{ProfileController, ProfileService, ProfileGraphClient}` · 쓰기 전용 클라이언트 `ChatConfig#profileWriteRestClient`.
+
 ## 3. 비기능 규약
 
 | 항목 | 값 |
 |---|---|
 | 채팅 SSE 스트림 수명 | **FastAPI 소관**(직결) — 하트비트 `: ping` + 장비 idle 300s, 스트림 자체는 LLM 응답 1회 분량. Spring은 스트림을 붙들지 않음(03 §8) |
-| Spring→FastAPI 타임아웃 | **P-5 추천**: 연결 2s/응답 3s(메인 렌더 블로킹 방지, 04 P-5). **세션 종료 통지(I-20)**: 짧게 — 멱등이라 실패해도 무해(FastAPI 자체 TTL이 백스톱). 채팅 60s는 직결이라 Spring 소관 아님 |
+| Spring→FastAPI 타임아웃 | **P-5 추천**: 연결 2s/응답 3s(메인 렌더 블로킹 방지, 04 P-5). **세션 종료 통지(I-20)**: 짧게 — 멱등이라 실패해도 무해(FastAPI 자체 TTL이 백스톱). **취향 프로필**: 조회(I-32) 3s / 쓰기(I-33·I-34·I-36·I-37) **4s** — 상대 응답 예산보다 1s 길게 둬야 AI의 504를 관측할 수 있다(§2-1). 채팅 60s는 직결이라 Spring 소관 아님 |
 | FastAPI→BE 콜백 타임아웃 | 3s (I-1 후보조회·I-2 담기 등 — 콜백 실패 시 LLM은 해당 기능 없이 답변 지속) |
 | FE→Spring 추천 목록 조회(CH-5) | 짧은 동기 조회(Redis 목록 + 카드 필드 부착) — 실패 시 FE가 카드 없이 텍스트만 우선 렌더 후 재시도. 티켓 만료 401은 CH-1b 재발급 → 1회 재시도(§1-0) |
 | 재시도 | 자동 재시도 없음(중복 담기·중복 과금 방지). 실패는 사용자에게 노출하고 수동 재시도 |
