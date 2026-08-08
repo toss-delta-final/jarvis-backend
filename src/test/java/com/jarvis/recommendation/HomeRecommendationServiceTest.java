@@ -52,6 +52,7 @@ class HomeRecommendationServiceTest {
     @Mock ValueOperations<String, String> valueOperations;
 
     @Captor ArgumentCaptor<List<RecommendationList>> listCaptor;
+    @Captor ArgumentCaptor<List<RecommendationListItem>> itemsCaptor;
 
     @InjectMocks HomeRecommendationService service;
 
@@ -214,6 +215,28 @@ class HomeRecommendationServiceTest {
         // 같은 값으로 적재된다. 이 겹침은 의도이고, 원인 구분은 서비스 로그가 진다
         verify(recommendationEventRecorder).recordHomeGenerated(any(),
                 eq(HomeRecommendationClient.INSUFFICIENT_CANDIDATES));
+    }
+
+    // FastAPI는 우리가 품절을 뺄 것을 예상해 넉넉히(overfetch 2배) 준다 — limit만큼 자르는 건
+    // 우리 몫이다(노션 I-22). 안 자르면 12개 자리에 24개가 깔린다
+    @Test
+    @DisplayName("P-5 — 넉넉히 받은 후보를 limit(12)개로 자른다, 순서는 받은 그대로")
+    void capsPersonalizedToLimit() {
+        List<Long> ids = java.util.stream.LongStream.rangeClosed(1, 24).boxed().toList();
+        aiReturns(HomeRecommendationResponse.PERSONALIZED,
+                ids.stream().map(id -> new HomeRecommendationResponse.Item(id, null)).toList());
+        when(productService.getCardsByIds(ids))
+                .thenReturn(ids.stream().map(HomeRecommendationServiceTest::card).toList());
+
+        RecommendedProductsResponse response = service.recommend(MEMBER_ID);
+
+        assertThat(response.items()).hasSize(12);
+        assertThat(response.items().get(0).productId()).isEqualTo(1L);
+        assertThat(response.items().get(11).productId()).isEqualTo(12L);
+        // 저장 사본도 자른 뒤 기준이어야 노출·클릭 이벤트의 position이 화면과 어긋나지 않는다
+        verify(recommendationListStore).saveAll(listCaptor.capture(), itemsCaptor.capture());
+        assertThat(itemsCaptor.getValue()).hasSize(12);
+        assertThat(listCaptor.getValue().get(0).getItemCount()).isEqualTo(12);
     }
 
     @Test
