@@ -410,7 +410,7 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
               JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
               WHERE oi.status NOT IN ('PENDING', 'CANCELLED', 'RETURNED')
                 AND o.paid_at >= :from AND o.paid_at < :to
-            ) lines
+            ) line_amounts
             """, nativeQuery = true)
     AttributionRow aggregateAiAttribution(@Param("brandId") Long brandId,
                                           @Param("from") LocalDateTime from,
