@@ -124,7 +124,8 @@ public class HomeRecommendationService {
                 .collect(Collectors.toMap(HomeRecommendationResponse.Item::productId,
                         HomeRecommendationResponse.Item::reason, (a, b) -> a));
         // 판매 불가 상품은 카드 조립 단계에서 뺀다 — 재고·상태 반영은 Spring 몫이다(노션 I-22)
-        List<ProductCardResponse> cards = sellable(productService.getCardsByIds(productIds));
+        List<ProductCardResponse> cards = capToLimit(
+                sellable(productService.getCardsByIds(productIds)));
 
         save(RecommendationList.ofHome(response.listId(), response.recommendationRequestId(),
                 memberId, RecommendationSource.AI_RECOMMENDED, cards.size(), LocalDateTime.now()),
@@ -155,6 +156,15 @@ public class HomeRecommendationService {
                 requestId, listId,
                 // 대체분엔 이유가 없다 — 키는 유지하고 null이다(CH-5와 동일 규칙)
                 cards.stream().map(card -> RecommendedProductsResponse.Item.of(card, null)).toList());
+    }
+
+    /**
+     * 노션 I-22 — {@code limit}은 <b>최종 노출 목표 개수</b>다. FastAPI는 우리가 품절을 뺄 것을
+     * 예상해 이보다 넉넉히(overfetch 2배) 주고, <b>판매 불가를 뺀 뒤 자르는 건 우리 몫</b>이다.
+     * 안 자르면 12개 자리에 24개까지 깔린다. 배열 순서가 곧 순위라 <b>앞에서</b> 남긴다.
+     */
+    private static List<ProductCardResponse> capToLimit(List<ProductCardResponse> cards) {
+        return cards.size() <= LIMIT ? cards : cards.subList(0, LIMIT);
     }
 
     /** HIDDEN·품절은 홈 카드에서 뺀다 — P-4와 같은 기준이다 */
