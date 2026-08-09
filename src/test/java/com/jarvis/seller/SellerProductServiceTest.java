@@ -85,7 +85,7 @@ class SellerProductServiceTest {
                                                             Integer stockQuantity, String imageUrl) {
         return new SellerProductUpdateRequest(name, null, attributes, null, price, null, status,
                 stockQuantity == null ? null : List.of(new StockInput(null, stockQuantity)),
-                imageUrl);
+                null, imageUrl);
     }
 
     /** 옵션 없는 상품의 재고 행 하나 — I-11이 잠그고 읽는 대상 */
@@ -137,7 +137,7 @@ class SellerProductServiceTest {
 
         SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L,
                 new SellerProductUpdateRequest(null, null, null, null, null, null, null,
-                        List.of(new StockInput(10L, 0)), null));
+                        List.of(new StockInput(10L, 0)), null, null));
 
         assertThat(response.changes()).containsExactly("STOCK");
         assertThat(black.getQuantity()).isZero();
@@ -159,7 +159,7 @@ class SellerProductServiceTest {
 
         assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
                 new SellerProductUpdateRequest(null, null, null, null, null, null, null,
-                        List.of(new StockInput(99L, 5)), null)))
+                        List.of(new StockInput(99L, 5)), null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_STOCK);
     }
@@ -321,7 +321,7 @@ class SellerProductServiceTest {
         when(productRepository.save(any())).thenReturn(saved);
 
         SellerProductCreateResponse response = service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), 20L,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), null, 20L,
                         null, null, null, null, null));
 
         assertThat(response.productId()).isEqualTo(205L);
@@ -333,14 +333,14 @@ class SellerProductServiceTest {
     @DisplayName("I-10 등록 — 필수값 누락은 422 MISSING_FIELD, 메시지에 필드명 명시 (노션 I-10)")
     void createRejectsMissingFields() {
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), null,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), null, null,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("categoryId")
                 .extracting("errorCode").isEqualTo(ErrorCode.MISSING_FIELD);
 
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest(null, null, null, null, 20L,
+                new SellerProductCreateRequest(null, null, null, null, null, 20L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("name")
@@ -353,13 +353,13 @@ class SellerProductServiceTest {
     @DisplayName("I-10 등록 — price > originalPrice면 422 INVALID_PRICE, stock < 0이면 422 INVALID_STOCK")
     void createRejectsInvalidPriceAndStock() {
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 20000, 10000, List.of(new StockInput(null, 100)), 20L,
+                new SellerProductCreateRequest("새 상품", 20000, 10000, List.of(new StockInput(null, 100)), null, 20L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PRICE);
 
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, -1)), 20L,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, -1)), null, 20L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_STOCK);
@@ -373,7 +373,7 @@ class SellerProductServiceTest {
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(root));
 
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), 1L,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), null, 1L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.PRODUCT_CATEGORY_INVALID);
@@ -428,10 +428,48 @@ class SellerProductServiceTest {
     }
 
     @Test
+    @DisplayName("I-10 하위호환 — 구 stockQuantity만 보내도 등록되고 재고 행이 생긴다 (판매자 챗봇 전환 전)")
+    void createAcceptsLegacyStockQuantity() {
+        Category leaf = mock(Category.class);
+        when(leaf.isRoot()).thenReturn(false);
+        when(categoryRepository.findById(20L)).thenReturn(Optional.of(leaf));
+        Product saved = mock(Product.class);
+        when(saved.getId()).thenReturn(205L);
+        when(saved.getStatus()).thenReturn(ProductStatus.ON_SALE);
+        when(productRepository.save(any())).thenReturn(saved);
+
+        service.create(BRAND_ID, new SellerProductCreateRequest("새 상품", 10000, null,
+                null, 100, 20L, null, null, null, null, null));
+
+        ArgumentCaptor<com.jarvis.product.ProductStock> captor =
+                ArgumentCaptor.forClass(com.jarvis.product.ProductStock.class);
+        verify(productStockRepository).save(captor.capture());
+        assertThat(captor.getValue().getOptionId()).isNull();
+        assertThat(captor.getValue().getQuantity()).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("I-11 하위호환 — 구 stockQuantity만 보내도 옵션 없는 상품 재고가 바뀐다")
+    void updateAcceptsLegacyStockQuantity() {
+        Product product = ownProduct();
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+        stubStockRow(1L, 100);
+
+        SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L,
+                new SellerProductUpdateRequest(null, null, null, null, null, null, null,
+                        null, 50, null));
+
+        assertThat(response.changes()).containsExactly("STOCK");
+        // 응답에 합계도 실어야 한다 — 소비측 파서가 이 필드에 기본값 0을 둬서, 빼면 에러 없이
+        // "수정했더니 재고가 0"으로 읽힌다 (AI팀이 I-9에서 짚은 것과 같은 함정)
+        assertThat(response.stockQuantity()).isEqualTo(50);
+    }
+
+    @Test
     @DisplayName("전 필드 null 요청은 400 (부분 수정이라도 최소 1개 필드)")
     void updateRejectsEmptyRequest() {
         assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
-                new SellerProductUpdateRequest(null, null, null, null, null, null, null, null, null)))
+                new SellerProductUpdateRequest(null, null, null, null, null, null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
     }

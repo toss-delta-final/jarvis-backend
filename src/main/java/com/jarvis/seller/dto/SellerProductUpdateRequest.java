@@ -21,11 +21,21 @@ public record SellerProductUpdateRequest(
         ProductStatus status,
         /** 2026-08-09 — 구 {@code stockQuantity}(정수) 대체. 실린 옵션만 갱신하는 부분 수정이다 */
         List<StockInput> stocks,
+        // 구 필드 — 하위호환. 근거는 SellerProductCreateRequest 참조
+        Integer stockQuantity,
         @Size(max = 500) String imageUrl) {
+
+    /** 구 {@code stockQuantity} 하위호환 — 옵션 없는 상품에선 {@code stocks} 한 줄과 같은 뜻이다 (2026-08-09) */
+    public List<StockInput> resolvedStocks() {
+        if (stocks != null) {
+            return stocks;
+        }
+        return stockQuantity == null ? null : List.of(new StockInput(null, stockQuantity));
+    }
 
     public boolean isEmpty() {
         return name == null && summary == null && attributes == null && description == null
-                && price == null && originalPrice == null && status == null && stocks == null
-                && imageUrl == null;
+                && price == null && originalPrice == null && status == null
+                && resolvedStocks() == null && imageUrl == null;
     }
 }
