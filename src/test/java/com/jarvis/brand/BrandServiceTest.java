@@ -2,14 +2,18 @@ package com.jarvis.brand;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.jarvis.global.cache.RedisCache;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class BrandServiceTest {
 
     @Mock BrandRepository brandRepository;
+    @Mock RedisCache cache;
 
     @InjectMocks BrandService brandService;
 
@@ -57,17 +62,21 @@ class BrandServiceTest {
     }
 
     @Test
-    @DisplayName("카드 공통(04 §2) — getNames: id 목록을 id→브랜드명 맵으로 배치 조회한다")
+    @DisplayName("카드 공통(04 §2) — getNames: 전량을 캐시(키 하나)로 두고 요청 id만 걸러 돌려준다")
     void getNames() {
+        // 캐시는 검증 대상이 아니다 — 로더를 통과시켜 조회·필터 로직만 본다 (07 §3-1)
+        when(cache.get(anyString(), any(), any(), any()))
+                .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(3)).get());
         Brand ryo = mock(Brand.class);
         when(ryo.getId()).thenReturn(1L);
         when(ryo.getName()).thenReturn("려");
         Brand mise = mock(Brand.class);
         when(mise.getId()).thenReturn(2L);
         when(mise.getName()).thenReturn("미쟝센");
-        when(brandRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(ryo, mise));
+        when(brandRepository.findAll()).thenReturn(List.of(ryo, mise));
 
-        assertThat(brandService.getNames(List.of(1L, 2L)))
+        // 캐시 맵에 없는 id(99L)는 결과에서도 빠진다 — 기존 findAllById 동작과 동일한 모양
+        assertThat(brandService.getNames(List.of(1L, 2L, 99L)))
                 .isEqualTo(Map.of(1L, "려", 2L, "미쟝센"));
     }
 }

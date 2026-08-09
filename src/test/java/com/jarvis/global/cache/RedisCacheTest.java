@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -14,6 +15,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -152,5 +154,87 @@ class RedisCacheTest {
         when(redisTemplate.delete(KEY)).thenThrow(new RedisConnectionFailureException("down"));
 
         cache.evict(KEY); // 예외가 새어나오지 않는다
+    }
+
+    // ---- 배치(getAll) — id 단위 키, MGET 1회, 미스분만 로더 ----
+
+    private static final String PREFIX = "v1:test:stats:";
+    private static final TypeReference<Long> ITEM_TYPE = new TypeReference<>() { };
+
+    /** 로더가 받은 미스 id를 기록하고, 짝수 id만 값(id×10)을 돌려준다 — 홀수 id는 absent 채움 검증용 */
+    private List<Long> loadedWith;
+
+    private Map<Long, Long> batchLoader(List<Long> missed) {
+        loaderCalls.incrementAndGet();
+        loadedWith = missed;
+        return missed.stream().filter(id -> id % 2 == 0)
+                .collect(java.util.stream.Collectors.toMap(id -> id, id -> id * 10));
+    }
+
+    @Test
+    @DisplayName("배치 — 전부 적중이면 로더를 부르지 않는다")
+    void getAllHitSkipsLoader() {
+        when(valueOperations.multiGet(List.of(PREFIX + "1", PREFIX + "2"))).thenReturn(
+                java.util.Arrays.asList("10", "20"));
+
+        Map<Long, Long> result = cache.getAll(PREFIX, List.of(1L, 2L), TTL, ITEM_TYPE,
+                this::batchLoader, 0L);
+
+        assertThat(result).isEqualTo(Map.of(1L, 10L, 2L, 20L));
+        assertThat(loaderCalls).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("배치 — 미스분만 로더로 채우고, 로더 결과에 없는 id는 absent 값으로 채워 캐시한다")
+    void getAllPartialMissLoadsOnlyMissed() {
+        when(valueOperations.multiGet(List.of(PREFIX + "1", PREFIX + "2", PREFIX + "3")))
+                .thenReturn(java.util.Arrays.asList("10", null, null));
+
+        Map<Long, Long> result = cache.getAll(PREFIX, List.of(1L, 2L, 3L), TTL, ITEM_TYPE,
+                this::batchLoader, 0L);
+
+        assertThat(result).isEqualTo(Map.of(1L, 10L, 2L, 20L, 3L, 0L));
+        assertThat(loadedWith).containsExactly(2L, 3L); // 적중한 1L은 로더에 안 간다
+        verify(valueOperations).set(PREFIX + "2", "20", TTL);
+        verify(valueOperations).set(PREFIX + "3", "0", TTL); // 원본에 없어도 캐시 — 반복 미스 방지
+    }
+
+    @Test
+    @DisplayName("배치 — MGET이 죽어도 조회는 성공한다 (fail-open, 전량 로더)")
+    void getAllRedisDownFallsOpen() {
+        when(valueOperations.multiGet(any())).thenThrow(new RedisConnectionFailureException("down"));
+
+        Map<Long, Long> result = cache.getAll(PREFIX, List.of(2L, 3L), TTL, ITEM_TYPE,
+                this::batchLoader, 0L);
+
+        assertThat(result).isEqualTo(Map.of(2L, 20L, 3L, 0L));
+        assertThat(loaderCalls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("배치 — 깨진 엔트리는 그 키만 미스로 취급한다")
+    void getAllCorruptEntryTreatedAsMiss() {
+        when(valueOperations.multiGet(List.of(PREFIX + "1", PREFIX + "2")))
+                .thenReturn(java.util.Arrays.asList("{깨진 값", "10"));
+
+        Map<Long, Long> result = cache.getAll(PREFIX, List.of(1L, 2L), TTL, ITEM_TYPE,
+                this::batchLoader, 0L);
+
+        assertThat(result).isEqualTo(Map.of(1L, 0L, 2L, 10L));
+        assertThat(loadedWith).containsExactly(1L);
+    }
+
+    @Test
+    @DisplayName("배치 — 저장 실패는 삼키고 로더 값을 그대로 돌려준다")
+    void getAllWriteFailureSwallowed() {
+        when(valueOperations.multiGet(any()))
+                .thenReturn(java.util.Arrays.asList((String) null));
+        doThrow(new RedisConnectionFailureException("down"))
+                .when(valueOperations).set(anyString(), anyString(), eq(TTL));
+
+        Map<Long, Long> result = cache.getAll(PREFIX, List.of(2L), TTL, ITEM_TYPE,
+                this::batchLoader, 0L);
+
+        assertThat(result).isEqualTo(Map.of(2L, 20L));
     }
 }

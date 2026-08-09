@@ -50,8 +50,9 @@ public class ProductService {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul"); // 응답 타임스탬프 관례 (I-19와 동일)
     private static final int CANDIDATE_OPTION_LIMIT = 20; // I-1 후보의 옵션 노출 상한 (05 §I-1 — 2026-08-03)
     /** 07 §2 키 지도. `v1:`은 값 스키마가 바뀌면 버전만 올려 통째로 버리기 위한 프리픽스다 */
-    private static final String POPULAR_KEY = "v1:popular:ids";
-    private static final Duration POPULAR_TTL = Duration.ofMinutes(5);
+    private static final String POPULAR_KEY = "v1:popular:cards";
+    /** FE staleTime(5분)보다 짧게 — FE 재조회가 항상 새 순위를 받도록 (07 §2-1, 2026-08-10) */
+    private static final Duration POPULAR_TTL = Duration.ofMinutes(3);
     /** P-4의 size 상한(@Max(50))과 같은 값 — 여기까지 계산해두면 모든 P-4 요청을 덮는다 */
     private static final int POPULAR_CACHE_SIZE = 50;
     private static final Pattern REGEX_META = Pattern.compile("[\\\\^$.|?*+()\\[\\]{}]");
@@ -110,7 +111,7 @@ public class ProductService {
      * P-5는 여기에 상관키·{@code reason}을 덧붙여야 해서 {@code purchaseState}가 남은 카드가 필요하다.
      */
     public List<ProductCardResponse> getPopularCards(int size) {
-        return toCards(findByIdsPreservingOrder(popularIds(size)));
+        return popularCards(size);
     }
 
     /**
@@ -264,23 +265,37 @@ public class ProductService {
     }
 
     /**
-     * P-4/I-3 공용 — 7일 판매수 → product_view 수 → 최신순 순으로 채운 인기 id.
+     * P-4/P-5 대체 공용 — 7일 판매수 → product_view 수 → 최신순으로 채운 인기 <b>카드 완제품</b>.
      *
      * <p><b>캐시 대상</b>(07 §3-1) — 개인화가 없어 모두가 같은 값을 보고(적중률 100%),
      * 7일치 주문을 전부 세는 계산이라 인덱스가 좁혀줄 대상이 없다. P-5(개인화 추천)가 실패하면
      * 트래픽이 여기로 몰리므로 <b>LLM 장애가 DB 장애로 번지는 걸 막는 격리 장치</b>이기도 하다.
      *
-     * <p>키를 하나로 두려고 <b>상한만큼 계산해 캐시하고 요청 size로 잘라 쓴다</b> — size별로 키를
-     * 나누면 키가 폭발한다. 원본이 7일 누적 집계라 5분 낡음이 순위를 바꾸지 못한다.
+     * <p>id가 아니라 <b>카드를 통째로</b> 캐시한다(2026-08-10, 부하 실측 후 전환) — id만 캐시하면
+     * 적중해도 하이드레이션 3쿼리(상품·재고 + 평점·브랜드는 자체 캐시)가 매 요청 나간다. 대가로
+     * 카드의 가격·품절이 최대 TTL만큼 낡는데, 홈 카드는 담기·결제 경로가 없고 상세·주문이 DB
+     * 직독이라 수용(팀 결정 2026-08-10). P-5 폴백의 sellable() 필터도 이 낡은 purchaseState를 본다.
+     *
+     * <p>키를 하나로 두려고 <b>상한만큼 만들어 캐시하고 요청 size로 잘라 쓴다</b> — size별로 키를
+     * 나누면 키가 폭발한다. 원본이 7일 누적 집계라 몇 분 낡음이 순위를 바꾸지 못한다.
      * I-3는 size 상한이 없어 상한을 넘는 요청은 캐시를 우회한다(그런 호출은 사실상 없다).
      */
+    private List<ProductCardResponse> popularCards(int size) {
+        if (size > POPULAR_CACHE_SIZE) {
+            return toCards(findByIdsPreservingOrder(loadPopularIds(size)));
+        }
+        List<ProductCardResponse> cached = cache.get(POPULAR_KEY, POPULAR_TTL,
+                new TypeReference<>() { },
+                () -> toCards(findByIdsPreservingOrder(loadPopularIds(POPULAR_CACHE_SIZE))));
+        return cached.size() > size ? List.copyOf(cached.subList(0, size)) : cached;
+    }
+
+    /** I-3 후보용 — 순위만 필요해 카드 캐시에서 id를 뽑는다. 엔티티·평점은 호출부가 새로 읽는다 */
     private List<Long> popularIds(int size) {
         if (size > POPULAR_CACHE_SIZE) {
             return loadPopularIds(size);
         }
-        List<Long> cached = cache.get(POPULAR_KEY, POPULAR_TTL, new TypeReference<>() { },
-                () -> loadPopularIds(POPULAR_CACHE_SIZE));
-        return cached.size() > size ? List.copyOf(cached.subList(0, size)) : cached;
+        return popularCards(size).stream().map(ProductCardResponse::productId).toList();
     }
 
     private List<Long> loadPopularIds(int size) {
