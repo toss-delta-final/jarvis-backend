@@ -161,13 +161,14 @@ class ProfileServiceTest {
     @DisplayName("응답 본문은 해석하지 않고 그대로 돌려준다 — 모르는 필드도 살아남아야 한다")
     void returnsBodyVerbatim() {
         JsonNode aiBody = json("""
-                {"userId":123,"graphVersion":"g42","truncated":false,
-                 "usagePolicy":{"filterSafe":false},"신규필드":"살아있어야 한다"}""");
+                {"userId":123,"graphVersion":"g42","exists":true,
+                 "edges":[{"edgeId":"e_1","object":{"label":"소니"}}],
+                 "계약에없는필드":"살아있어야 한다"}""");
         when(profileGraphClient.getGraph(MEMBER_ID)).thenReturn(aiBody);
 
         JsonNode result = service.getGraph(MEMBER_ID);
 
         assertThat(result).isSameAs(aiBody);
-        assertThat(result.path("신규필드").asText()).isEqualTo("살아있어야 한다");
+        assertThat(result.path("계약에없는필드").asText()).isEqualTo("살아있어야 한다");
     }
 }

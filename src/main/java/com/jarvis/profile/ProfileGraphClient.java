@@ -24,9 +24,11 @@ import org.springframework.web.util.UriComponentsBuilder;
  * 인증은 {@code X-Internal-Token} 공유 시크릿(05 §0), 사용자 AT는 <b>절대 AI로 넘기지 않는다</b>.
  *
  * <p><b>본문을 해석하지 않는다.</b> 요청·응답 모두 {@link JsonNode} 그대로 통과시킨다 —
- * 필드를 하나씩 DTO에 매핑하면 AI가 필드를 추가했을 때 <b>아무 에러 없이 조용히 사라진다</b>.
- * 실제로 노션 예시가 축약본이라 {@code lastConfirmedAt}·{@code truncated}·{@code usagePolicy}가
- * 빠져 있던 적이 있다(2026-08-08). 계약도 "data 는 I-32 응답 본문 그대로"라고 못박고 있다.
+ * 필드를 하나씩 DTO에 매핑하면 AI가 모양을 바꿀 때 <b>아무 에러 없이 조용히 사라진다</b>.
+ * 이틀치 실례가 있다: 2026-08-08 노션 예시가 축약본이라 {@code lastConfirmedAt}·{@code truncated}·
+ * {@code usagePolicy}가 누락돼 있었고, 2026-08-09 확정본에서 그 셋이 다시 빠지며 {@code nodes}
+ * 배열이 사라지고 대상이 {@code edges[].object}로 인라인됐다. <b>DTO였으면 이틀 연속 고쳤어야 했다.</b>
+ * 계약도 "data 는 I-32 응답 본문 그대로"라고 못박고 있다.
  * 값을 실제로 쓰는 I-22(홈 추천)가 타입 DTO를 쓰는 것과 기준이 다른 게 맞다 — 해석하면 DTO,
  * 통과하면 통과형.
  */
