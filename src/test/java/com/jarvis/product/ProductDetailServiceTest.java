@@ -16,6 +16,7 @@ import com.jarvis.brand.Brand;
 import com.jarvis.brand.BrandService;
 import com.jarvis.category.Category;
 import com.jarvis.category.CategoryService;
+import com.jarvis.global.cache.RedisCache;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.product.dto.ProductDetailResponse;
@@ -23,6 +24,7 @@ import com.jarvis.review.ReviewService;
 import com.jarvis.review.dto.RatingStats;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,10 +47,20 @@ class ProductDetailServiceTest {
     @Mock ReviewService reviewService;
     @Mock ObjectMapper objectMapper;
     @Mock ProductDetailImageRepository productDetailImageRepository;
+    @Mock RedisCache cache;
     /** 실제 조립 규칙을 그대로 태운다 — 목킹하면 슬래시 정규화가 검증에서 빠진다 */
     @Spy ImageProperties imageProperties = new ImageProperties("https://cdn.test");
 
     @InjectMocks ProductService productService;
+
+    @BeforeEach
+    void stubCache() {
+        // 캐시는 검증 대상이 아니다 — 로더를 통과시켜 상세 조립 로직만 본다 (07 §3-1)
+        lenient().when(cache.get(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> ((Supplier<?>) inv.getArgument(3)).get());
+    }
 
     @org.junit.jupiter.api.BeforeEach
     void stubStock() {

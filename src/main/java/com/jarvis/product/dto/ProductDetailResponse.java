@@ -5,14 +5,13 @@ import com.jarvis.brand.Brand;
 import com.jarvis.category.Category;
 import com.jarvis.global.response.StringId;
 import com.jarvis.product.Product;
-import com.jarvis.product.ProductOption;
 import com.jarvis.product.PurchaseState;
 import com.jarvis.review.dto.RatingStats;
 import java.util.List;
 import java.util.Map;
 
 /**
- * P-2 (04 §2) — 평점은 실시간 집계(02 D9).
+ * P-2 (04 §2) — 평점은 집계 파생값(02 D9 — 저장 컬럼 없음, 2026-08-10부터 사본 캐시 + 작성 시 evict).
  *
  * <p>이미지가 둘로 나뉜다: {@code imageUrl}은 상단 대표 1장(02 D14), {@code detailImages}는 하단에
  * 순서대로 나열할 상세 이미지 URL 배열(02 D42). <b>대표는 배열에 포함하지 않는다</b> — 화면에서 역할이
@@ -51,10 +50,10 @@ public record ProductDetailResponse(@StringId Long id, String name, int price, i
     public record OptionResponse(@StringId Long optionId, String name, int extraPrice,
                                  int stockQuantity, String purchaseState) {
 
-        public static OptionResponse from(ProductOption option, int stockQuantity) {
+        public static OptionResponse of(ProductDetailFragment.OptionEntry option, int stockQuantity) {
             // 상품 status를 넘기지 않는다 — HIDDEN 상품의 옵션까지 HIDDEN으로 찍으면 "품절인가
             // 내려간 건가"가 옵션 줄에서 또 갈린다. 그 판정은 상품 레벨 purchaseState 하나로 충분하다
-            return new OptionResponse(option.getId(), option.getName(), option.getExtraPrice(),
+            return new OptionResponse(option.optionId(), option.name(), option.extraPrice(),
                     stockQuantity,
                     (stockQuantity > 0 ? PurchaseState.AVAILABLE : PurchaseState.SOLD_OUT).name());
         }
@@ -67,23 +66,23 @@ public record ProductDetailResponse(@StringId Long id, String name, int price, i
     }
 
     /**
+     * 살아있는 값(상품 행·재고·평점)과 캐시된 정적 조각을 결합한다 (07 §3-1, 2026-08-10).
+     *
      * @param stockQuantity 옵션 재고의 합계 — 저장 컬럼이 아니라 파생값이다 (02 D33 개정).
      *                      옵션 없는 상품은 그 상품의 재고 한 행 값이 그대로 들어온다
      */
-    public static ProductDetailResponse from(Product product, JsonNode attributes,
-                                             Category category, Brand brand,
-                                             List<ProductOption> options, RatingStats stats,
-                                             List<String> detailImages, int stockQuantity,
-                                             Map<Long, Integer> stockByOption) {
+    public static ProductDetailResponse of(Product product, JsonNode attributes,
+                                           ProductDetailFragment fragment, RatingStats stats,
+                                           int stockQuantity, Map<Long, Integer> stockByOption) {
         return new ProductDetailResponse(product.getId(), product.getName(), product.getPrice(),
                 product.getOriginalPrice(), stockQuantity,
                 PurchaseState.of(product.getStatus(), stockQuantity).name(),
-                product.getStatus().name(), product.getImageUrl(), detailImages, product.getSummary(),
-                attributes, product.getDescription(), CategorySummary.from(category),
-                BrandSummary.from(brand),
-                options.stream()
-                        .map(option -> OptionResponse.from(option,
-                                stockByOption.getOrDefault(option.getId(), 0)))
+                product.getStatus().name(), product.getImageUrl(), fragment.detailImages(),
+                product.getSummary(), attributes, product.getDescription(), fragment.category(),
+                fragment.brand(),
+                fragment.options().stream()
+                        .map(option -> OptionResponse.of(option,
+                                stockByOption.getOrDefault(option.optionId(), 0)))
                         .toList(),
                 Rating.from(stats));
     }

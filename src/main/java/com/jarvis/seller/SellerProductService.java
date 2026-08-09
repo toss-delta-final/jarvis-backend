@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.brand.BrandRepository;
 import com.jarvis.category.Category;
 import com.jarvis.category.CategoryRepository;
+import com.jarvis.global.cache.RedisCache;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.OrderItemRepository;
@@ -15,6 +16,7 @@ import com.jarvis.product.ProductChangeType;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.product.ProductService;
 import com.jarvis.product.ProductStatus;
 import com.jarvis.product.ProductStock;
 import com.jarvis.product.ProductStockRepository;
@@ -70,6 +72,7 @@ public class SellerProductService {
     private final ProductChangeLogRepository productChangeLogRepository;
     private final BrandRepository brandRepository;
     private final ObjectMapper objectMapper;
+    private final RedisCache cache;
 
     private static final List<String> PRODUCT_SORTS = List.of("latest", "sales", "stock", "price");
 
@@ -265,6 +268,8 @@ public class SellerProductService {
         if (applyStocks(productId, request.resolvedStocks())) {
             changes.add(ProductChangeType.STOCK.name());
         }
+        // 상세 정적조각 무효화 — 재고·가격은 조각에 없지만 이름·이미지·옵션이 바뀔 수 있다 (07 §3-1)
+        cache.evictAfterCommit(ProductService.DETAIL_FRAGMENT_KEY_PREFIX + productId);
         return SellerProductUpdateResponse.of(productId, product.getPrice(),
                 stockViews(List.of(product)).getOrDefault(productId, List.of()),
                 product.getStatus().name(), changes);
@@ -320,6 +325,7 @@ public class SellerProductService {
         productChangeLogRepository.save(ProductChangeLog.of(productId, ProductChangeType.STATUS,
                 product.getStatus().name(), ProductStatus.DELETED.name()));
         product.changeStatus(ProductStatus.DELETED);
+        cache.evictAfterCommit(ProductService.DETAIL_FRAGMENT_KEY_PREFIX + productId);
         return new SellerProductDeleteResponse(productId, ProductStatus.DELETED.name());
     }
 
