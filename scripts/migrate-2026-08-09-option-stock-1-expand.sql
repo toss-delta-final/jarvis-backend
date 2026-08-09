@@ -1,8 +1,10 @@
--- 옵션별 재고 (02 D33 개정 · 노션 I-1/I-2/I-3/I-9/I-10/I-11/I-18/P-2/P-4/C-1/C-2/C-3/O-1/S-1/S-3)
--- AI팀 #454 요청 → BE 제안 → 2026-08-09 합의. 재고를 product.stock_quantity 컬럼에서
--- product_stock 테이블로 옮긴다. 재고가 사는 곳을 한 군데로 유지하려고 상품 쪽 합계 컬럼은 남기지 않는다.
+-- 옵션별 재고 1단계 / 확장 (02 D33 개정 · AI팀 #454 합의 2026-08-09)
 --
--- ⚠ 순서를 지킬 것 — 3단계(백필)가 끝나기 전에 5단계(컬럼 삭제)를 돌리면 옵션 없는 상품의 재고가 사라진다.
+-- ✅ 지금 돌려도 안전하다 — 기존 컬럼을 하나도 건드리지 않고 더하기만 한다.
+--    현재 배포된 앱은 여전히 product.stock_quantity를 읽고 쓰며, 이 스크립트는 거기에 영향이 없다.
+--
+-- ⚠ 2단계(컬럼 삭제)는 여기서 돌리지 않는다 — migrate-2026-08-09-option-stock-2-contract.sql 참조.
+--    순서: [1단계] → [PR B 배포] → [2단계]. 1단계를 건너뛰고 PR B를 배포하면 테이블이 없어 앱이 죽는다.
 
 -- 1. 재고 테이블
 CREATE TABLE product_stock (
@@ -33,7 +35,8 @@ SELECT po.product_id,
        NOW()
 FROM product_option po;
 
--- 3. 옵션 없는 상품 — 기존 재고를 그대로 옮긴다(여긴 실제 값이 있으므로 만들어내지 않는다)
+-- 3. 옵션 없는 상품 — 기존 재고를 그대로 옮긴다(여긴 실제 값이 있으므로 만들어내지 않는다).
+--    이 값은 PR B 배포 전까지 낡을 수 있다 — 2단계에서 다시 맞춘다.
 INSERT INTO product_stock (product_id, option_id, quantity, created_at)
 SELECT p.id, NULL, p.stock_quantity, NOW()
 FROM product p
@@ -52,12 +55,13 @@ JOIN product_option po ON po.product_id = oi.product_id AND po.name = oi.option_
 SET oi.option_id = po.id
 WHERE oi.option_name IS NOT NULL;
 
--- 5. 변경 로그에 옵션 참조 — "재고 100 → 50"이 어느 옵션 얘기인지 판매자가 알아야 한다.
+-- 5. 변경 로그에 옵션 참조 — "재고 100 → 50"이 어느 옵션 얘긴지 판매자가 알아야 한다.
 --    PRICE·STATUS는 상품 단위라 NULL로 남는다. 기존 STOCK 로그도 NULL — 그 시절엔 상품 단위였다.
 ALTER TABLE product_change_logs
     ADD COLUMN option_id BIGINT NULL AFTER product_id;
 
--- 6. 상품 재고 컬럼 제거. CHECK 제약을 먼저 떼야 컬럼이 지워진다
-ALTER TABLE product
-    DROP CONSTRAINT chk_product_stock,
-    DROP COLUMN stock_quantity;
+-- 확인용 — 상품 수와 재고 행 수가 맞는지
+-- SELECT (SELECT COUNT(*) FROM product) AS products,
+--        (SELECT COUNT(*) FROM product_option) AS options,
+--        (SELECT COUNT(*) FROM product_stock) AS stock_rows,
+--        (SELECT COUNT(*) FROM product_stock WHERE quantity = 0) AS sold_out_rows;
