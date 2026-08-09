@@ -40,6 +40,7 @@ class ProductPopularServiceTest {
 
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
+    @Mock ProductStockRepository productStockRepository;
     @Mock BrandService brandService;
     @Mock CategoryService categoryService;
     @Mock ReviewService reviewService;

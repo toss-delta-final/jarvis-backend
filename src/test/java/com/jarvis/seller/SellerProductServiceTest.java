@@ -31,6 +31,7 @@ import com.jarvis.seller.dto.SellerProductDeleteResponse;
 import com.jarvis.seller.dto.SellerProductInternalListResponse;
 import com.jarvis.seller.dto.SellerProductListResponse;
 import com.jarvis.seller.dto.SellerProductUpdateRequest;
+import com.jarvis.seller.dto.StockInput;
 import com.jarvis.seller.dto.SellerProductUpdateResponse;
 import java.util.List;
 import java.util.Optional;
@@ -53,6 +54,8 @@ class SellerProductServiceTest {
     private static final Long BRAND_ID = 7L;
 
     @Mock private ProductRepository productRepository;
+    @Mock private com.jarvis.product.ProductStockRepository productStockRepository;
+    @Mock private com.jarvis.product.ProductOptionRepository productOptionRepository;
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private CategoryRepository categoryRepository;
     @Mock private ProductChangeLogRepository productChangeLogRepository;
@@ -64,20 +67,34 @@ class SellerProductServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SellerProductService(productRepository, orderItemRepository,
+        service = new SellerProductService(productRepository, productStockRepository,
+                productOptionRepository, orderItemRepository,
                 categoryRepository, productChangeLogRepository, brandRepository, objectMapper);
+        // I-9·I-11 응답의 stocks·합계 — 재고 시나리오가 필요한 테스트는 각자 덮어쓴다
+        lenient().when(productStockRepository.findAllByProductIdIn(any())).thenReturn(List.of());
+        lenient().when(productStockRepository.sumMap(any())).thenReturn(java.util.Map.of());
     }
 
     private Product ownProduct() {
-        return Product.create(BRAND_ID, 20L, "에어프라이어", 129000, 96800, 100,
+        return Product.create(BRAND_ID, 20L, "에어프라이어", 129000, 96800,
                 "/img.webp", "요약", null, "설명", ProductStatus.ON_SALE);
     }
 
     private static SellerProductUpdateRequest updateRequest(String name, JsonNode attributes,
                                                             Integer price, ProductStatus status,
                                                             Integer stockQuantity, String imageUrl) {
-        return new SellerProductUpdateRequest(name, null, attributes, null, price, null,
-                status, stockQuantity, imageUrl);
+        return new SellerProductUpdateRequest(name, null, attributes, null, price, null, status,
+                stockQuantity == null ? null : List.of(new StockInput(null, stockQuantity)),
+                imageUrl);
+    }
+
+    /** 옵션 없는 상품의 재고 행 하나 — I-11이 잠그고 읽는 대상 */
+    private void stubStockRow(Long productId, int quantity) {
+        com.jarvis.product.ProductStock row =
+                com.jarvis.product.ProductStock.of(productId, null, quantity);
+        lenient().when(productStockRepository.findOneForUpdate(productId, null))
+                .thenReturn(Optional.of(row));
+        lenient().when(productStockRepository.findAllByProductIdIn(any())).thenReturn(List.of(row));
     }
 
     @Test
@@ -85,6 +102,7 @@ class SellerProductServiceTest {
     void updateRecordsLogsOnlyForVocabularyFields() {
         Product product = ownProduct();
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+        stubStockRow(1L, 100);
         SellerProductUpdateRequest request = updateRequest("새 이름", null, 89000, null, 50, null);
 
         SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L, request);
@@ -92,7 +110,11 @@ class SellerProductServiceTest {
         assertThat(response.changes()).containsExactlyInAnyOrder("PRICE", "STOCK");
         assertThat(response.productId()).isEqualTo(1L);
         assertThat(response.price()).isEqualTo(89000);
-        assertThat(response.stockQuantity()).isEqualTo(50);
+        assertThat(response.stocks()).singleElement()
+                .satisfies(view -> {
+                    assertThat(view.optionId()).isNull();
+                    assertThat(view.quantity()).isEqualTo(50);
+                });
         assertThat(response.status()).isEqualTo("ON_SALE");
         ArgumentCaptor<ProductChangeLog> captor = ArgumentCaptor.forClass(ProductChangeLog.class);
         verify(productChangeLogRepository, org.mockito.Mockito.times(2)).save(captor.capture());
@@ -100,7 +122,46 @@ class SellerProductServiceTest {
                 .containsExactlyInAnyOrder(ProductChangeType.PRICE, ProductChangeType.STOCK);
         assertThat(product.getName()).isEqualTo("새 이름");
         assertThat(product.getPrice()).isEqualTo(89000);
-        assertThat(product.getStockQuantity()).isEqualTo(50);
+        // 재고는 product 엔티티가 아니라 잠그고 읽은 product_stock 행에서 바뀐다 (02 D33 개정)
+    }
+
+    @Test
+    @DisplayName("I-11 stocks는 부분 수정 — 배열에 실린 옵션만 바뀌고 생략한 옵션은 그대로 (노션 I-11)")
+    void updateStocksTouchesOnlyListedOptions() {
+        Product product = ownProduct();
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+        com.jarvis.product.ProductStock black = com.jarvis.product.ProductStock.of(1L, 10L, 100);
+        com.jarvis.product.ProductStock white = com.jarvis.product.ProductStock.of(1L, 11L, 7);
+        when(productStockRepository.findOneForUpdate(1L, 10L)).thenReturn(Optional.of(black));
+        lenient().when(productStockRepository.findOneForUpdate(1L, 11L)).thenReturn(Optional.of(white));
+
+        SellerProductUpdateResponse response = service.updateInternal(BRAND_ID, 1L,
+                new SellerProductUpdateRequest(null, null, null, null, null, null, null,
+                        List.of(new StockInput(10L, 0)), null));
+
+        assertThat(response.changes()).containsExactly("STOCK");
+        assertThat(black.getQuantity()).isZero();
+        // 생략한 옵션을 건드리면 판매자가 의도하지 않은 대량 변경이 조용히 일어난다
+        assertThat(white.getQuantity()).isEqualTo(7);
+        verify(productStockRepository, never()).findOneForUpdate(1L, 11L);
+        ArgumentCaptor<ProductChangeLog> captor = ArgumentCaptor.forClass(ProductChangeLog.class);
+        verify(productChangeLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getOptionId()).isEqualTo(10L);
+        assertThat(captor.getValue().getNewValue()).isEqualTo("0");
+    }
+
+    @Test
+    @DisplayName("I-11 — 그 상품의 옵션이 아닌 optionId는 422 INVALID_STOCK (새 code를 만들지 않는다)")
+    void updateRejectsForeignOption() {
+        Product product = ownProduct();
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+        when(productStockRepository.findOneForUpdate(1L, 99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.updateInternal(BRAND_ID, 1L,
+                new SellerProductUpdateRequest(null, null, null, null, null, null, null,
+                        List.of(new StockInput(99L, 5)), null)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_STOCK);
     }
 
     @Test
@@ -108,6 +169,7 @@ class SellerProductServiceTest {
     void updateSameValueRecordsNothing() {
         Product product = ownProduct();
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+        stubStockRow(1L, 100);
         SellerProductUpdateRequest request = updateRequest(
                 "에어프라이어", null, 96800, ProductStatus.ON_SALE, 100, null);
 
@@ -259,7 +321,7 @@ class SellerProductServiceTest {
         when(productRepository.save(any())).thenReturn(saved);
 
         SellerProductCreateResponse response = service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, 100, 20L,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), 20L,
                         null, null, null, null, null));
 
         assertThat(response.productId()).isEqualTo(205L);
@@ -271,7 +333,7 @@ class SellerProductServiceTest {
     @DisplayName("I-10 등록 — 필수값 누락은 422 MISSING_FIELD, 메시지에 필드명 명시 (노션 I-10)")
     void createRejectsMissingFields() {
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, 100, null,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), null,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("categoryId")
@@ -283,7 +345,7 @@ class SellerProductServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("name")
                 .hasMessageContaining("price")
-                .hasMessageContaining("stockQuantity")
+                .hasMessageContaining("stocks")
                 .extracting("errorCode").isEqualTo(ErrorCode.MISSING_FIELD);
     }
 
@@ -291,13 +353,13 @@ class SellerProductServiceTest {
     @DisplayName("I-10 등록 — price > originalPrice면 422 INVALID_PRICE, stock < 0이면 422 INVALID_STOCK")
     void createRejectsInvalidPriceAndStock() {
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 20000, 10000, 100, 20L,
+                new SellerProductCreateRequest("새 상품", 20000, 10000, List.of(new StockInput(null, 100)), 20L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_PRICE);
 
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, -1, 20L,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, -1)), 20L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_STOCK);
@@ -311,7 +373,7 @@ class SellerProductServiceTest {
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(root));
 
         assertThatThrownBy(() -> service.create(BRAND_ID,
-                new SellerProductCreateRequest("새 상품", 10000, null, 100, 1L,
+                new SellerProductCreateRequest("새 상품", 10000, null, List.of(new StockInput(null, 100)), 1L,
                         null, null, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.PRODUCT_CATEGORY_INVALID);
@@ -374,18 +436,25 @@ class SellerProductServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.VALIDATION_ERROR);
     }
 
+    /** S-3의 재고는 product_stock 합계에서 온다 (02 D33 개정) — product(...)에 준 stock을 그대로 돌려준다 */
+    private void stubStockSums() {
+        lenient().when(productStockRepository.sumMap(any())).thenReturn(stockSums);
+    }
+
+    private final java.util.Map<Long, Integer> stockSums = new java.util.HashMap<>();
+
     /** S-3 목록 테스트용 — 단위 테스트라 id를 명시(정렬 tiebreak)·나머지 필드는 lenient */
-    private static Product product(long id, ProductStatus status, int stock, int price, long categoryId) {
+    private Product product(long id, ProductStatus status, int stock, int price, long categoryId) {
         Product p = mock(Product.class);
         lenient().when(p.getId()).thenReturn(id);
         lenient().when(p.getStatus()).thenReturn(status);
-        lenient().when(p.getStockQuantity()).thenReturn(stock);
         lenient().when(p.getPrice()).thenReturn(price);
         lenient().when(p.getOriginalPrice()).thenReturn(price);
         lenient().when(p.getBaseSalesCount()).thenReturn(0);
         lenient().when(p.getCategoryId()).thenReturn(categoryId);
         lenient().when(p.getName()).thenReturn("상품" + id);
         lenient().when(p.getImageUrl()).thenReturn("/img" + id + ".webp");
+        stockSums.put(id, stock);
         return p;
     }
 
@@ -395,6 +464,7 @@ class SellerProductServiceTest {
         Product onSale = product(1L, ProductStatus.ON_SALE, 5, 10000, 20L);
         Product soldOut = product(2L, ProductStatus.ON_SALE, 0, 20000, 20L);
         Product hidden = product(3L, ProductStatus.HIDDEN, 0, 30000, 20L);
+        stubStockSums();
         when(productRepository.findAllByBrandIdAndStatusNot(BRAND_ID, ProductStatus.DELETED))
                 .thenReturn(List.of(onSale, soldOut, hidden));
         when(orderItemRepository.sumPaidQuantityByProduct(any())).thenReturn(List.of());
@@ -421,6 +491,7 @@ class SellerProductServiceTest {
         Product onSale = product(1L, ProductStatus.ON_SALE, 5, 10000, 20L);
         Product soldOut = product(2L, ProductStatus.ON_SALE, 0, 20000, 20L);
         Product hidden = product(3L, ProductStatus.HIDDEN, 0, 30000, 20L);
+        stubStockSums();
         when(productRepository.findAllByBrandIdAndStatusNot(BRAND_ID, ProductStatus.DELETED))
                 .thenReturn(List.of(onSale, soldOut, hidden));
         when(orderItemRepository.sumPaidQuantityByProduct(any())).thenReturn(List.of());

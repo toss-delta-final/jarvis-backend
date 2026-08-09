@@ -10,10 +10,16 @@ public record ProductCardResponse(@StringId Long productId, String name, String 
                                   int price, int originalPrice, String imageUrl,
                                   double rating, long reviewCount, String purchaseState) {
 
-    public static ProductCardResponse from(Product product, String brandName, RatingStats stats) {
+    /**
+     * @param stockQuantity 구매 가능한 옵션 재고의 합계 (02 D33 개정 — 상품에 재고 컬럼이 없다).
+     *                      목록이라 상품마다 다시 묻지 않도록 호출부가 한 번에 모아 넘긴다
+     */
+    public static ProductCardResponse from(Product product, String brandName, RatingStats stats,
+                                           int stockQuantity) {
         return new ProductCardResponse(product.getId(), product.getName(), brandName,
                 product.getPrice(), product.getOriginalPrice(), product.getImageUrl(),
-                stats.average(), stats.count(), PurchaseState.of(product).name());
+                stats.average(), stats.count(),
+                PurchaseState.of(product.getStatus(), stockQuantity).name());
     }
 
     public boolean available() {

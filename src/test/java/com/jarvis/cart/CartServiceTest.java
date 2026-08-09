@@ -3,6 +3,7 @@ package com.jarvis.cart;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -43,6 +44,7 @@ class CartServiceTest {
     @Mock CartItemRepository cartItemRepository;
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
+    @Mock com.jarvis.product.ProductStockRepository productStockRepository;
     @Mock BrandRepository brandRepository;
     @Mock GuestService guestService;
     @Mock RecommendationAttributionResolver attributionResolver;
@@ -57,7 +59,9 @@ class CartServiceTest {
         product = mock(Product.class, withSettings().strictness(Strictness.LENIENT));
         when(product.getId()).thenReturn(10L);
         when(product.getStatus()).thenReturn(ProductStatus.ON_SALE);
-        when(product.getStockQuantity()).thenReturn(100);        // 시드 기본 재고 (02 D33) — 개별 테스트가 필요 시 override
+        // 재고는 상품이 아니라 product_stock에 있다 (02 D33 개정) — 개별 테스트가 필요 시 override
+        lenient().when(productStockRepository.findQuantity(anyLong(), any())).thenReturn(Optional.of(100));
+        lenient().when(productRepository.existsById(10L)).thenReturn(true);
         lenient().when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         // 담기 대부분은 추천 경유가 아니다 — 개별 테스트가 필요할 때만 override
         lenient().when(attributionResolver.resolveForConversion(any(), any(), any(), any()))
@@ -75,7 +79,7 @@ class CartServiceTest {
         com.jarvis.brand.Brand brand = mock(com.jarvis.brand.Brand.class, withSettings().strictness(Strictness.LENIENT));
         when(brand.getId()).thenReturn(3L);
         when(product.getBrandId()).thenReturn(3L);
-        when(product.getStockQuantity()).thenReturn(3);
+        stubOptionStock(10L, null, 3);
         CartItem line = CartItem.forMember(1L, 10L, null, 2, null);
         when(cartItemRepository.findAllByMemberIdOrderByIdDesc(1L)).thenReturn(List.of(line));
         when(productRepository.findAllById(List.of(10L))).thenReturn(List.of(product));
@@ -88,7 +92,7 @@ class CartServiceTest {
                 .isEqualTo(3);
 
         // 재고가 상한보다 넉넉하면 99에서 잘린다 — 재고 숫자를 그대로 내리면 FE가 스테퍼를 100까지 열어버린다
-        when(product.getStockQuantity()).thenReturn(500);
+        stubOptionStock(10L, null, 500);
         assertThat(cartService.getCart(1L, null).items())
                 .singleElement()
                 .extracting(com.jarvis.cart.dto.CartResponse.Item::maxQuantity)
@@ -132,7 +136,7 @@ class CartServiceTest {
     @Test
     @DisplayName("C-2 — 합산 후 수량이 재고 초과면 CART_STOCK_INSUFFICIENT + availableStock")
     void addStockInsufficient() {
-        when(product.getStockQuantity()).thenReturn(3);
+        when(productStockRepository.findQuantity(10L, null)).thenReturn(Optional.of(3));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
         when(cartItemRepository.findMemberLinesForUpdate(1L, 10L, null)).thenReturn(List.of());
 
@@ -148,7 +152,7 @@ class CartServiceTest {
     @Test
     @DisplayName("C-3 — 변경 수량이 재고 초과면 CART_STOCK_INSUFFICIENT")
     void changeQuantityStockInsufficient() {
-        when(product.getStockQuantity()).thenReturn(3);
+        when(productStockRepository.findQuantity(10L, null)).thenReturn(Optional.of(3));
         CartItem owned = CartItem.forMember(1L, 10L, null, 1, null);
         ReflectionTestUtils.setField(owned, "id", 5L);
         when(cartItemRepository.findById(5L)).thenReturn(Optional.of(owned));
@@ -400,4 +404,10 @@ class CartServiceTest {
         when(option.getName()).thenReturn(name);
         return option;
     }
+    /** C-1은 줄마다 담은 옵션의 재고를 본다 (02 D33 개정) — findAllByProductIdIn 경로를 태운다 */
+    private void stubOptionStock(Long productId, Long optionId, int quantity) {
+        when(productStockRepository.findAllByProductIdIn(java.util.Set.of(productId)))
+                .thenReturn(List.of(com.jarvis.product.ProductStock.of(productId, optionId, quantity)));
+    }
+
 }

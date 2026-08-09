@@ -40,6 +40,8 @@ class SellerSalesServiceTest {
     @Mock private OrderStatusLogRepository orderStatusLogRepository;
     @Mock private BehaviorEventRepository behaviorEventRepository;
     @Mock private ProductRepository productRepository;
+    @Mock com.jarvis.product.ProductStockRepository productStockRepository;
+    @Mock com.jarvis.product.ProductOptionRepository productOptionRepository;
     @Mock private BrandRepository brandRepository;
     @Mock private SellerAttributionService sellerAttributionService;
 
@@ -149,7 +151,7 @@ class SellerSalesServiceTest {
         when(behaviorEventRepository.countActiveVisitors(eq(BRAND_ID), any())).thenReturn(42L);
         when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(), any()))
                 .thenReturn(List.of());
-        when(productRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
+        when(productStockRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
         Brand brand = mock(Brand.class);
         when(brand.getId()).thenReturn(BRAND_ID);
 
@@ -215,7 +217,7 @@ class SellerSalesServiceTest {
         lenient().when(behaviorEventRepository.countActiveVisitors(eq(BRAND_ID), any())).thenReturn(0L);
         lenient().when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(),
                 any())).thenReturn(List.of());
-        lenient().when(productRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
+        lenient().when(productStockRepository.findLowStock(eq(BRAND_ID), anyInt())).thenReturn(List.of());
         Brand brand = mock(Brand.class);
         lenient().when(brand.getId()).thenReturn(BRAND_ID);
         return brand;

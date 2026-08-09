@@ -56,6 +56,7 @@ public class ProductService {
     private static final Pattern REGEX_META = Pattern.compile("[\\\\^$.|?*+()\\[\\]{}]");
 
     private final ProductRepository productRepository;
+    private final ProductStockRepository productStockRepository;
     private final RedisCache cache;
     private final ProductOptionRepository productOptionRepository;
     private final ProductDetailImageRepository productDetailImageRepository;
@@ -76,7 +77,9 @@ public class ProductService {
                 brandService.getBrand(product.getBrandId()),
                 productOptionRepository.findAllByProductIdOrderByIdAsc(id),
                 reviewService.getStats(id),
-                detailImageUrls(id));
+                detailImageUrls(id),
+                // 재고는 상품이 아니라 product_stock에 있다 — 합계는 파생값 (02 D33 개정)
+                productStockRepository.sumMap(List.of(id)).getOrDefault(id, 0));
     }
 
     /**
@@ -346,9 +349,12 @@ public class ProductService {
         Map<Long, RatingStats> stats = reviewService.getStats(ids);
         Map<Long, String> brandNames = brandService.getNames(
                 products.stream().map(Product::getBrandId).collect(Collectors.toSet()));
+        // 카드마다 재고를 다시 묻지 않도록 한 번에 — 목록이라 N+1이 그대로 응답 시간이 된다
+        Map<Long, Integer> stocks = productStockRepository.sumMap(ids);
         return products.stream()
                 .map(p -> ProductCardResponse.from(p, brandNames.get(p.getBrandId()),
-                        stats.getOrDefault(p.getId(), RatingStats.EMPTY)))
+                        stats.getOrDefault(p.getId(), RatingStats.EMPTY),
+                        stocks.getOrDefault(p.getId(), 0)))
                 .toList();
     }
 

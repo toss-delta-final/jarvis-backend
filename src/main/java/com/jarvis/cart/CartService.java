@@ -13,6 +13,8 @@ import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.product.ProductStatus;
+import com.jarvis.product.ProductStock;
+import com.jarvis.product.ProductStockRepository;
 import com.jarvis.product.PurchaseState;
 import com.jarvis.recommendation.ConversionAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
@@ -39,6 +41,7 @@ public class CartService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
+    private final ProductStockRepository productStockRepository;
     private final BrandRepository brandRepository;
     private final GuestService guestService;
     private final RecommendationAttributionResolver attributionResolver;
@@ -65,18 +68,21 @@ public class CartService {
         Map<Long, Brand> brands = brandRepository
                 .findAllById(products.values().stream().map(Product::getBrandId).distinct().toList())
                 .stream().collect(Collectors.toMap(Brand::getId, Function.identity()));
+        // 담은 옵션마다 재고가 다르다 (02 D33 개정) — 줄마다 다시 묻지 않도록 상품별로 한 번에 받는다
+        Map<Long, Map<Long, Integer>> stocks = stocksByProduct(products.keySet());
 
         List<CartResponse.Item> items = cartItems.stream().map(cartItem -> {
             Product product = products.get(cartItem.getProductId());
             ProductOption option = cartItem.getOptionId() == null ? null : options.get(cartItem.getOptionId());
             Brand brand = brands.get(product.getBrandId());
             int extra = option == null ? 0 : option.getExtraPrice();
+            int stock = stockOf(stocks, product.getId(), cartItem.getOptionId());
             return new CartResponse.Item(cartItem.getId(), product.getId(), product.getName(),
                     brand.getId(), brand.getName(),
                     option == null ? null : option.getId(), option == null ? null : option.getName(),
                     cartItem.getQuantity(), product.getPrice() + extra, product.getOriginalPrice() + extra,
-                    product.getImageUrl(), PurchaseState.of(product).name(),
-                    Math.min(product.getStockQuantity(), CartItem.MAX_QUANTITY));
+                    product.getImageUrl(), PurchaseState.of(product.getStatus(), stock).name(),
+                    Math.min(stock, CartItem.MAX_QUANTITY));
         }).toList();
         return CartResponse.of(items);
     }
@@ -113,7 +119,7 @@ public class CartService {
                     "수량은 최대 " + CartItem.MAX_QUANTITY + "개까지 담을 수 있습니다.");
         }
         // 재고 부족은 400 (합산 후 수량 기준). 최종 방어선은 결제 조건부 차감(02 D33) — 담기 검증은 UX 가드
-        requireStock(product, resultingQuantity);
+        requireStock(product.getId(), request.optionId(), resultingQuantity);
 
         // 추천 출처는 검증 실패해도 담기를 막지 않는다 — 문맥만 버린다 (노션 C-2·I-2 「검증 규칙」)
         ConversionAttribution attribution = attributionResolver.resolveForConversion(
@@ -144,9 +150,11 @@ public class CartService {
     @Transactional
     public CartItemResponse changeQuantity(Long memberId, String guestId, Long cartItemId, int quantity) {
         CartItem item = findOwnedItem(memberId, guestId, cartItemId);
-        Product product = productRepository.findById(item.getProductId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
-        requireStock(product, quantity);
+        // 재고를 상품에서 안 읽게 됐어도 존재 확인은 남긴다 — 사라진 상품의 줄은 수량을 못 바꾼다
+        if (!productRepository.existsById(item.getProductId())) {
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
+        requireStock(item.getProductId(), item.getOptionId(), quantity);
         item.changeQuantity(quantity);
         return new CartItemResponse(item.getId(), item.getQuantity());
     }
@@ -270,11 +278,15 @@ public class CartService {
                 .map(ProductOption::getExtraPrice).orElse(0);
     }
 
-    /** 재고는 상품 단위(02 D33) — 옵션별 재고 없음. detail.availableStock로 남은 수량 동반 */
-    private void requireStock(Product product, int requestedQuantity) {
-        if (requestedQuantity > product.getStockQuantity()) {
+    /**
+     * 재고는 담은 옵션 단위다 (02 D33 개정 — 구 상품 단위 폐기). detail.availableStock는 그 옵션의 남은 수량.
+     * 재고 행이 없으면 0으로 본다 — 있어야 할 행이 없는 건 데이터 문제고, 그때 팔면 안 된다.
+     */
+    private void requireStock(Long productId, Long optionId, int requestedQuantity) {
+        int available = productStockRepository.findQuantity(productId, optionId).orElse(0);
+        if (requestedQuantity > available) {
             throw new BusinessException(ErrorCode.CART_STOCK_INSUFFICIENT,
-                    Map.of("availableStock", product.getStockQuantity()));
+                    Map.of("availableStock", available));
         }
     }
 
@@ -292,6 +304,29 @@ public class CartService {
         if (!belongs) {
             throw new BusinessException(ErrorCode.CART_OPTION_INVALID);
         }
+    }
+
+    /** productId → (optionId → 수량). 옵션 없는 줄은 키가 null이라 HashMap을 쓴다(Map.of는 null 키 불가) */
+    private Map<Long, Map<Long, Integer>> stocksByProduct(java.util.Collection<Long> productIds) {
+        Map<Long, Map<Long, Integer>> byProduct = new java.util.HashMap<>();
+        for (ProductStock stock : productStockRepository.findAllByProductIdIn(productIds)) {
+            byProduct.computeIfAbsent(stock.getProductId(), k -> new java.util.HashMap<>())
+                    .put(stock.getOptionId(), stock.getQuantity());
+        }
+        return byProduct;
+    }
+
+    /**
+     * 재고 행이 없으면 0. 폴백을 {@code Map.of()}로 두면 안 된다 — 옵션 없는 줄의 키가 null이고
+     * 불변 Map은 <b>null 키 조회에서 NPE</b>를 던진다(ImmutableCollections).
+     */
+    private static int stockOf(Map<Long, Map<Long, Integer>> stocks, Long productId, Long optionId) {
+        Map<Long, Integer> byOption = stocks.get(productId);
+        if (byOption == null) {
+            return 0;
+        }
+        Integer quantity = byOption.get(optionId);
+        return quantity == null ? 0 : quantity;
     }
 
     private CartItem findOwnedItem(Long memberId, String guestId, Long cartItemId) {

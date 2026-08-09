@@ -39,6 +39,7 @@ class ProductDetailServiceTest {
 
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
+    @Mock com.jarvis.product.ProductStockRepository productStockRepository;
     @Mock BrandService brandService;
     @Mock CategoryService categoryService;
     @Mock ReviewService reviewService;
@@ -48,6 +49,18 @@ class ProductDetailServiceTest {
     @Spy ImageProperties imageProperties = new ImageProperties("https://cdn.test");
 
     @InjectMocks ProductService productService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubStock() {
+        // 재고는 product_stock에서 온다 (02 D33 개정). sumMap은 default 메서드라 목이 null을 주므로
+        // 기본값을 깔아둔다 — 재고 시나리오가 필요한 테스트는 각자 덮어쓴다
+        org.mockito.Mockito.lenient().when(productStockRepository.sumMap(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    java.util.Map<Long, Integer> map = new java.util.HashMap<>();
+                    ((java.util.Collection<Long>) inv.getArgument(0)).forEach(id -> map.put(id, 10));
+                    return map;
+                });
+    }
 
     @BeforeEach
     void stubLookups() {
@@ -81,7 +94,6 @@ class ProductDetailServiceTest {
         when(product.getName()).thenReturn("상품" + id);
         when(product.getPrice()).thenReturn(8900);
         when(product.getOriginalPrice()).thenReturn(12900);
-        when(product.getStockQuantity()).thenReturn(10);
         when(product.getStatus()).thenReturn(status);
         when(product.getImageUrl()).thenReturn("img.jpg");
         when(product.getSummary()).thenReturn("요약");

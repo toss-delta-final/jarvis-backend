@@ -43,9 +43,8 @@ public class Product extends BaseTimeEntity {
     @Column(nullable = false)
     private int price;
 
-    /** 차감은 결제 성공 트랜잭션의 조건부 UPDATE — Phase 3 (02 D33) */
-    @Column(name = "stock_quantity", nullable = false)
-    private int stockQuantity;
+    // 재고 필드 없음 — ProductStock으로 이관 (02 D33 개정). 여기 두면 옵션이 있는 상품에서
+    // 거짓말하는 값이 된다. 합계가 필요한 화면은 ProductStockRepository에서 집계한다
 
     @Column(name = "image_url", nullable = false, length = 500)
     private String imageUrl;
@@ -70,7 +69,7 @@ public class Product extends BaseTimeEntity {
 
     /** I-10 등록 (04 §10) — base_sales_count는 크롤링 전용이라 0 고정 (02 D18) */
     public static Product create(Long brandId, Long categoryId, String name, int originalPrice,
-                                 int price, int stockQuantity, String imageUrl, String summary,
+                                 int price, String imageUrl, String summary,
                                  String attributes, String description, ProductStatus status) {
         Product product = new Product();
         product.brandId = brandId;
@@ -78,7 +77,6 @@ public class Product extends BaseTimeEntity {
         product.name = name;
         product.originalPrice = originalPrice;
         product.price = price;
-        product.stockQuantity = stockQuantity;
         product.imageUrl = imageUrl;
         product.baseSalesCount = 0;
         product.summary = summary;
@@ -120,9 +118,5 @@ public class Product extends BaseTimeEntity {
 
     public void changeStatus(ProductStatus status) {
         this.status = status;
-    }
-
-    public void changeStockQuantity(int stockQuantity) {
-        this.stockQuantity = stockQuantity;
     }
 }

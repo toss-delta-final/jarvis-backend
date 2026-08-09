@@ -38,6 +38,13 @@ public class OrderItem extends BaseTimeEntity {
     @Column(name = "product_name", nullable = false, length = 200)
     private String productName;
 
+    /**
+     * 스냅샷이 아니라 참조 (02 D33 개정) — 재고가 옵션별이라 취소·반품 복원이 어느 재고 행으로
+     * 되돌릴지 알아야 한다. 아래 {@code optionName}은 스냅샷이라 현재 옵션과 매칭이 보장되지 않는다.
+     */
+    @Column(name = "option_id")
+    private Long optionId;
+
     @Column(name = "option_name", length = 100)
     private String optionName;
 
@@ -67,13 +74,15 @@ public class OrderItem extends BaseTimeEntity {
     private String listId;
 
     /** 주문과 함께 PENDING으로 생성 — 결제 성공 시 ORDERED 전이 (01 D9) */
-    public static OrderItem pending(Long orderId, Long productId, String productName, String optionName,
+    public static OrderItem pending(Long orderId, Long productId, String productName,
+                                    Long optionId, String optionName,
                                     int price, int originalPrice, int quantity, LocalDateTime now,
                                     ConversionAttribution attribution) {
         OrderItem item = new OrderItem();
         item.orderId = orderId;
         item.productId = productId;
         item.productName = productName;
+        item.optionId = optionId;
         item.optionName = optionName;
         item.price = price;
         item.originalPrice = originalPrice;
