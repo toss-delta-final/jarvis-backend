@@ -20,7 +20,7 @@ member/guest/refresh_token 테이블, 일반 가입/로그인/로그아웃/refre
 
 ## Phase 2. 카탈로그 (1일)
 
-category/brand/product(+option — 재고 100 초기화, 02 D33), P-1/P-2/P-3(빈 목록)/P-4/P-6, **이벤트 수집 API(E-1 `POST /api/events`) + behavior_events 적재**(02 D31 — 서버측 조회 적재 없음, FE가 전송). **시드 데이터 1차분**(대분류 4개+소분류 12개, 상품 50개 수준 — LLM팀 협의 전 개발용 최소치).
+category/brand/product(+option +product_stock — 옵션별 재고 초기화, 02 D33 개정), P-1/P-2/P-3(빈 목록)/P-4/P-6, **이벤트 수집 API(E-1 `POST /api/events`) + behavior_events 적재**(02 D31 — 서버측 조회 적재 없음, FE가 전송). **시드 데이터 1차분**(대분류 4개+소분류 12개, 상품 50개 수준 — LLM팀 협의 전 개발용 최소치).
 - **완료**: 상세 조회가 이미지/옵션/평점(0건)을 포함해 응답. E-1로 product_view 배치 전송 시 behavior_events 행 증가·중복 UUID 무시 확인.
 
 ## Phase 3. 장바구니 + 주문 + 클레임 (1.5일)
@@ -43,7 +43,7 @@ review(M-1·M-3 — **M-2는 MVP 제외**, FE 화면 없음 07-17) + P-3 실데�
 
 ## Phase 6. 판매자 + 시드 완성 + 통합 (1일)
 
-S-1~S-3(판매자 직접 경로는 조회만 — 구 S-5 직접수정 폐기 2026-07-21) + **판매자 internal 콜백(I-6~I-16 — Phase 5에서 이관, I-13 포함 전건 실구현)**, 시드 데이터 최종분(02 §5 규모, LLM팀 합의 형식 — 재고 100), behavior_events·로그 테이블 더미 생성 스크립트, 전 구간 통합 점검.
+S-1~S-3(판매자 직접 경로는 조회만 — 구 S-5 직접수정 폐기 2026-07-21) + **판매자 internal 콜백(I-6~I-16 — Phase 5에서 이관, I-13 포함 전건 실구현)**, 시드 데이터 최종분(02 §5 규모, LLM팀 합의 형식 — 재고는 `product_stock` 옵션별, 일부 0), behavior_events·로그 테이블 더미 생성 스크립트, 전 구간 통합 점검.
 - **완료**: 판매자 계정으로 summary가 0이 아닌 지표 반환. 대표 데모 시나리오(추천→담아줘→주문→반품→자동 승인 확인→문의 챗봇) 리허설 1회 통과.
 - **(2026-07-18 구현 확정)** I-6~I-16 응답 스키마는 05 §I-6b(BE 확정 — LLM 합의 대기). change log는 ENUM 3종(PRICE=판매가/STOCK/STATUS)만 기록, 그 외 필드는 I-11 응답 changes[]로만. S-4 티켓 claim에 `channel:SELLER`+`brand_id` 추가(CH-1로는 SELLER 발급 불가, CH-1b 재발급도 유지). 시드 최종분 중 크롤링 1만+ 적재는 LLM팀 파이프라인 소관 — BE는 `scripts/seed-phase6.sql`(판매자 2호·구매자 5·주문 9건·로그 3종·behavior_events 570여 건, 날짜는 NOW() 상대값)로 대시보드 데모를 보장.
 
