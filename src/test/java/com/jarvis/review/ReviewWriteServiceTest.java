@@ -77,8 +77,8 @@ class ReviewWriteServiceTest {
     void writeEvictsStatsCache() {
         reviewService.write(MEMBER_ID, new ReviewCreateRequest(ORDER_ITEM_ID, 5, "좋아요"));
 
-        // 단위 테스트엔 트랜잭션이 없어 즉시 evict 경로를 탄다 — 커밋 후 지연은 통합 환경에서만
-        verify(cache).evict("v1:review:stats:10");
+        // 커밋 후 실행 규칙은 RedisCache.evictAfterCommit이 진다 — 여기서는 위임만 검증
+        verify(cache).evictAfterCommit("v1:review:stats:10");
     }
 
     @Test

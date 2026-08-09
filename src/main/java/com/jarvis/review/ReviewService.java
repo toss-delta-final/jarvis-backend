@@ -26,8 +26,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * P-3 목록·P-2 통계 + M-1 작성·M-3 신고 (04 §5).
@@ -68,27 +66,8 @@ public class ReviewService {
         Review review = reviewRepository.save(Review.write(
                 item.getId(), item.getProductId(), memberId, request.rating(),
                 request.normalizedContent()));
-        evictStatsAfterCommit(item.getProductId());
+        cache.evictAfterCommit(STATS_KEY_PREFIX + item.getProductId());
         return ReviewCreateResponse.from(review);
-    }
-
-    /**
-     * 평점 캐시 무효화는 <b>커밋 후</b>에 한다 — 트랜잭션 안에서 지우면, 커밋 전의 옛 집계를 읽은
-     * 동시 요청이 그 값을 되캐시해 TTL(1시간)까지 낡은 평점이 남는다. 트랜잭션 밖(테스트 등)에서는
-     * 그 경합 자체가 없으므로 즉시 지운다.
-     */
-    private void evictStatsAfterCommit(Long productId) {
-        String key = STATS_KEY_PREFIX + productId;
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            cache.evict(key);
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                cache.evict(key);
-            }
-        });
     }
 
     /** M-3 — 자기 후기 400, 중복 신고 409 (02 D29) */

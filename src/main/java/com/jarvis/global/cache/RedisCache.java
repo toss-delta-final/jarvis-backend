@@ -15,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 읽기 캐시 공용 진입점 (07 §3-1) — cache-aside.
@@ -127,6 +129,24 @@ public class RedisCache {
         } catch (RuntimeException e) {
             log.warn("캐시 무효화 실패 — TTL 소멸에 위임. key={}", key, e);
         }
+    }
+
+    /**
+     * 트랜잭션 <b>커밋 후</b> 무효화 (07 §3-1 규칙 1) — 트랜잭션 안에서 지우면 커밋 전의 옛 값을
+     * 읽은 동시 요청이 그 값을 되캐시해 TTL까지 낡은 사본이 남는다. 동기화가 비활성이면
+     * (트랜잭션 밖·단위 테스트) 그 경합 자체가 없으므로 즉시 지운다.
+     */
+    public void evictAfterCommit(String key) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            evict(key);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                evict(key);
+            }
+        });
     }
 
     private <T> T read(String key, TypeReference<T> type) {

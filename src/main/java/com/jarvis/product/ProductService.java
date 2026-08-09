@@ -13,6 +13,7 @@ import com.jarvis.product.dto.PopularCardResponse;
 import com.jarvis.product.dto.ProductCandidateResponse;
 import com.jarvis.product.dto.ProductCardPageResponse;
 import com.jarvis.product.dto.ProductCardResponse;
+import com.jarvis.product.dto.ProductDetailFragment;
 import com.jarvis.product.dto.ProductDetailResponse;
 import com.jarvis.product.dto.ProductChangesResponse;
 import com.jarvis.review.ReviewService;
@@ -55,6 +56,10 @@ public class ProductService {
     private static final Duration POPULAR_TTL = Duration.ofMinutes(3);
     /** P-4의 size 상한(@Max(50))과 같은 값 — 여기까지 계산해두면 모든 P-4 요청을 덮는다 */
     private static final int POPULAR_CACHE_SIZE = 50;
+    /** 상세 정적조각 (07 §3-1) — evict 지점(판매자 수정·삭제)이 다른 서비스라 키를 공개한다 */
+    public static final String DETAIL_FRAGMENT_KEY_PREFIX = "v1:product:frag:";
+    /** evict가 신선도를 책임지므로 TTL은 안전망 — 길게 둬도 잃는 게 없다 (07 §2-1) */
+    private static final Duration DETAIL_FRAGMENT_TTL = Duration.ofHours(1);
     private static final Pattern REGEX_META = Pattern.compile("[\\\\^$.|?*+()\\[\\]{}]");
 
     private final ProductRepository productRepository;
@@ -71,6 +76,11 @@ public class ProductService {
     /**
      * P-2 — HIDDEN도 응답한다(purchaseState=HIDDEN): 장바구니가 HIDDEN 아이템을 유지(C-1)하므로
      * 상세 링크가 404가 되면 안 됨. 목록(P-4/P-6/CH-5)에서는 제외.
+     *
+     * <p>정적 조각(카테고리·브랜드 요약·옵션 정체·이미지 URL)은 캐시하고 판매자 수정·삭제가
+     * evict한다(07 §3-1, 2026-08-10 부하 실측 후). 상품 행·재고는 매 요청 DB, 평점은 자체
+     * 캐시(ReviewService) — 적중 시 요청당 DB 왕복이 7 → 2로 준다. FE가 no-store라 상세는
+     * 모든 요청이 서버까지 오는 경로다.
      */
     public ProductDetailResponse getDetail(Long id) {
         Product product = getProduct(id);
@@ -80,12 +90,22 @@ public class ProductService {
                 .filter(stock -> stock.getOptionId() != null)
                 .collect(Collectors.toMap(ProductStock::getOptionId, ProductStock::getQuantity));
         int total = stocks.stream().mapToInt(ProductStock::getQuantity).sum();
-        return ProductDetailResponse.from(product, parseJson(product.getAttributes()),
-                categoryService.getCategory(product.getCategoryId()),
-                brandService.getBrand(product.getBrandId()),
-                productOptionRepository.findAllByProductIdOrderByIdAsc(id),
-                reviewService.getStats(id),
-                detailImageUrls(id), total, stockByOption);
+        ProductDetailFragment fragment = cache.get(DETAIL_FRAGMENT_KEY_PREFIX + id,
+                DETAIL_FRAGMENT_TTL, new TypeReference<>() { }, () -> loadDetailFragment(product));
+        return ProductDetailResponse.of(product, parseJson(product.getAttributes()), fragment,
+                reviewService.getStats(id), total, stockByOption);
+    }
+
+    private ProductDetailFragment loadDetailFragment(Product product) {
+        return new ProductDetailFragment(
+                ProductDetailResponse.CategorySummary.from(
+                        categoryService.getCategory(product.getCategoryId())),
+                ProductDetailResponse.BrandSummary.from(brandService.getBrand(product.getBrandId())),
+                productOptionRepository.findAllByProductIdOrderByIdAsc(product.getId()).stream()
+                        .map(option -> new ProductDetailFragment.OptionEntry(
+                                option.getId(), option.getName(), option.getExtraPrice()))
+                        .toList(),
+                detailImageUrls(product.getId()));
     }
 
     /**

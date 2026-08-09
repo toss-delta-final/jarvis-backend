@@ -60,6 +60,7 @@ class SellerProductServiceTest {
     @Mock private CategoryRepository categoryRepository;
     @Mock private ProductChangeLogRepository productChangeLogRepository;
     @Mock private BrandRepository brandRepository;
+    @Mock private com.jarvis.global.cache.RedisCache cache;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -69,7 +70,7 @@ class SellerProductServiceTest {
     void setUp() {
         service = new SellerProductService(productRepository, productStockRepository,
                 productOptionRepository, orderItemRepository,
-                categoryRepository, productChangeLogRepository, brandRepository, objectMapper);
+                categoryRepository, productChangeLogRepository, brandRepository, objectMapper, cache);
         // I-9·I-11 응답의 stocks·합계 — 재고 시나리오가 필요한 테스트는 각자 덮어쓴다
         lenient().when(productStockRepository.findAllByProductIdIn(any())).thenReturn(List.of());
         lenient().when(productStockRepository.sumMap(any())).thenReturn(java.util.Map.of());
@@ -123,6 +124,8 @@ class SellerProductServiceTest {
         assertThat(product.getName()).isEqualTo("새 이름");
         assertThat(product.getPrice()).isEqualTo(89000);
         // 재고는 product 엔티티가 아니라 잠그고 읽은 product_stock 행에서 바뀐다 (02 D33 개정)
+        // 수정 성공은 상세 정적조각 캐시를 무효화한다 (07 §3-1)
+        verify(cache).evictAfterCommit("v1:product:frag:1");
     }
 
     @Test
@@ -243,6 +246,8 @@ class SellerProductServiceTest {
         assertThat(response.productId()).isEqualTo(1L);
         assertThat(response.status()).isEqualTo("DELETED");
         verify(productChangeLogRepository).save(any());
+        // 삭제도 상세 정적조각 캐시를 무효화한다 (07 §3-1)
+        verify(cache).evictAfterCommit("v1:product:frag:1");
     }
 
     @Test

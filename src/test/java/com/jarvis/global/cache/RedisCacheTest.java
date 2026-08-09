@@ -156,6 +156,31 @@ class RedisCacheTest {
         cache.evict(KEY); // 예외가 새어나오지 않는다
     }
 
+    @Test
+    @DisplayName("evictAfterCommit — 트랜잭션 동기화가 없으면 즉시 지운다 (경합이 없으므로)")
+    void evictAfterCommitWithoutTransactionEvictsImmediately() {
+        cache.evictAfterCommit(KEY);
+
+        verify(redisTemplate).delete(KEY);
+    }
+
+    @Test
+    @DisplayName("evictAfterCommit — 트랜잭션 중엔 커밋 후에만 지운다 (커밋 전 되캐시 경합 방지)")
+    void evictAfterCommitDefersUntilCommit() {
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            cache.evictAfterCommit(KEY);
+            verify(redisTemplate, never()).delete(KEY); // 아직 커밋 전 — 지우면 안 된다
+
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .getSynchronizations().forEach(sync -> sync.afterCommit());
+            verify(redisTemplate).delete(KEY);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .clearSynchronization();
+        }
+    }
+
     // ---- 배치(getAll) — id 단위 키, MGET 1회, 미스분만 로더 ----
 
     private static final String PREFIX = "v1:test:stats:";
