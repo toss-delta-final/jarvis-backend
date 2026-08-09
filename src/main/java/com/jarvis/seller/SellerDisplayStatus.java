@@ -1,6 +1,5 @@
 package com.jarvis.seller;
 
-import com.jarvis.product.Product;
 import com.jarvis.product.ProductStatus;
 
 /**
@@ -27,7 +26,12 @@ public enum SellerDisplayStatus {
         return stockQuantity == 0 ? SOLD_OUT : ON_SALE;
     }
 
-    public boolean matches(Product product) {
-        return this == of(product.getStatus(), product.getStockQuantity());
+    /**
+     * 재고를 인자로 받는다 (02 D33 개정 — {@code Product}에 재고가 없다).
+     * 넘기는 값은 <b>옵션 재고의 합계</b>이며, 합계 0과 "살 수 있는 옵션 없음"은 같은 뜻이다
+     * (수량이 음수일 수 없으므로). 노션 S-3의 새 판정 문구와 이 산식이 어긋나지 않는 이유다.
+     */
+    public boolean matches(ProductStatus status, int stockQuantity) {
+        return this == of(status, stockQuantity);
     }
 }

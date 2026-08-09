@@ -42,13 +42,16 @@ public record OrderDetailResponse(@StringId Long orderId, String orderNo, String
                        String purchaseState,
                        boolean canCancel, boolean canReturn, boolean canReview) {
 
-        public static Item from(OrderItem item, Product product, boolean reviewWritten) {
+        /** stockQuantity는 상품의 옵션 재고 합계 — 목록(OrderListResponse)과 같은 기준이다 (02 D33 개정) */
+        public static Item from(OrderItem item, Product product, int stockQuantity,
+                                boolean reviewWritten) {
             OrderItemStatus status = item.getStatus();
             return new Item(item.getId(), item.getProductId(), item.getProductName(),
                     item.getOptionName(), item.getPrice(), item.getOriginalPrice(),
                     item.getQuantity(), status.name(),
                     product == null ? null : product.getImageUrl(),
-                    product == null ? null : PurchaseState.of(product).name(),
+                    product == null ? null
+                            : PurchaseState.of(product.getStatus(), stockQuantity).name(),
                     status.canCancel(), status.canReturn(),
                     status.canReview() && !reviewWritten);
         }
@@ -56,6 +59,7 @@ public record OrderDetailResponse(@StringId Long orderId, String orderNo, String
 
     public static OrderDetailResponse from(Order order, List<OrderItem> orderItems,
                                            Map<Long, Product> productById,
+                                           Map<Long, Integer> stockByProduct,
                                            Predicate<Long> reviewWritten) {
         List<OrderItemStatus> statuses = orderItems.stream().map(OrderItem::getStatus).toList();
         return new OrderDetailResponse(order.getId(), order.orderNo(), order.getStatus().name(),
@@ -68,6 +72,7 @@ public record OrderDetailResponse(@StringId Long orderId, String orderNo, String
                 order.getDeliveryRequest(),
                 orderItems.stream()
                         .map(item -> Item.from(item, productById.get(item.getProductId()),
+                                stockByProduct.getOrDefault(item.getProductId(), 0),
                                 reviewWritten.test(item.getId())))
                         .toList());
     }

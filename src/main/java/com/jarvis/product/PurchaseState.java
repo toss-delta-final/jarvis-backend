@@ -20,18 +20,24 @@ public enum PurchaseState {
     /**
      * 숨김이 품절보다 우선한다 — 숨김은 돌아오지 않는 상품이라 "재입고되면 알려드릴게요"로 안내하면 안 된다.
      *
+     * <p><b>재고를 인자로 받는다</b>(02 D33 개정) — {@code Product}에 재고가 없어졌고, 호출부마다
+     * 봐야 할 재고가 다르다. 목록·상세는 <b>구매 가능한 옵션 재고의 합계</b>를, 장바구니·주문은
+     * <b>그 줄이 담은 옵션의 재고</b>를 넘긴다. 상품을 넘기는 편의 오버로드를 남기지 않은 것은
+     * 의도다 — 남기면 어느 재고인지 모르는 채 호출되고 조용히 틀린 답이 나간다.
+     *
+     * @param availableQuantity 판정 대상 재고 (합계 또는 그 옵션의 수량)
      * @param requestedQuantity 이만큼 살 수 있는지 — 목록·상세는 1(하나라도 살 수 있나), 주문(O-1)은 주문 수량
      */
-    public static PurchaseState of(Product product, int requestedQuantity) {
-        if (product.getStatus() != ProductStatus.ON_SALE) {
+    public static PurchaseState of(ProductStatus status, int availableQuantity, int requestedQuantity) {
+        if (status != ProductStatus.ON_SALE) {
             return HIDDEN;
         }
-        return product.getStockQuantity() < requestedQuantity ? SOLD_OUT : AVAILABLE;
+        return availableQuantity < requestedQuantity ? SOLD_OUT : AVAILABLE;
     }
 
     /** 목록·상세용 — 하나라도 살 수 있으면 AVAILABLE */
-    public static PurchaseState of(Product product) {
-        return of(product, 1);
+    public static PurchaseState of(ProductStatus status, int availableQuantity) {
+        return of(status, availableQuantity, 1);
     }
 
     public boolean isAvailable() {

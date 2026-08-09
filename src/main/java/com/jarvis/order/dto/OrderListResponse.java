@@ -33,18 +33,25 @@ public record OrderListResponse(List<Summary> content, int page, int size,
                               int price, int quantity, String status, String imageUrl,
                               String purchaseState) {
 
-        public static ItemSummary from(OrderItem item, Product product) {
+        /**
+         * @param stockQuantity 상품의 옵션 재고 <b>합계</b> (02 D33 개정). 주문 내역의
+         *                      purchaseState는 "이 상품을 다시 살 수 있나"라서 옵션이 아니라 상품
+         *                      기준으로 둔다 — 담았던 옵션은 그새 없어졌을 수도 있다
+         */
+        public static ItemSummary from(OrderItem item, Product product, int stockQuantity) {
             return new ItemSummary(item.getId(), item.getProductId(), item.getProductName(),
                     item.getOptionName(), item.getPrice(), item.getQuantity(),
                     item.getStatus().name(),
                     product == null ? null : product.getImageUrl(),
-                    product == null ? null : PurchaseState.of(product).name());
+                    product == null ? null
+                            : PurchaseState.of(product.getStatus(), stockQuantity).name());
         }
     }
 
     public static OrderListResponse from(Page<Order> orders,
                                          Map<Long, List<OrderItem>> itemsByOrder,
-                                         Map<Long, Product> productById) {
+                                         Map<Long, Product> productById,
+                                         Map<Long, Integer> stockByProduct) {
         List<Summary> summaries = orders.getContent().stream().map(order -> {
             List<OrderItem> orderItems = itemsByOrder.getOrDefault(order.getId(), List.of());
             List<OrderItemStatus> statuses = orderItems.stream().map(OrderItem::getStatus).toList();
@@ -53,7 +60,8 @@ public record OrderListResponse(List<Summary> content, int page, int size,
                     order.getTotalAmount(),
                     order.getCreatedAt().atZone(ZONE).toOffsetDateTime(),
                     orderItems.stream()
-                            .map(item -> ItemSummary.from(item, productById.get(item.getProductId())))
+                            .map(item -> ItemSummary.from(item, productById.get(item.getProductId()),
+                                    stockByProduct.getOrDefault(item.getProductId(), 0)))
                             .toList());
         }).toList();
         return new OrderListResponse(summaries, orders.getNumber(), orders.getSize(),

@@ -145,6 +145,9 @@ CREATE TABLE product_stock (
     -- option_id IS NULL 행의 중복은 이 제약으로 막히지 않는다 — 서비스가 막는다
     UNIQUE KEY uk_product_stock (product_id, option_id),
     KEY idx_product_stock_option (option_id),               -- 장바구니·주문의 옵션 단위 조회·차감 경로
+    -- "살 수 있는 옵션이 있나"(I-1·P-4의 EXISTS)를 인덱스만으로 끝낸다. uk는 quantity가 없어
+    -- 행마다 테이블을 되짚는다 — review 커버링 인덱스와 같은 구조의 문제다
+    KEY idx_product_stock_purchasable (product_id, quantity),
     CONSTRAINT chk_product_stock_quantity CHECK (quantity >= 0),
     CONSTRAINT fk_product_stock_product FOREIGN KEY (product_id)
         REFERENCES product (id) ON DELETE RESTRICT,

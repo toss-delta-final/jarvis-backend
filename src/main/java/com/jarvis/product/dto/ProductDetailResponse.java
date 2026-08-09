@@ -50,12 +50,17 @@ public record ProductDetailResponse(@StringId Long id, String name, int price, i
         }
     }
 
+    /**
+     * @param stockQuantity 옵션 재고의 합계 — 저장 컬럼이 아니라 파생값이다 (02 D33 개정).
+     *                      옵션 없는 상품은 그 상품의 재고 한 행 값이 그대로 들어온다
+     */
     public static ProductDetailResponse from(Product product, JsonNode attributes,
                                              Category category, Brand brand,
                                              List<ProductOption> options, RatingStats stats,
-                                             List<String> detailImages) {
+                                             List<String> detailImages, int stockQuantity) {
         return new ProductDetailResponse(product.getId(), product.getName(), product.getPrice(),
-                product.getOriginalPrice(), product.getStockQuantity(), PurchaseState.of(product).name(),
+                product.getOriginalPrice(), stockQuantity,
+                PurchaseState.of(product.getStatus(), stockQuantity).name(),
                 product.getStatus().name(), product.getImageUrl(), detailImages, product.getSummary(),
                 attributes, product.getDescription(), CategorySummary.from(category),
                 BrandSummary.from(brand), options.stream().map(OptionResponse::from).toList(),

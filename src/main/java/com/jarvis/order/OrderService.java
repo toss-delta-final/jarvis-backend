@@ -22,11 +22,14 @@ import com.jarvis.product.Product;
 import com.jarvis.product.ProductOption;
 import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.product.ProductStockRepository;
 import com.jarvis.product.ProductStockService;
+import com.jarvis.product.ProductStockService.StockKey;
 import com.jarvis.recommendation.ConversionAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,6 +63,7 @@ public class OrderService {
     private final CartService cartService;
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
+    private final ProductStockRepository productStockRepository;
     private final ProductStockService productStockService;
     private final CategoryRepository categoryRepository;
     private final AddressRepository addressRepository;
@@ -103,7 +107,9 @@ public class OrderService {
         LocalDateTime now = LocalDateTime.now();
         List<OrderItem> items = orderItemRepository.saveAll(lines.stream()
                 .map(line -> OrderItem.pending(order.getId(), line.product().getId(),
-                        line.product().getName(), line.option() == null ? null : line.option().getName(),
+                        line.product().getName(),
+                        line.option() == null ? null : line.option().getId(),
+                        line.option() == null ? null : line.option().getName(),
                         line.unitPrice(), line.unitOriginalPrice(), line.quantity(), now,
                         line.attribution()))
                 .toList());
@@ -145,8 +151,9 @@ public class OrderService {
         Map<Long, List<OrderItem>> itemsByOrder = orderIds.isEmpty() ? Map.of()
                 : orderItemRepository.findAllByOrderIdIn(orderIds).stream()
                         .collect(Collectors.groupingBy(OrderItem::getOrderId));
-        return OrderListResponse.from(orders, itemsByOrder,
-                productsById(itemsByOrder.values().stream().flatMap(List::stream).toList()));
+        List<OrderItem> allItems = itemsByOrder.values().stream().flatMap(List::stream).toList();
+        return OrderListResponse.from(orders, itemsByOrder, productsById(allItems),
+                stockTotals(allItems));
     }
 
     /** I-4 — 최근 주문 상태 요약 (05 §I-4) — 문의 챗봇 전용, I-19(목록)와 역할 분담 */
@@ -220,7 +227,8 @@ public class OrderService {
         List<OrderItem> items = orderItemRepository.findAllByOrderId(orderId);
         Set<Long> reviewedItemIds = new HashSet<>(reviewRepository.findOrderItemIdsIn(
                 items.stream().map(OrderItem::getId).toList()));
-        return OrderDetailResponse.from(order, items, productsById(items), reviewedItemIds::contains);
+        return OrderDetailResponse.from(order, items, productsById(items), stockTotals(items),
+                reviewedItemIds::contains);
     }
 
     // ---- 라인 해석 (O-1 두 경로) ----
@@ -267,8 +275,9 @@ public class OrderService {
      * <p>불량을 만나도 첫 건에서 끊지 않고 모아서 한 번에 400으로 내린다 — 끊으면 사용자가
      * "A 빼고 재시도 → B도 품절 → 또 재시도"를 불량 개수만큼 반복해야 한다.
      *
-     * <p>재고는 상품 단위라(02 D33) 같은 상품의 다른 옵션이 여러 줄로 올 수 있다. 줄 단위로 비교하면
-     * 합계가 재고를 넘는 걸 놓치므로 상품 단위로 합산해 비교한다.
+     * <p><b>합산 단위는 (상품, 옵션)이다</b>(02 D33 개정 — 구 상품 단위 폐기). 같은 상품이라도 옵션이
+     * 다르면 재고가 따로라, 상품 단위로 합치면 멀쩡한 주문을 막는다. 구 규칙은 재고가 상품에
+     * 하나뿐이던 시절의 것이다.
      */
     private Map<Long, Product> requireAllAvailable(List<LineSpec> specs) {
         Map<Long, Product> products = new LinkedHashMap<>();
@@ -276,10 +285,15 @@ public class OrderService {
             products.computeIfAbsent(spec.productId(), id -> productRepository.findById(id)
                     .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND)));
         }
-        Map<Long, Integer> quantities = specs.stream().collect(Collectors.groupingBy(
-                LineSpec::productId, Collectors.summingInt(LineSpec::quantity)));
-        List<UnavailableItemDetail> unavailable = products.values().stream()
-                .map(product -> UnavailableItemDetail.of(product, quantities.get(product.getId())))
+        Map<StockKey, Integer> quantities = specs.stream().collect(Collectors.groupingBy(
+                spec -> new StockKey(spec.productId(), spec.optionId()),
+                LinkedHashMap::new, Collectors.summingInt(LineSpec::quantity)));
+        Map<StockKey, Integer> available = availableStocks(products.keySet());
+        Map<Long, String> optionNames = optionNames(quantities.keySet());
+        List<UnavailableItemDetail> unavailable = quantities.entrySet().stream()
+                .map(entry -> UnavailableItemDetail.of(products.get(entry.getKey().productId()),
+                        entry.getKey().optionId(), optionName(optionNames, entry.getKey().optionId()),
+                        available.getOrDefault(entry.getKey(), 0), entry.getValue()))
                 .filter(Objects::nonNull)
                 .toList();
         if (!unavailable.isEmpty()) {
@@ -328,14 +342,14 @@ public class OrderService {
 
     /** 실패 사유 코드를 돌려준다(성공이면 null) — 로그에만 남기던 값을 응답 failureReason으로도 내보내기 위해 */
     private String completePayment(Order order, List<OrderItem> items,
-                                   Map<Long, Integer> quantitiesByProduct, String paymentMethod) {
+                                   Map<StockKey, Integer> quantitiesByOption, String paymentMethod) {
         PaymentResult result = paymentService.pay(paymentMethod, order.getTotalAmount());
         if (!result.success()) {
             statusChanger.paymentFailed(order, result.failureCode());
             return result.failureCode();
         }
         // 재고 차감은 결제 성공 처리와 같은 트랜잭션의 조건부 UPDATE (02 D33) — 실패 시 OUT_OF_STOCK 결제 실패
-        if (!productStockService.deduct(quantitiesByProduct)) {
+        if (!productStockService.deduct(quantitiesByOption)) {
             statusChanger.paymentFailed(order, OUT_OF_STOCK);
             return OUT_OF_STOCK;
         }
@@ -343,10 +357,47 @@ public class OrderService {
         return null;
     }
 
-    /** 같은 상품이 여러 라인에 나뉘어 있어도 재고는 한 번에 차감한다. 락 순서는 ProductStockService가 보장 */
-    private Map<Long, Integer> aggregateQuantities(List<OrderItem> items) {
-        return items.stream().collect(Collectors.groupingBy(OrderItem::getProductId,
+    /**
+     * 같은 (상품, 옵션)이 여러 라인에 나뉘어 있어도 재고는 한 번에 차감한다 (02 D33 개정 — 구 상품 단위).
+     * 락 순서는 ProductStockService가 보장한다.
+     */
+    private Map<StockKey, Integer> aggregateQuantities(List<OrderItem> items) {
+        return items.stream().collect(Collectors.groupingBy(
+                item -> new StockKey(item.getProductId(), item.getOptionId()),
                 Collectors.summingInt(OrderItem::getQuantity)));
+    }
+
+    /** 주문 내역 표시용 상품별 재고 합계 (02 D33 개정) — 목록이라 줄마다 다시 묻지 않는다 */
+    private Map<Long, Integer> stockTotals(List<OrderItem> items) {
+        return productStockRepository.sumMap(
+                items.stream().map(OrderItem::getProductId).distinct().toList());
+    }
+
+    /** 선검증용 (상품, 옵션) → 남은 재고. 행이 없으면 0으로 본다 — 없는 재고를 팔면 안 된다 */
+    private Map<StockKey, Integer> availableStocks(Collection<Long> productIds) {
+        Map<StockKey, Integer> available = new LinkedHashMap<>();
+        productStockRepository.findAllByProductIdIn(productIds).forEach(stock ->
+                available.put(new StockKey(stock.getProductId(), stock.getOptionId()),
+                        stock.getQuantity()));
+        return available;
+    }
+
+    /**
+     * 옵션 없는 줄은 optionId가 null이고, {@code Map.of()}는 <b>null 키 조회에서 NPE</b>를 던진다
+     * (ImmutableCollections). 옵션 없는 상품이 섞이면 반드시 이 경로를 밟으므로 null을 먼저 걷어낸다.
+     */
+    private static String optionName(Map<Long, String> optionNames, Long optionId) {
+        return optionId == null ? null : optionNames.get(optionId);
+    }
+
+    /** unavailableItems에 실을 옵션명 — 옵션 없는 줄(null 키)은 조회 대상이 아니다 */
+    private Map<Long, String> optionNames(Collection<StockKey> keys) {
+        List<Long> optionIds = keys.stream().map(StockKey::optionId).filter(Objects::nonNull).toList();
+        if (optionIds.isEmpty()) {
+            return Map.of();
+        }
+        return productOptionRepository.findAllById(optionIds).stream()
+                .collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
     }
 
     /** O-2 성공 시 — 장바구니에 같은 상품+옵션 행이 남아 있으면 삭제 (04 §4). 매칭·삭제는 장바구니 소관 */

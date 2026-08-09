@@ -63,6 +63,7 @@ class OrderServiceTest {
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
     @Mock ProductStockService productStockService;
+    @Mock com.jarvis.product.ProductStockRepository productStockRepository;
     @Mock AddressRepository addressRepository;
     @Mock MemberRepository memberRepository;
     @Mock ReviewRepository reviewRepository;
@@ -76,8 +77,15 @@ class OrderServiceTest {
 
     private com.jarvis.product.Product product;
 
+    /** 옵션 없는 상품의 재고 행들 — 선검증(availableStocks)이 이 목록을 읽는다 */
+    private final java.util.List<com.jarvis.product.ProductStock> stockRows = new java.util.ArrayList<>();
+
     @BeforeEach
     void setUp() {
+        stockRows.clear();
+        lenient().when(productStockRepository.findAllByProductIdIn(any())).thenReturn(stockRows);
+        // 주문 내역 표시용 합계 — 생성 경로에선 쓰이지 않는다
+        lenient().when(productStockRepository.sumMap(any())).thenReturn(java.util.Map.of());
         product = product(10L, 12000, 15000);
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(inv -> {
             Order order = inv.getArgument(0);
@@ -106,8 +114,8 @@ class OrderServiceTest {
         when(p.getOriginalPrice()).thenReturn(originalPrice);
         when(p.getName()).thenReturn("상품" + id);
         when(p.getStatus()).thenReturn(com.jarvis.product.ProductStatus.ON_SALE);
-        // 시드 기본 재고(04 §3) — O-1 선검증을 통과시키기 위한 값. 재고 시나리오는 각 테스트가 덮어쓴다
-        when(p.getStockQuantity()).thenReturn(100);
+        // 재고는 product_stock에 있다 (02 D33 개정) — 기본 100을 깔고, 시나리오는 각 테스트가 덮어쓴다
+        stubStock(id, 100);
         return p;
     }
 
@@ -138,7 +146,8 @@ class OrderServiceTest {
         verify(statusChanger).paymentSucceeded(any(Order.class), anyList(), any(LocalDateTime.class));
         verify(cartService, never()).removeOrderedLines(anyList());
         // 같은 상품이 여러 라인이어도 재고는 합산해 한 번만 요청한다
-        verify(productStockService).deduct(Map.of(10L, 2));
+        verify(productStockService).deduct(
+                Map.of(new com.jarvis.product.ProductStockService.StockKey(10L, null), 2));
     }
 
     @Test
@@ -165,7 +174,7 @@ class OrderServiceTest {
     void createCollectsAllUnavailableItems() {
         com.jarvis.product.Product soldOut = product(20L, 5000, 5000);
         com.jarvis.product.Product hidden = product(30L, 7000, 7000);
-        when(soldOut.getStockQuantity()).thenReturn(0);
+        stubStock(20L, 0);
         when(hidden.getStatus()).thenReturn(com.jarvis.product.ProductStatus.HIDDEN);
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
         when(productRepository.findById(20L)).thenReturn(Optional.of(soldOut));
@@ -188,8 +197,8 @@ class OrderServiceTest {
                 (List<UnavailableItemDetail>) ((Map<String, Object>) thrown.getDetail()).get("unavailableItems");
         // 불량 2건이 한 번에 나와야 FE가 "빼고 결제"를 한 번에 만든다 — 첫 건만 오면 재시도가 반복된다
         assertThat(unavailable).containsExactly(
-                new UnavailableItemDetail(20L, "상품20", "SOLD_OUT"),
-                new UnavailableItemDetail(30L, "상품30", "HIDDEN"));
+                new UnavailableItemDetail(20L, "상품20", null, null, "SOLD_OUT"),
+                new UnavailableItemDetail(30L, "상품30", null, null, "HIDDEN"));
         // 주문 행 자체가 생기지 않는다
         verify(orderRepository, never()).save(any(Order.class));
     }
@@ -197,10 +206,10 @@ class OrderServiceTest {
     @Test
     @DisplayName("O-1 선검증 — 같은 상품이 여러 줄로 오면 합산해서 재고와 비교한다")
     void createSumsQuantityPerProductBeforeStockCheck() {
-        when(product.getStockQuantity()).thenReturn(3);
+        stubStock(10L, 3);
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
 
-        // 줄 단위로는 각 2개라 재고 3을 안 넘지만, 상품 단위 합계는 4라 넘는다
+        // 줄 단위로는 각 2개라 재고 3을 안 넘지만, 같은 (상품, 옵션)이라 합계는 4라 넘는다
         OrderCreateRequest request = new OrderCreateRequest(null,
                 List.of(new OrderCreateRequest.OrderLine(10L, null, 2, null),
                         new OrderCreateRequest.OrderLine(10L, null, 2, null)),
@@ -377,7 +386,7 @@ class OrderServiceTest {
         ReflectionTestUtils.setField(order, "id", 1L);
         ReflectionTestUtils.setField(order, "createdAt", LocalDateTime.of(2026, 7, 17, 12, 0));
         ReflectionTestUtils.setField(order, "status", OrderStatus.PAYMENT_FAILED);
-        OrderItem item = OrderItem.pending(1L, 10L, "린넨 셔츠", null, 12000, 15000, 2,
+        OrderItem item = OrderItem.pending(1L, 10L, "린넨 셔츠", null, null, 12000, 15000, 2,
                 LocalDateTime.of(2026, 7, 17, 12, 0), null);
         when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(orderItemRepository.findAllByOrderId(1L)).thenReturn(List.of(item));
@@ -422,7 +431,7 @@ class OrderServiceTest {
 
     private OrderItem item(Long id, Long orderId, Long productId, String productName, String optionName,
                            int price, int originalPrice, int quantity, OrderItemStatus status) {
-        OrderItem item = OrderItem.pending(orderId, productId, productName, optionName,
+        OrderItem item = OrderItem.pending(orderId, productId, productName, null, optionName,
                 price, originalPrice, quantity, LocalDateTime.of(2026, 7, 17, 12, 0), null);
         ReflectionTestUtils.setField(item, "id", id);
         ReflectionTestUtils.setField(item, "status", status);
@@ -547,4 +556,10 @@ class OrderServiceTest {
                 .isEqualTo(ErrorCode.ORDER_NOT_FOUND);
         verify(orderItemRepository, never()).findAllByOrderId(anyLong());
     }
+    /** 같은 상품을 다시 깔면 앞 행을 덮는다 — 테스트가 재고 시나리오를 나중에 바꿔 쓸 수 있게 */
+    private void stubStock(Long productId, int quantity) {
+        stockRows.removeIf(row -> row.getProductId().equals(productId));
+        stockRows.add(com.jarvis.product.ProductStock.of(productId, null, quantity));
+    }
+
 }

@@ -8,7 +8,11 @@ import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.OrderItemRepository;
 import com.jarvis.order.OrderStatusLogRepository;
 import com.jarvis.product.Product;
+import com.jarvis.product.ProductOption;
+import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
+import com.jarvis.product.ProductStock;
+import com.jarvis.product.ProductStockRepository;
 import com.jarvis.seller.dto.SellerSalesResponse;
 import com.jarvis.seller.dto.SellerSummaryResponse;
 import java.time.DayOfWeek;
@@ -23,6 +27,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +53,8 @@ public class SellerSalesService {
     private final OrderStatusLogRepository orderStatusLogRepository;
     private final BehaviorEventRepository behaviorEventRepository;
     private final ProductRepository productRepository;
+    private final ProductStockRepository productStockRepository;
+    private final ProductOptionRepository productOptionRepository;
     private final BrandRepository brandRepository;
     private final SellerAttributionService sellerAttributionService;
 
@@ -139,11 +146,25 @@ public class SellerSalesService {
         return new SellerSummaryResponse.SalesTrend(total, points);
     }
 
+    /** 옵션 단위 (02 D33 개정) — 한 상품의 여러 옵션이 부족하면 여러 줄이다 */
     private SellerSummaryResponse.LowStock lowStock(Long brandId, int threshold) {
-        List<SellerSummaryResponse.LowStock.Item> items = productRepository.findLowStock(brandId, threshold)
-                .stream()
-                .map(p -> new SellerSummaryResponse.LowStock.Item(p.getId(), p.getName(),
-                        p.getImageUrl(), p.getStockQuantity()))
+        List<ProductStock> lowStocks = productStockRepository.findLowStock(brandId, threshold);
+        Map<Long, String> productNames = new LinkedHashMap<>();
+        Map<Long, String> imageUrls = new LinkedHashMap<>();
+        productRepository.findAllById(lowStocks.stream().map(ProductStock::getProductId).distinct().toList())
+                .forEach(p -> {
+                    productNames.put(p.getId(), p.getName());
+                    imageUrls.put(p.getId(), p.getImageUrl());
+                });
+        Map<Long, String> optionNames = productOptionRepository.findAllById(
+                        lowStocks.stream().map(ProductStock::getOptionId).filter(Objects::nonNull).toList())
+                .stream().collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
+        List<SellerSummaryResponse.LowStock.Item> items = lowStocks.stream()
+                .map(stock -> new SellerSummaryResponse.LowStock.Item(
+                        stock.getProductId(), productNames.get(stock.getProductId()),
+                        imageUrls.get(stock.getProductId()), stock.getOptionId(),
+                        stock.getOptionId() == null ? null : optionNames.get(stock.getOptionId()),
+                        stock.getQuantity()))
                 .toList();
         return new SellerSummaryResponse.LowStock(threshold, items.size(), items);
     }

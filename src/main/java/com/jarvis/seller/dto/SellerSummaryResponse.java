@@ -36,10 +36,18 @@ public record SellerSummaryResponse(Period period, OrderStatus orderStatus, Toda
         }
     }
 
-    /** 재고 부족 알림 — ON_SALE 중 재고 ≤ threshold, 재고 오름차순. */
+    /**
+     * 재고 부족 알림 — ON_SALE 중 재고 ≤ threshold, 재고 오름차순.
+     *
+     * <p><b>2026-08-09 — 판정이 옵션 단위</b>(02 D33 개정). {@code count}는 재고 부족인
+     * <b>옵션의 개수</b>이지 상품 수가 아니다 — 한 상품의 여러 옵션이 동시에 부족하면 여러 줄로 나온다.
+     * 상품 단위로 묶지 않는 이유는 판매자가 채워 넣을 대상이 상품이 아니라 옵션이기 때문이다.
+     */
     public record LowStock(int threshold, int count, List<Item> items) {
 
-        public record Item(@StringId Long productId, String name, String imageUrl, int stockQuantity) {
+        /** 옵션 없는 상품은 optionId·optionName이 둘 다 null이다 */
+        public record Item(@StringId Long productId, String name, String imageUrl,
+                           @StringId Long optionId, String optionName, int stockQuantity) {
         }
     }
 

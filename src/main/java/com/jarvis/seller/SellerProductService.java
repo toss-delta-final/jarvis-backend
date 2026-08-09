@@ -12,8 +12,12 @@ import com.jarvis.product.Product;
 import com.jarvis.product.ProductChangeLog;
 import com.jarvis.product.ProductChangeLogRepository;
 import com.jarvis.product.ProductChangeType;
+import com.jarvis.product.ProductOption;
+import com.jarvis.product.ProductOptionRepository;
 import com.jarvis.product.ProductRepository;
 import com.jarvis.product.ProductStatus;
+import com.jarvis.product.ProductStock;
+import com.jarvis.product.ProductStockRepository;
 import com.jarvis.seller.dto.SellerProductCreateRequest;
 import com.jarvis.seller.dto.SellerProductCreateResponse;
 import com.jarvis.seller.dto.SellerProductDeleteResponse;
@@ -22,15 +26,19 @@ import com.jarvis.seller.dto.SellerProductItemResponse;
 import com.jarvis.seller.dto.SellerProductListResponse;
 import com.jarvis.seller.dto.SellerProductUpdateRequest;
 import com.jarvis.seller.dto.SellerProductUpdateResponse;
+import com.jarvis.seller.dto.StockInput;
+import com.jarvis.seller.dto.StockView;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -55,6 +63,8 @@ public class SellerProductService {
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
 
     private final ProductRepository productRepository;
+    private final ProductStockRepository productStockRepository;
+    private final ProductOptionRepository productOptionRepository;
     private final OrderItemRepository orderItemRepository;
     private final CategoryRepository categoryRepository;
     private final ProductChangeLogRepository productChangeLogRepository;
@@ -80,11 +90,15 @@ public class SellerProductService {
 
         List<Product> all = productRepository.findAllByBrandIdAndStatusNot(brandId, ProductStatus.DELETED);
         Map<Long, Long> salesById = paidQuantities(all);
-        Map<String, Long> tabCounts = productTabCounts(all);
+        // 재고는 product_stock의 옵션별 합계다 (02 D33 개정) — 전건 로드 화면이라 한 번에 받는다.
+        // 합계 0과 "살 수 있는 옵션 없음"은 같은 뜻이라(수량이 음수일 수 없다) 판정식은 그대로 쓴다
+        Map<Long, Integer> stocks = productStockRepository.sumMap(
+                all.stream().map(Product::getId).toList());
+        Map<String, Long> tabCounts = productTabCounts(all, stocks);
 
         List<Product> matched = all.stream()
-                .filter(p -> filter == null || filter.matches(p))
-                .sorted(productComparator(sortKey, salesById))
+                .filter(p -> filter == null || filter.matches(p.getStatus(), stockOf(stocks, p)))
+                .sorted(productComparator(sortKey, salesById, stocks))
                 .toList();
 
         long total = matched.size();
@@ -96,8 +110,8 @@ public class SellerProductService {
         List<SellerProductListResponse.Row> rows = pageItems.stream()
                 .map(p -> new SellerProductListResponse.Row(p.getId(), p.getName(), p.getImageUrl(),
                         categoryNames.get(p.getCategoryId()), p.getPrice(), p.getOriginalPrice(),
-                        p.getStockQuantity(), displayedSalesCount(p, salesById), p.getStatus().name(),
-                        SellerDisplayStatus.of(p.getStatus(), p.getStockQuantity()).name(),
+                        stockOf(stocks, p), displayedSalesCount(p, salesById), p.getStatus().name(),
+                        SellerDisplayStatus.of(p.getStatus(), stockOf(stocks, p)).name(),
                         toKst(p.getCreatedAt()), toKst(p.getUpdatedAt())))
                 .toList();
         int totalPages = (int) Math.ceil((double) total / size);
@@ -125,12 +139,13 @@ public class SellerProductService {
     }
 
     /** tabCounts는 필터와 무관하게 항상 전량 기준 (노션 S-3) — displayStatus 파생으로 집계 */
-    private static Map<String, Long> productTabCounts(List<Product> products) {
+    private static Map<String, Long> productTabCounts(List<Product> products,
+                                                      Map<Long, Integer> stocks) {
         long onSale = 0;
         long soldOut = 0;
         long hidden = 0;
         for (Product p : products) {
-            switch (SellerDisplayStatus.of(p.getStatus(), p.getStockQuantity())) {
+            switch (SellerDisplayStatus.of(p.getStatus(), stockOf(stocks, p))) {
                 case ON_SALE -> onSale++;
                 case SOLD_OUT -> soldOut++;
                 case HIDDEN -> hidden++;
@@ -148,13 +163,15 @@ public class SellerProductService {
      * 판매량은 파생값(base + PAID 집계)이라 salesById로 계산해 비교. 정렬 방향은 노션 미명시분에 대한
      * 합리적 기본값(sales desc / stock asc / price asc). latest는 id desc — created_at과 단조 등가라 더 저렴.
      */
-    private Comparator<Product> productComparator(String sortKey, Map<Long, Long> salesById) {
+    private Comparator<Product> productComparator(String sortKey, Map<Long, Long> salesById,
+                                                  Map<Long, Integer> stocks) {
         Comparator<Product> byIdDesc = Comparator.comparingLong(Product::getId).reversed();
         return switch (sortKey) {
             case "sales" -> Comparator
                     .comparingLong((Product p) -> displayedSalesCount(p, salesById)).reversed()
                     .thenComparing(byIdDesc);
-            case "stock" -> Comparator.comparingInt(Product::getStockQuantity).thenComparing(byIdDesc);
+            case "stock" -> Comparator.comparingInt((Product p) -> stockOf(stocks, p))
+                    .thenComparing(byIdDesc);
             case "price" -> Comparator.comparingInt(Product::getPrice).thenComparing(byIdDesc);
             default -> byIdDesc;
         };
@@ -171,10 +188,14 @@ public class SellerProductService {
                 new OffsetPageRequest(offset, limit, LATEST_SORT));
         Map<Long, Long> salesById = paidQuantities(products.getContent());
         Map<Long, String> categoryNames = categoryNames(products.getContent());
+        // 에이전트가 I-11에 넣을 optionId의 출처 — 품절 옵션도 그대로 내린다(판매자는 알아야 채운다)
+        Map<Long, List<StockView>> stockViews = stockViews(products.getContent());
         List<SellerProductItemResponse> rows = products.getContent().stream()
                 .map(p -> new SellerProductItemResponse(p.getId(), p.getName(), p.getSummary(),
                         parseJson(p.getAttributes()), p.getDescription(), p.getPrice(),
-                        p.getOriginalPrice(), p.getStatus().name(), p.getStockQuantity(),
+                        p.getOriginalPrice(), p.getStatus().name(),
+                        totalQuantity(stockViews.get(p.getId())),
+                        stockViews.getOrDefault(p.getId(), List.of()),
                         displayedSalesCount(p, salesById), categoryNames.get(p.getCategoryId()),
                         p.getImageUrl()))
                 .toList();
@@ -202,7 +223,7 @@ public class SellerProductService {
         if (request.status() == ProductStatus.DELETED) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        validateStock(request.stockQuantity());
+        validateStocks(request.stocks());
         validatePriceRange(
                 request.price() != null ? request.price() : product.getPrice(),
                 request.originalPrice() != null ? request.originalPrice() : product.getOriginalPrice());
@@ -241,13 +262,12 @@ public class SellerProductService {
             changes.add(ProductChangeType.STATUS.name());
             product.changeStatus(request.status());
         }
-        if (request.stockQuantity() != null && request.stockQuantity() != product.getStockQuantity()) {
-            recordLog(productId, ProductChangeType.STOCK, product.getStockQuantity(), request.stockQuantity());
+        if (applyStocks(productId, request.stocks())) {
             changes.add(ProductChangeType.STOCK.name());
-            product.changeStockQuantity(request.stockQuantity());
         }
         return new SellerProductUpdateResponse(productId, product.getPrice(),
-                product.getStockQuantity(), product.getStatus().name(), changes);
+                stockViews(List.of(product)).getOrDefault(productId, List.of()),
+                product.getStatus().name(), changes);
     }
 
     /**
@@ -261,7 +281,11 @@ public class SellerProductService {
         if (request.status() == ProductStatus.DELETED) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        validateStock(request.stockQuantity());
+        validateStocks(request.stocks());
+        // 등록은 옵션을 만들지 않는다 — stocks는 optionId=null 한 줄이어야 한다 (노션 I-10, 2026-08-09)
+        if (request.stocks().size() != 1 || request.stocks().get(0).optionId() != null) {
+            throw new BusinessException(ErrorCode.INVALID_STOCK);
+        }
         int originalPrice = request.originalPrice() != null ? request.originalPrice() : request.price();
         validatePriceRange(request.price(), originalPrice);
         Category category = categoryRepository.findById(request.categoryId())
@@ -270,12 +294,15 @@ public class SellerProductService {
             throw new BusinessException(ErrorCode.PRODUCT_CATEGORY_INVALID);
         }
         Product product = Product.create(brandId, request.categoryId(), request.name(), originalPrice,
-                request.price(), request.stockQuantity(),
+                request.price(),
                 request.imageUrl() != null ? request.imageUrl() : PLACEHOLDER_IMAGE,
                 request.summary(), toJsonString(request.attributes()),
                 sanitizeDescription(request.description()),
                 request.status() != null ? request.status() : ProductStatus.ON_SALE);
         Product saved = productRepository.save(product);
+        // 재고 행은 상품과 함께 생긴다 — 없으면 그 상품은 영원히 품절이다 (02 D33 개정)
+        productStockRepository.save(ProductStock.of(saved.getId(), null,
+                request.stocks().get(0).quantity()));
         return new SellerProductCreateResponse(saved.getId(), saved.getStatus().name());
     }
 
@@ -338,8 +365,8 @@ public class SellerProductService {
         if (request.price() == null) {
             missing.add("price");
         }
-        if (request.stockQuantity() == null) {
-            missing.add("stockQuantity");
+        if (request.stocks() == null || request.stocks().isEmpty()) {
+            missing.add("stocks");
         }
         if (request.categoryId() == null) {
             missing.add("categoryId");
@@ -356,10 +383,83 @@ public class SellerProductService {
         }
     }
 
-    private static void validateStock(Integer stockQuantity) {
-        if (stockQuantity != null && stockQuantity < 0) {
-            throw new BusinessException(ErrorCode.INVALID_STOCK);
+    /**
+     * 수량 음수와 중복 옵션을 막는다 (422 INVALID_STOCK). 소속 검증은 {@link #applyStocks}에서
+     * 실제 재고 행을 찾을 때 함께 걸린다 — 새 code를 만들지 않고 기존 재고 오류에 접었다
+     * (2026-08-05 "합의되지 않은 새 code를 계약에 만들지 않는다").
+     */
+    private static void validateStocks(List<StockInput> stocks) {
+        if (stocks == null) {
+            return;
         }
+        Set<Long> seen = new HashSet<>();
+        for (StockInput stock : stocks) {
+            if (stock == null || stock.quantity() == null || stock.quantity() < 0) {
+                throw new BusinessException(ErrorCode.INVALID_STOCK);
+            }
+            // 같은 옵션이 두 번 오면 어느 값이 이기는지가 요청 순서에 달린다 — 받지 않는다
+            if (!seen.add(stock.optionId())) {
+                throw new BusinessException(ErrorCode.INVALID_STOCK);
+            }
+        }
+    }
+
+    /**
+     * I-11 재고 반영 — <b>배열에 실린 옵션만</b> 갱신하는 부분 수정이다(노션 I-11).
+     * 값이 실제로 바뀐 옵션마다 STOCK 로그를 한 행씩 남긴다(02 D32·D33 개정).
+     *
+     * <p>행을 잠그고 읽는다 — 절대값 수정이 주문의 조건부 차감과 경합하면 판매분이 유령 복원된다.
+     *
+     * @return 한 옵션이라도 실제로 바뀌었으면 true (changes에 STOCK을 넣을지 판단용)
+     */
+    private boolean applyStocks(Long productId, List<StockInput> stocks) {
+        if (stocks == null || stocks.isEmpty()) {
+            return false;
+        }
+        boolean changed = false;
+        for (StockInput input : stocks) {
+            ProductStock stock = productStockRepository
+                    .findOneForUpdate(productId, input.optionId())
+                    // 그 상품의 옵션이 아니거나(옵션 있는 상품에 null 포함) 재고 행이 없는 경우
+                    .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_STOCK));
+            if (stock.getQuantity() == input.quantity()) {
+                continue;
+            }
+            productChangeLogRepository.save(ProductChangeLog.ofOption(productId, input.optionId(),
+                    ProductChangeType.STOCK, String.valueOf(stock.getQuantity()),
+                    String.valueOf(input.quantity())));
+            stock.changeQuantity(input.quantity());
+            changed = true;
+        }
+        return changed;
+    }
+
+    /** productId → 옵션별 재고 뷰. 옵션 없는 상품은 optionId·optionName이 null인 한 줄이다 */
+    private Map<Long, List<StockView>> stockViews(List<Product> products) {
+        List<Long> productIds = products.stream().map(Product::getId).toList();
+        if (productIds.isEmpty()) {
+            return Map.of();
+        }
+        List<ProductStock> stocks = productStockRepository.findAllByProductIdIn(productIds);
+        Map<Long, String> optionNames = productOptionRepository.findAllById(
+                        stocks.stream().map(ProductStock::getOptionId).filter(Objects::nonNull).toList())
+                .stream().collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
+        Map<Long, List<StockView>> byProduct = new LinkedHashMap<>();
+        for (ProductStock stock : stocks) {
+            byProduct.computeIfAbsent(stock.getProductId(), k -> new ArrayList<>())
+                    .add(new StockView(stock.getOptionId(),
+                            stock.getOptionId() == null ? null : optionNames.get(stock.getOptionId()),
+                            stock.getQuantity()));
+        }
+        return byProduct;
+    }
+
+    private static int totalQuantity(List<StockView> views) {
+        return views == null ? 0 : views.stream().mapToInt(StockView::quantity).sum();
+    }
+
+    private static int stockOf(Map<Long, Integer> stocks, Product product) {
+        return stocks.getOrDefault(product.getId(), 0);
     }
 
     /** attributes는 JSON 객체로 수신(노션) — 저장 컬럼(json 문자열) 형식은 기존과 동일하게 직렬화 */

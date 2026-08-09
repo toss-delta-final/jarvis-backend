@@ -9,7 +9,6 @@ import org.springframework.data.domain.Pageable;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -23,28 +22,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT p FROM Product p WHERE p.id = :id")
     Optional<Product> findByIdForUpdate(@Param("id") Long id);
 
-    /**
-     * 재고 조건부 차감 (02 D33) — 결제 성공(PAID 전이)과 같은 트랜잭션에서만 호출.
-     * 0건 매치 = 재고 부족 → 결제 실패(OUT_OF_STOCK) 처리. updated_at 갱신은 I-17 증분 커서용.
-     */
-    @Modifying(flushAutomatically = true)
-    @Query("""
-            UPDATE Product p SET p.stockQuantity = p.stockQuantity - :qty, p.updatedAt = CURRENT_TIMESTAMP
-            WHERE p.id = :id AND p.stockQuantity >= :qty
-            """)
-    int deductStock(@Param("id") Long id, @Param("qty") int qty);
-
-    /** 차감 실패 시 같은 트랜잭션 내 보상 복원 — 취소/반품 복원(MVP 미구현)과 무관 */
-    @Modifying(flushAutomatically = true)
-    @Query("""
-            UPDATE Product p SET p.stockQuantity = p.stockQuantity + :qty, p.updatedAt = CURRENT_TIMESTAMP
-            WHERE p.id = :id
-            """)
-    int restoreStock(@Param("id") Long id, @Param("qty") int qty);
-
-    /** 차감 직후 잔여 확인 — 0 도달 시 product_change_logs STOCK 기록 (02 D33) */
-    @Query("SELECT p.stockQuantity FROM Product p WHERE p.id = :id")
-    Optional<Integer> findStockQuantity(@Param("id") Long id);
+    // 재고 차감·복원·조회는 ProductStockRepository로 이관 (02 D33 개정, 2026-08-09)
 
     /**
      * I-17 상품 변경분 커서 조회 (05 §I-17) — (updated_at, id) 복합 인덱스 keyset 페이지네이션.
@@ -72,15 +50,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     /** S-3 판매자 상품 목록 전용 — 삭제분 제외 (status &lt;&gt; DELETED). 집계 경로와 갈라놓은 이유는 위 참조 */
     List<Product> findAllByBrandIdAndStatusNot(Long brandId, ProductStatus status);
 
-    /** S-1 재고 부족 알림 — ON_SALE 중 재고 ≤ threshold, 재고 오름차순 (노션 S-1) */
-    @Query("""
-            select p from Product p
-            where p.brandId = :brandId
-              and p.status = com.jarvis.product.ProductStatus.ON_SALE
-              and p.stockQuantity <= :threshold
-            order by p.stockQuantity asc, p.id asc
-            """)
-    List<Product> findLowStock(@Param("brandId") Long brandId, @Param("threshold") int threshold);
+    // S-1 재고 부족 알림은 ProductStockRepository#findLowStock으로 이관 — 옵션 단위가 됐다 (02 D33 개정)
 
     Page<Product> findAllByBrandIdAndStatus(Long brandId, ProductStatus status, Pageable pageable);
 
@@ -124,7 +94,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query(value = """
             SELECT oi.product_id FROM order_item oi
             JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID' AND o.paid_at >= :since
-            JOIN product p ON p.id = oi.product_id AND p.status = 'ON_SALE' AND p.stock_quantity > 0
+            JOIN product p ON p.id = oi.product_id AND p.status = 'ON_SALE'
+            WHERE EXISTS (SELECT 1 FROM product_stock ps WHERE ps.product_id = p.id AND ps.quantity > 0)
             GROUP BY oi.product_id
             ORDER BY SUM(oi.quantity) DESC, oi.product_id DESC
             LIMIT :limit
@@ -134,8 +105,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     /** P-4 2순위 — behavior_events product_view 수 (04 §2). 1순위와 같은 이유로 품절 제외 */
     @Query(value = """
             SELECT be.product_id FROM behavior_events be
-            JOIN product p ON p.id = be.product_id AND p.status = 'ON_SALE' AND p.stock_quantity > 0
-            WHERE be.event_type = 'product_view' AND be.created_at >= :since
+            JOIN product p ON p.id = be.product_id AND p.status = 'ON_SALE'
+            WHERE EXISTS (SELECT 1 FROM product_stock ps WHERE ps.product_id = p.id AND ps.quantity > 0)
+              AND be.event_type = 'product_view' AND be.created_at >= :since
               AND be.product_id NOT IN (:excludedIds)
             GROUP BY be.product_id
             ORDER BY COUNT(*) DESC, be.product_id DESC
@@ -195,7 +167,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
               left join Review r on r.productId = p.id
                 and r.status = com.jarvis.review.ReviewStatus.VISIBLE
             where p.status = com.jarvis.product.ProductStatus.ON_SALE
-              and p.stockQuantity > 0
+              and exists (select 1 from ProductStock ps where ps.productId = p.id and ps.quantity > 0)
               and (:applyCategory = false or p.categoryId in :categoryIds)
               and (:applyBrand = false or p.brandId in :brandIds)
               and (:minPrice is null or p.price >= :minPrice)
@@ -242,7 +214,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     /** P-4 3순위 — 최신순 채움 (04 §2). 1순위와 같은 이유로 품절 제외 */
     @Query(value = """
             SELECT p.id FROM product p
-            WHERE p.status = 'ON_SALE' AND p.stock_quantity > 0 AND p.id NOT IN (:excludedIds)
+            WHERE p.status = 'ON_SALE' AND p.id NOT IN (:excludedIds)
+              AND EXISTS (SELECT 1 FROM product_stock ps WHERE ps.product_id = p.id AND ps.quantity > 0)
             ORDER BY p.id DESC
             LIMIT :limit
             """, nativeQuery = true)

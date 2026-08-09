@@ -59,7 +59,7 @@ class OrderChatQueryTest {
     }
 
     private OrderItem item(Long orderId, int price, int quantity, OrderItemStatus status) {
-        OrderItem item = OrderItem.pending(orderId, 10L, "상품10", null, price, price, quantity,
+        OrderItem item = OrderItem.pending(orderId, 10L, "상품10", null, null, price, price, quantity,
                 LocalDateTime.of(2026, 7, 17, 12, 0), null);
         ReflectionTestUtils.setField(item, "status", status);
         return item;
