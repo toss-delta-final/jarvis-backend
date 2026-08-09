@@ -176,7 +176,13 @@ public class HomeRecommendationService {
 
     /**
      * 목록 사본 + generated 이벤트. <b>실패해도 추천은 내려간다</b> — 분석 저장 때문에 홈이 죽으면
-     * 안 된다. 사본이 없으면 그 목록의 노출·클릭 이벤트만 귀속되지 않는다(E-1 ③.5).
+     * 안 된다.
+     *
+     * <p><b>[2026-08-10] 실패의 파급이 커졌다</b> — v1에선 사본이 없어도 "그 목록의 노출·클릭
+     * 이벤트만 귀속되지 않는" 정도였지만(E-1 ③.5), v2는 이 사본이 <b>귀속의 유일한 근거</b>다.
+     * 저장에 실패하면 그 회원에게 나간 추천이 없던 일이 되고, 이후 7일간의 구매가 전부 직접
+     * 매출로 떨어진다. 그래도 추천 자체를 막지 않는 판단은 유지한다 — 집계가 화면을 죽이는 것이
+     * 더 나쁘다. 대신 이 WARN이 잦아지면 AI 매출 과소집계를 의심할 자리다.
      */
     private void save(RecommendationList list, List<ProductCardResponse> cards,
                       String fallbackReason) {

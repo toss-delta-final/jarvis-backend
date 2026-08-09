@@ -29,10 +29,14 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SellerAttributionService {
 
-    /** 귀속 창 — O-1 「attribution 규칙」 그대로. 집계 시점 기준이라 바꿔서 재계산할 수 있다 */
+    /** 귀속 창 — 추천 목록이 나간 시각부터 잰다(v2). 집계 시점 기준이라 바꿔서 재계산할 수 있다 */
     private static final int ATTRIBUTION_WINDOW_DAYS = 7;
-    /** 귀속 창·이벤트 범위를 바꾸면 올린다 — 같은 기간 숫자가 달라지므로 비교 기준을 남긴다 */
-    private static final String ATTRIBUTION_POLICY_VERSION = "v1";
+    /**
+     * 귀속 창·판정 근거를 바꾸면 올린다 — 같은 기간 숫자가 달라지므로 비교 기준을 남긴다.
+     * v2(2026-08-10): 판정 근거를 행동 이벤트 → 추천 명단으로, 창 기준점을 이벤트 시각 →
+     * 추천 시각으로 바꿨다. 같은 기간이라도 v1 숫자와 직접 비교하면 안 된다.
+     */
+    private static final String ATTRIBUTION_POLICY_VERSION = "v2";
 
     private final OrderItemRepository orderItemRepository;
     private final BehaviorEventRepository behaviorEventRepository;

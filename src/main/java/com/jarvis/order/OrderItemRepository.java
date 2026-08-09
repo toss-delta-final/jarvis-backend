@@ -345,16 +345,26 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
      * 주문 단위로는 나눌 수 없다. 금액·스코프·상태 3종 제외는 <b>기존 매출 산식을 그대로 재사용</b>한다 —
      * 다른 산식을 쓰면 대시보드 안에서 숫자가 갈린다.
      *
-     * <p><b>확정 귀속</b>: 담기 이벤트에 추천 출처가 기록돼 있고 담기~결제 간격이 창 이내.
-     * 담기 자체가 확정적 의사 표시라 <b>경합하지 않는다</b> — 담은 뒤 상세를 다시 봐도 판정이 안 바뀐다.
+     * <p><b>[2026-08-10 v2 개정]</b> 판정 근거가 행동 이벤트에서 <b>추천 명단</b>으로 바뀌었다.
+     * 창도 이벤트 시각이 아니라 <b>추천 목록이 나간 시각</b>({@code recommendation_list.created_at})
+     * 부터 잰다 — 재는 대상이 사용자 행동 간격이 아니라 <b>추천의 유효기간</b>이기 때문이다.
+     * 구 v1은 이벤트에 붙는 {@code list_id}에 전적으로 의존해, 그게 안 붙으면 전부 직접 매출로
+     * 떨어졌다. v2는 서버가 직접 적재하는 목록만 보므로 FE 이벤트와 무관하게 성립한다.
      *
-     * <p><b>추정 귀속</b>: 담기 기록은 없으나 창 안에 추천 카드의 노출·클릭이 있는 경우(바로구매·홈 추천
-     * 경유). 확정과 달리 <b>경합한다</b> — 추천 접촉과 비추천 접촉(상세 직접 진입) 중 결제에 더 가까운
-     * 쪽이 이긴다(O-1 {@code last_valid_touch}). 동시각이면 추천이 이긴다({@code >=}).
+     * <p><b>확정 귀속</b>: 창 안의 AI 추천 목록을 <b>거쳐 담은</b> 기록이 있다. 담기 이벤트의
+     * {@code list_id}가 필요하므로 이벤트가 안 붙는 동안은 0이고, 그만큼 추정으로 내려간다
+     * (합계는 같다).
      *
-     * <p><b>게스트 구간을 이어붙인다</b> — {@code behavior_events}는 승계 시 백필하지 않으므로
-     * {@code guest.converted_member_id} 조인이 <b>필수</b>다. 빼면 가입 직전에 한참 둘러본 회원의
-     * 접촉이 통째로 빠져 AI 매출이 과소집계된다(제안서가 "조인을 제거해 단순화" 쪽으로 추측했던 지점).
+     * <p><b>추정 귀속</b>: 담기 기록은 없고 <b>명단에 있었을 뿐</b>이다. 확정의 상위집합이라
+     * 겹치면 확정으로 세고({@code confirmed = 0 AND estimated = 1}), <b>경합하지 않는다</b> —
+     * O-1 {@code last_valid_touch}는 S-1 귀속에 미채택이다(정본 「AI 추천 성과」 2026-08-10).
+     *
+     * <p><b>지표 성격이 뒤집혔다</b> — v1은 하한값이었으나 v2는 명단 노출만으로 귀속하므로
+     * <b>기여 상한에 가까운 추정치</b>다. 보수적 근거가 필요하면 확정 귀속만 쓴다.
+     *
+     * <p><b>게스트 구간을 이어붙인다</b> — 목록의 주인이 {@code guest_id}일 수 있으므로
+     * {@code guest.converted_member_id} 조인이 <b>필수</b>다. 빼면 비회원일 때 추천받고 가입 후
+     * 구매한 건이 통째로 빠진다. 주인이 아예 없는 목록(세션 만료 후 콜백)은 귀속되지 않는다.
      *
      * <p>{@code POPULAR_FALLBACK} 목록(P-5 대체분)은 {@code source} 조건으로 자동 배제된다 —
      * AI가 뽑은 게 아니라 인기상품으로 대신한 것이라 추천 성과가 아니다.
@@ -376,35 +386,16 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
                                AND be.product_id = oi.product_id
                                AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
                                AND be.occurred_at <= o.paid_at
-                               AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY) AS confirmed,
-                     (COALESCE((SELECT MAX(be.occurred_at) FROM behavior_events be
-                                LEFT JOIN guest g ON g.id = be.guest_id
-                                JOIN recommendation_list rl ON rl.list_id = be.list_id
-                                                           AND rl.source = 'AI_RECOMMENDED'
-                                WHERE be.event_type IN ('product_visible', 'product_click')
-                                  AND be.product_id = oi.product_id
-                                  AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
-                                  AND be.occurred_at <= o.paid_at
-                                  AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY),
-                               '1000-01-01')
-                      >= COALESCE((SELECT MAX(be.occurred_at) FROM behavior_events be
-                                   LEFT JOIN guest g ON g.id = be.guest_id
-                                   WHERE be.event_type = 'product_view'
-                                     AND be.list_id IS NULL
-                                     AND be.product_id = oi.product_id
-                                     AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
-                                     AND be.occurred_at <= o.paid_at
-                                     AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY),
-                                  '1000-01-01')
-                      AND EXISTS (SELECT 1 FROM behavior_events be
-                                  LEFT JOIN guest g ON g.id = be.guest_id
-                                  JOIN recommendation_list rl ON rl.list_id = be.list_id
-                                                             AND rl.source = 'AI_RECOMMENDED'
-                                  WHERE be.event_type IN ('product_visible', 'product_click')
-                                    AND be.product_id = oi.product_id
-                                    AND COALESCE(be.member_id, g.converted_member_id) = o.member_id
-                                    AND be.occurred_at <= o.paid_at
-                                    AND be.occurred_at >= o.paid_at - INTERVAL :windowDays DAY)) AS estimated
+                               AND rl.created_at <= o.paid_at
+                               AND rl.created_at >= o.paid_at - INTERVAL :windowDays DAY) AS confirmed,
+                     EXISTS (SELECT 1 FROM recommendation_list rl
+                             JOIN recommendation_list_item rli ON rli.list_id = rl.list_id
+                             LEFT JOIN guest g ON g.id = rl.guest_id
+                             WHERE rl.source = 'AI_RECOMMENDED'
+                               AND rli.product_id = oi.product_id
+                               AND COALESCE(rl.member_id, g.converted_member_id) = o.member_id
+                               AND rl.created_at <= o.paid_at
+                               AND rl.created_at >= o.paid_at - INTERVAL :windowDays DAY) AS estimated
               FROM order_item oi
               JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
               JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
