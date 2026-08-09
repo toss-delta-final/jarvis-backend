@@ -96,6 +96,11 @@ public enum ErrorCode {
     // 판매자 화면 조회 파라미터 오류 — 계약(노션 S-1/S-3)이 엔드포인트별 code를 요구 (S-2는 ORDER_INVALID_PARAM 재사용)
     SELLER_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
     PRODUCT_INVALID_PARAM(HttpStatus.BAD_REQUEST, "요청 파라미터가 올바르지 않습니다."),
+    // S-6 업로드 URL 발급 — 형식 오류와 크기 초과를 나눈 이유는 FE 대응이 반대라서다:
+    // 형식은 같은 사진으로 재시도해도 소용없고, 크기는 "더 작은 사진으로" 안내가 필요하다
+    // (PROFILE_VERSION_CONFLICT ↔ PROFILE_EDGE_NOT_EDITABLE과 같은 기준. 2026-08-09 FE 요청·합의)
+    IMAGE_TYPE_UNSUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 이미지 형식입니다."),
+    IMAGE_TOO_LARGE(HttpStatus.BAD_REQUEST, "이미지 용량이 너무 큽니다."),
 
     // seller 분석·상품 쓰기 (노션 명세 정합화 — 2026-07-18)
     INVALID_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),

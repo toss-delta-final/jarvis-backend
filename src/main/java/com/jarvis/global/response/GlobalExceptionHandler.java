@@ -1,6 +1,6 @@
 package com.jarvis.global.response;
 
-import com.jarvis.global.ratelimit.LoginRateLimiter;
+import com.jarvis.global.ratelimit.RateLimitedException;
 import org.springframework.http.HttpHeaders;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -22,8 +22,8 @@ public class GlobalExceptionHandler {
     }
 
     // 429는 "언제 다시 오면 되는지"를 알려줘야 클라이언트가 무작정 재시도하지 않는다 (07 §3-4)
-    @ExceptionHandler(LoginRateLimiter.RateLimitedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleRateLimited(LoginRateLimiter.RateLimitedException e) {
+    @ExceptionHandler(RateLimitedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRateLimited(RateLimitedException e) {
         ErrorCode code = e.getErrorCode();
         return ResponseEntity.status(code.getStatus())
                 .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
