@@ -37,7 +37,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class EventServiceTest {
 
-    @Mock BehaviorEventAppender behaviorEventAppender;
+    @Mock BehaviorEventPublisher behaviorEventPublisher;
     @Mock GuestRepository guestRepository;
     @Mock RecommendationAttributionResolver attributionResolver;
     @Spy ObjectMapper objectMapper = new ObjectMapper();
@@ -76,7 +76,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         List<BehaviorEvent> saved = eventsCaptor.getValue();
         assertThat(saved).hasSize(2);
 
@@ -106,7 +106,7 @@ class EventServiceTest {
                 List.of(item("u-1", "page_view", null, Map.of("pageType", "home")))),
                 null, "g-known", "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue().get(0).getGuestId()).isEqualTo("g-known");
         assertThat(eventsCaptor.getValue().get(0).getMemberId()).isNull();
 
@@ -115,7 +115,7 @@ class EventServiceTest {
                 List.of(item("u-2", "page_view", null, Map.of("pageType", "home")))),
                 null, "g-stale", "1.2.3.4");
 
-        verify(behaviorEventAppender, times(2)).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher, times(2)).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue().get(0).getGuestId()).isNull();
     }
 
@@ -128,14 +128,14 @@ class EventServiceTest {
 
         eventService.collect(mixed, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue())
                 .extracting(BehaviorEvent::getEventType)
                 .containsExactly("login");
 
         eventService.collect(new EventBatchRequest(
                 List.of(item("u-3", "unknown_type", null, null))), 1L, null, "1.2.3.4");
-        verify(behaviorEventAppender, times(1)).append(eventsCaptor.capture()); // 두 번째 호출 없음
+        verify(behaviorEventPublisher, times(1)).publish(eventsCaptor.capture()); // 두 번째 호출 없음
     }
 
     // D38로 늘어난 추천 4종 — 이게 CTR의 분자·분모다
@@ -151,7 +151,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         List<BehaviorEvent> saved = eventsCaptor.getValue();
         assertThat(saved).extracting(BehaviorEvent::getEventType)
                 .containsExactly("recommendation_impression", "product_visible",
@@ -176,7 +176,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue())
                 .extracting(BehaviorEvent::getClientEventId)
                 .containsExactly("dup-1", "uniq-1");
@@ -191,7 +191,7 @@ class EventServiceTest {
 
         eventService.collect(request, null, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         String expectedHash = TokenHasher.sha256Hex("1.2.3.4");
 
         Map<String, Object> bare = objectMapper.readValue(
@@ -210,7 +210,7 @@ class EventServiceTest {
         eventService.collect(new EventBatchRequest(
                 List.of(item("u-1", "not_in_whitelist", null, null))), 1L, null, "1.2.3.4");
 
-        verifyNoInteractions(behaviorEventAppender);
+        verifyNoInteractions(behaviorEventPublisher);
     }
 
     // E-1은 인증이 없어 여기로 받으면 추천 발생 수(CTR 분모)를 마음대로 부풀릴 수 있다 (02 D38)
@@ -224,7 +224,7 @@ class EventServiceTest {
 
         eventService.collect(mixed, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue())
                 .extracting(BehaviorEvent::getEventType)
                 .containsExactly("product_view");
@@ -245,7 +245,7 @@ class EventServiceTest {
 
         eventService.collect(mixed, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue())
                 .extracting(BehaviorEvent::getEventType)
                 .containsExactly("product_view");
@@ -261,7 +261,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getOccurredAt()).isEqualTo(saved.getCreatedAt());
         Map<String, Object> props = objectMapper.readValue(
@@ -278,7 +278,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getOccurredAt()).isEqualTo(saved.getCreatedAt());
         assertThat(saved.getProperties()).contains("_timeShifted");
@@ -294,7 +294,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getOccurredAt()).isEqualTo(
                 yesterday.atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime());
@@ -309,7 +309,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getOccurredAt()).isEqualTo(saved.getCreatedAt());
         assertThat(saved.getProperties()).contains("_timeShifted");
@@ -325,7 +325,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         Map<String, Object> incomplete = objectMapper.readValue(
                 eventsCaptor.getValue().get(0).getProperties(), new TypeReference<>() {});
         assertThat(incomplete).containsEntry("_incomplete", true).containsEntry("amount", 50000);
@@ -340,7 +340,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         Map<String, Object> props = objectMapper.readValue(
                 eventsCaptor.getValue().get(0).getProperties(), new TypeReference<>() {});
         assertThat(props).containsEntry("schemaVersion", 2);
@@ -358,7 +358,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getRecommendationRequestId()).isEqualTo("req-1"); // FE 값이 아니다
         assertThat(saved.getListId()).isEqualTo("list-1");
@@ -375,7 +375,7 @@ class EventServiceTest {
 
         eventService.collect(request, 1L, null, "1.2.3.4");
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getEventType()).isEqualTo("product_click"); // 본체는 살아남는다
         assertThat(saved.getProductId()).isEqualTo(10L);

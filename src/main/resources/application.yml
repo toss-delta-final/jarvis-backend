@@ -47,6 +47,22 @@ spring:
         request.timeout.ms: 1000  # 브로커 응답 대기 상한
         delivery.timeout.ms: 2000 # 재시도 포함 전체 상한 (≥ linger + request.timeout)
         spring.json.add.type.headers: false  # 컨슈머가 프로듀서 클래스명에 묶이지 않게
+    consumer:
+      # 컨슈머 그룹 최초 조인 시 처음부터 읽는다 — 배포 직후 그룹이 생기기 전에 쌓인 이벤트를 버리지 않게
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # 역직렬화 실패를 예외로 던지면 컨테이너가 같은 레코드에서 무한 재시도한다 —
+      # ErrorHandlingDeserializer가 감싸야 DefaultErrorHandler가 DLT로 보낼 수 있다
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      max-poll-records: 100  # E-1 배치 상한과 같은 값 — 한 번에 처리하는 양을 원래 단위로 유지
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: com.jarvis.global.event
+        # 프로듀서가 타입 헤더를 싣지 않으므로(위) 컨슈머가 타입을 알고 있어야 한다
+        spring.json.value.default.type: com.jarvis.global.event.BehaviorEventMessage
+    listener:
+      # 적재는 원래 배치 INSERT였다 — 건별 리스너로 바꾸면 DB 왕복이 건수만큼 는다
+      type: batch
 
 server:
   port: 8080

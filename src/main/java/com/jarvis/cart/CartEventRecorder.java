@@ -3,7 +3,7 @@ package com.jarvis.cart;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.global.event.BehaviorEvent;
-import com.jarvis.global.event.BehaviorEventAppender;
+import com.jarvis.global.event.BehaviorEventPublisher;
 import com.jarvis.global.event.EventAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
 import java.time.LocalDateTime;
@@ -29,8 +29,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 챗봇 경로(I-2·I-24)가 같이 커버된다. 컨트롤러에 뒀으면 네 곳에 같은 코드를 넣어야 했다.
  *
  * <p><b>커밋 이후에 적재한다</b> — 적재가 실패해도 담기·삭제는 성공해야 하고(경고 로그만),
- * 롤백된 담기가 이벤트로 남아서도 안 된다. {@link BehaviorEventAppender}가 {@code @Async} + 자체
- * 트랜잭션이라 실패가 호출자에게 번지지 않는다.
+ * 롤백된 담기가 이벤트로 남아서도 안 된다. 발행은 {@link BehaviorEventPublisher}가 자체 트랜잭션으로
+ * 하고, 그마저 실패하면 아래 {@code catch}가 삼킨다 — 분석 한 줄로 담기를 되돌리지 않는다.
  */
 @Slf4j
 @Component
@@ -51,7 +51,7 @@ public class CartEventRecorder {
      */
     public static final String CHAT_SESSION_KEY_PREFIX = "chat:";
 
-    private final BehaviorEventAppender behaviorEventAppender;
+    private final BehaviorEventPublisher behaviorEventPublisher;
     private final RecommendationAttributionResolver attributionResolver;
     private final ObjectMapper objectMapper;
 
@@ -100,7 +100,7 @@ public class CartEventRecorder {
     private void append(CartEvent event) {
         try {
             LocalDateTime now = LocalDateTime.now();
-            behaviorEventAppender.append(List.of(BehaviorEvent.record(
+            behaviorEventPublisher.publish(List.of(BehaviorEvent.record(
                     event.memberId(), event.guestId(), event.sessionKey(),
                     // 결정적 UUID를 쓰면 수량 합산으로 같은 라인을 두 번 담을 때 두 번째가 UNIQUE에
                     // 조용히 흡수돼 유실된다 — 상태 변경마다 새 무작위 id다 (노션 E-1 2026-08-06)

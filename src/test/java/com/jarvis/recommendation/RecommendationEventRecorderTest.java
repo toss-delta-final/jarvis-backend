@@ -9,7 +9,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.chat.ChatIdentity;
 import com.jarvis.global.event.BehaviorEvent;
-import com.jarvis.global.event.BehaviorEventAppender;
+import com.jarvis.global.event.BehaviorEventPublisher;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +30,7 @@ class RecommendationEventRecorderTest {
     private static final String SESSION_ID = "11111111-1111-1111-1111-111111111111";
     private static final String REQUEST_ID = "a63be350-ec96-4f44-b3f9-c962b6673a68";
 
-    @Mock BehaviorEventAppender behaviorEventAppender;
+    @Mock BehaviorEventPublisher behaviorEventPublisher;
     @Spy ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks RecommendationEventRecorder recorder;
@@ -49,7 +49,7 @@ class RecommendationEventRecorderTest {
                 list("list-a", 9, ChatIdentity.member(7L)),
                 list("list-b", 3, ChatIdentity.member(7L))));
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         List<BehaviorEvent> events = eventsCaptor.getValue();
         assertThat(events).hasSize(2);
         assertThat(events).extracting(BehaviorEvent::getListId).containsExactly("list-a", "list-b");
@@ -72,7 +72,7 @@ class RecommendationEventRecorderTest {
     void occurredAtEqualsCreatedAt() {
         recorder.recordGenerated(List.of(list("list-a", 1, ChatIdentity.member(7L))));
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent event = eventsCaptor.getValue().get(0);
         assertThat(event.getOccurredAt()).isNotNull().isEqualTo(event.getCreatedAt());
     }
@@ -85,7 +85,7 @@ class RecommendationEventRecorderTest {
                 list("list-b", 1, ChatIdentity.guest("g-1")),
                 list("list-c", 1, null)));   // 세션 만료 후 콜백 = 익명 저장
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         List<BehaviorEvent> events = eventsCaptor.getValue();
         assertThat(events.get(0).getMemberId()).isEqualTo(7L);
         assertThat(events.get(0).getGuestId()).isNull();
@@ -102,7 +102,7 @@ class RecommendationEventRecorderTest {
     void sessionKeyFallsBackToChatSession() {
         recorder.recordGenerated(List.of(list("list-a", 1, ChatIdentity.member(7L))));
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue().get(0).getSessionKey()).isEqualTo(SESSION_ID);
     }
 
@@ -111,7 +111,7 @@ class RecommendationEventRecorderTest {
     void skipsWhenNothingFresh() {
         recorder.recordGenerated(List.of());
 
-        verifyNoInteractions(behaviorEventAppender);
+        verifyNoInteractions(behaviorEventPublisher);
     }
 
     // client_event_id는 NOT NULL인데 FE가 보내지 않는다 — listId 기반 결정적 UUID (02 D40).
@@ -122,14 +122,14 @@ class RecommendationEventRecorderTest {
         recorder.recordGenerated(List.of(
                 list("list-a", 1, ChatIdentity.member(7L)),
                 list("list-b", 1, ChatIdentity.member(7L))));
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         List<BehaviorEvent> first = eventsCaptor.getValue();
         assertThat(first).extracting(BehaviorEvent::getClientEventId)
                 .doesNotContainNull().doesNotHaveDuplicates();
 
         // 같은 listId를 다시 적재하면 같은 값이 나온다 → DB UNIQUE가 중복을 막는다
         recorder.recordGenerated(List.of(list("list-a", 1, ChatIdentity.member(7L))));
-        verify(behaviorEventAppender, times(2)).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher, times(2)).publish(eventsCaptor.capture());
         assertThat(eventsCaptor.getValue().get(0).getClientEventId())
                 .isEqualTo(first.get(0).getClientEventId());
     }

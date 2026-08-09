@@ -8,7 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.global.event.BehaviorEvent;
-import com.jarvis.global.event.BehaviorEventAppender;
+import com.jarvis.global.event.BehaviorEventPublisher;
 import com.jarvis.global.event.EventAttribution;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
 import java.util.List;
@@ -24,13 +24,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class CartEventRecorderTest {
 
-    @Mock BehaviorEventAppender behaviorEventAppender;
+    @Mock BehaviorEventPublisher behaviorEventPublisher;
     @Mock RecommendationAttributionResolver attributionResolver;
 
     @Captor ArgumentCaptor<List<BehaviorEvent>> eventsCaptor;
 
     private CartEventRecorder recorder() {
-        return new CartEventRecorder(behaviorEventAppender, attributionResolver, new ObjectMapper());
+        return new CartEventRecorder(behaviorEventPublisher, attributionResolver, new ObjectMapper());
     }
 
     private static CartEventRecorder.CartEvent event(String sessionKey, String listId) {
@@ -43,7 +43,7 @@ class CartEventRecorderTest {
     void writesContractProperties() {
         recorder().record(event("sess-1", null));
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getEventType()).isEqualTo("add_to_cart");
         assertThat(saved.getProductId()).isEqualTo(10L);
@@ -60,7 +60,7 @@ class CartEventRecorderTest {
         recorder().record(event(null, null));
         recorder().record(event("  ", null));
 
-        verifyNoInteractions(behaviorEventAppender);
+        verifyNoInteractions(behaviorEventPublisher);
     }
 
     // 이벤트 귀속은 소유자를 검증하지 않는다(E-1 ③.5) — cart_item 저장용 3규칙과 분리된 경로다
@@ -75,7 +75,7 @@ class CartEventRecorderTest {
 
         recorder().record(event("sess-1", "list-1"));
 
-        verify(behaviorEventAppender).append(eventsCaptor.capture());
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
         BehaviorEvent saved = eventsCaptor.getValue().get(0);
         assertThat(saved.getListId()).isEqualTo("list-1");
         assertThat(saved.getSurface()).isEqualTo("CHAT");
@@ -87,7 +87,7 @@ class CartEventRecorderTest {
     void skipsAttributionLookupWithoutListId() {
         recorder().record(event("sess-1", null));
 
-        verify(behaviorEventAppender).append(anyList());
+        verify(behaviorEventPublisher).publish(anyList());
         verifyNoInteractions(attributionResolver);
     }
 
