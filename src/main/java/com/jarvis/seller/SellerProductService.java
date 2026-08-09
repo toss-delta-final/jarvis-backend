@@ -223,7 +223,7 @@ public class SellerProductService {
         if (request.status() == ProductStatus.DELETED) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        validateStocks(request.stocks());
+        validateStocks(request.resolvedStocks());
         validatePriceRange(
                 request.price() != null ? request.price() : product.getPrice(),
                 request.originalPrice() != null ? request.originalPrice() : product.getOriginalPrice());
@@ -262,10 +262,10 @@ public class SellerProductService {
             changes.add(ProductChangeType.STATUS.name());
             product.changeStatus(request.status());
         }
-        if (applyStocks(productId, request.stocks())) {
+        if (applyStocks(productId, request.resolvedStocks())) {
             changes.add(ProductChangeType.STOCK.name());
         }
-        return new SellerProductUpdateResponse(productId, product.getPrice(),
+        return SellerProductUpdateResponse.of(productId, product.getPrice(),
                 stockViews(List.of(product)).getOrDefault(productId, List.of()),
                 product.getStatus().name(), changes);
     }
@@ -281,9 +281,10 @@ public class SellerProductService {
         if (request.status() == ProductStatus.DELETED) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
-        validateStocks(request.stocks());
+        List<StockInput> stocks = request.resolvedStocks();
+        validateStocks(stocks);
         // 등록은 옵션을 만들지 않는다 — stocks는 optionId=null 한 줄이어야 한다 (노션 I-10, 2026-08-09)
-        if (request.stocks().size() != 1 || request.stocks().get(0).optionId() != null) {
+        if (stocks.size() != 1 || stocks.get(0).optionId() != null) {
             throw new BusinessException(ErrorCode.INVALID_STOCK);
         }
         int originalPrice = request.originalPrice() != null ? request.originalPrice() : request.price();
@@ -302,7 +303,7 @@ public class SellerProductService {
         Product saved = productRepository.save(product);
         // 재고 행은 상품과 함께 생긴다 — 없으면 그 상품은 영원히 품절이다 (02 D33 개정)
         productStockRepository.save(ProductStock.of(saved.getId(), null,
-                request.stocks().get(0).quantity()));
+                stocks.get(0).quantity()));
         return new SellerProductCreateResponse(saved.getId(), saved.getStatus().name());
     }
 
@@ -365,7 +366,7 @@ public class SellerProductService {
         if (request.price() == null) {
             missing.add("price");
         }
-        if (request.stocks() == null || request.stocks().isEmpty()) {
+        if (request.resolvedStocks() == null || request.resolvedStocks().isEmpty()) {
             missing.add("stocks");
         }
         if (request.categoryId() == null) {
