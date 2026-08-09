@@ -59,31 +59,49 @@ public class BehaviorEventPublisher {
 
     /** 전량을 비동기로 보낸 뒤 공통 데드라인 안에서 결과를 모은다 — 실패한 건만 돌려준다 */
     private List<BehaviorEvent> sendAll(List<BehaviorEvent> events) {
+        List<BehaviorEvent> undelivered = new ArrayList<>();
         List<CompletableFuture<?>> futures = new ArrayList<>(events.size());
-        for (BehaviorEvent event : events) {
-            BehaviorEventMessage message = BehaviorEventMessage.from(event);
-            futures.add(kafkaTemplate.send(KafkaConfig.BEHAVIOR_EVENTS_TOPIC,
-                    message.partitionKey(), message));
+        List<BehaviorEvent> inFlight = new ArrayList<>(events.size());
+
+        for (int i = 0; i < events.size(); i++) {
+            BehaviorEventMessage message = BehaviorEventMessage.from(events.get(i));
+            try {
+                futures.add(kafkaTemplate.send(KafkaConfig.BEHAVIOR_EVENTS_TOPIC,
+                        message.partitionKey(), message));
+                inFlight.add(events.get(i));
+            } catch (Exception e) {
+                // ⚠️ send()는 실패를 항상 future로 주지 않는다 — 브로커 메타데이터를 못 받으면
+                // ("Topic ... not present in metadata after 1000 ms") **동기적으로 던진다.**
+                // 이걸 잡지 않으면 폴백·강등 마커를 통째로 건너뛰고 500이 나가 이벤트가 유실된다
+                // (2026-08-10 재현: 브로커가 꺼진 채 기동한 앱의 첫 요청. 캐시된 메타데이터가 있으면
+                //  future 경로로 오기 때문에 "브로커를 나중에 죽이는" 테스트로는 잡히지 않았다).
+                //
+                // 남은 건까지 시도하지 않고 한꺼번에 폴백으로 넘긴다 — 브로커 단위 실패라 결과가 같고,
+                // 건당 max.block.ms(1s)를 다시 기다리면 배치 100건이 100초가 된다.
+                log.warn("behavior-events 발행이 동기 예외로 실패 — 남은 {}건까지 DB 폴백으로 넘긴다",
+                        events.size() - i, e);
+                undelivered.addAll(events.subList(i, events.size()));
+                break;
+            }
         }
 
         // 레코드들은 프로듀서 I/O 스레드에서 동시에 나가므로 대기 시간이 건수에 비례하지 않는다.
         // 그래도 배치가 클 때 합이 늘어나지 않도록 데드라인을 공유한다.
         long deadlineNanos = System.nanoTime() + SEND_DEADLINE.toNanos();
-        List<BehaviorEvent> undelivered = new ArrayList<>();
         for (int i = 0; i < futures.size(); i++) {
             long remaining = deadlineNanos - System.nanoTime();
             try {
                 futures.get(i).get(Math.max(remaining, 0), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                undelivered.addAll(events.subList(i, events.size()));
+                undelivered.addAll(inFlight.subList(i, inFlight.size()));
                 return undelivered;
             } catch (Exception e) {
                 if (undelivered.isEmpty()) {
                     log.warn("behavior-events produce 실패 (clientEventId={})",
-                            events.get(i).getClientEventId(), e);
+                            inFlight.get(i).getClientEventId(), e);
                 }
-                undelivered.add(events.get(i));
+                undelivered.add(inFlight.get(i));
             }
         }
         return undelivered;

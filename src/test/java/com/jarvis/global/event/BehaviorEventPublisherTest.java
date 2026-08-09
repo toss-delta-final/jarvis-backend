@@ -101,6 +101,26 @@ class BehaviorEventPublisherTest {
     }
 
     @Test
+    @DisplayName("send()가 동기 예외를 던져도 DB로 폴백한다 — 브로커 메타데이터 미확보 (2026-08-10 회귀)")
+    void fallsBackWhenSendThrowsSynchronously() {
+        // 브로커가 꺼진 채 기동하면 send()는 future가 아니라 그 자리에서 던진다
+        // ("Topic ... not present in metadata after 1000 ms"). 종전 구현은 이걸 놓쳐
+        // 폴백·강등 마커를 건너뛰고 500을 냈고, FE가 재전송하지 않으므로 그대로 유실됐다.
+        when(kafkaTemplate.send(anyString(), anyString(), any()))
+                .thenThrow(new org.springframework.kafka.KafkaException("Send failed"));
+
+        publisher.publish(List.of(event("id-1", "sess-1"), event("id-2", "sess-2")));
+
+        verify(streamHealth).markProduceFailure();
+        verify(behaviorEventAppender).append(fallbackCaptor.capture());
+        // 첫 건에서 터지면 남은 건도 같은 이유로 실패하므로 한꺼번에 넘긴다 — 건당 재시도하면
+        // 배치 100건이 max.block.ms × 100이 된다
+        assertThat(fallbackCaptor.getValue())
+                .extracting(BehaviorEvent::getClientEventId)
+                .containsExactly("id-1", "id-2");
+    }
+
+    @Test
     @DisplayName("빈 배치는 브로커를 건드리지 않는다")
     void skipsEmptyBatch() {
         publisher.publish(List.of());
