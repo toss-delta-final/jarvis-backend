@@ -66,7 +66,7 @@ public interface ProductStockRepository extends JpaRepository<ProductStock, Long
     int deduct(@Param("productId") Long productId, @Param("optionId") Long optionId,
                @Param("qty") int qty);
 
-    /** 차감 실패 시 같은 트랜잭션 내 보상 복원 — 취소/반품 복원(MVP 미구현)과 무관 */
+    /** 무조건 복원 — 차감 실패 시의 보상 복원과 취소/반품 확정분 복원이 함께 쓴다 (둘 다 ProductStockService 경유) */
     @Modifying(flushAutomatically = true)
     @Query("""
             update ProductStock s set s.quantity = s.quantity + :qty

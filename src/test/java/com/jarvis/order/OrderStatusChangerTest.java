@@ -6,12 +6,15 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.jarvis.product.ProductStockService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +34,7 @@ class OrderStatusChangerTest {
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private ClaimRepository claimRepository;
     @Mock private OrderStatusLogRepository logRepository;
+    @Mock private ProductStockService productStockService;
 
     @InjectMocks private OrderStatusChanger changer;
 
@@ -39,6 +43,24 @@ class OrderStatusChangerTest {
         lenient().when(i.getId()).thenReturn(id);
         lenient().when(i.getOrderId()).thenReturn(orderId);
         return i;
+    }
+
+    /** 재고 복원 대상 정보까지 갖춘 아이템 — 복원 키는 optionName 스냅샷이 아니라 optionId다 (02 D33) */
+    private static OrderItem item(long id, long orderId, Long productId, Long optionId, int quantity) {
+        OrderItem i = item(id, orderId);
+        lenient().when(i.getProductId()).thenReturn(productId);
+        lenient().when(i.getOptionId()).thenReturn(optionId);
+        lenient().when(i.getQuantity()).thenReturn(quantity);
+        return i;
+    }
+
+    private static Claim returnClaim(long id, long orderItemId) {
+        Claim c = mock(Claim.class);
+        lenient().when(c.getId()).thenReturn(id);
+        lenient().when(c.getOrderItemId()).thenReturn(orderItemId);
+        lenient().when(c.requestedItemStatus()).thenReturn(OrderItemStatus.RETURN_REQUESTED);
+        lenient().when(c.completedItemStatus()).thenReturn(OrderItemStatus.RETURNED);
+        return c;
     }
 
     private static Claim claim(long id, long orderItemId, String reason) {
@@ -132,6 +154,41 @@ class OrderStatusChangerTest {
         // 구 규칙은 (주문, from, to)로 묶어 첫 reason만 남기고 "배송지연"을 버렸다
         assertThat(logs).extracting(OrderStatusLog::getReason).containsExactly("단순변심", "배송지연");
         assertThat(logs).allSatisfy(l -> assertThat(l.getActorType()).isEqualTo(ActorType.USER));
+    }
+
+    @Test
+    @DisplayName("클레임 승인: 취소·반품 확정분의 재고를 같은 트랜잭션에서 되돌린다 (반품도 복원 대상)")
+    void claimApprovalRestoresStockForCancelAndReturn() {
+        List<Claim> due = List.of(claim(1L, 5551L, "단순변심"), returnClaim(2L, 5552L));
+        List<OrderItem> items = List.of(
+                item(5551L, 500L, 10L, 100L, 2),    // 취소 — 옵션 있는 상품
+                item(5552L, 500L, 20L, null, 3));   // 반품 — 옵션 없는 상품
+
+        when(claimRepository.findAllByStatusAndCreatedAtLessThanEqual(any(), any())).thenReturn(due);
+        when(orderItemRepository.findAllById(any())).thenReturn(items);
+        when(orderItemRepository.transitionStatus(anyLong(), any(), any(), any())).thenReturn(1);
+        when(orderItemRepository.countByOrderIdAndStatusNot(eq(500L), any())).thenReturn(1L);
+
+        changer.approveDueClaims(LocalDateTime.now());
+
+        verify(productStockService).restore(Map.of(
+                new ProductStockService.StockKey(10L, 100L), 2,
+                new ProductStockService.StockKey(20L, null), 3));
+    }
+
+    @Test
+    @DisplayName("클레임 승인: 전이 경합에 진 아이템은 재고도 되돌리지 않는다")
+    void lostRaceRestoresNothing() {
+        List<Claim> due = List.of(claim(1L, 5551L, "단순변심"));
+        List<OrderItem> items = List.of(item(5551L, 500L, 10L, 100L, 2));
+
+        when(claimRepository.findAllByStatusAndCreatedAtLessThanEqual(any(), any())).thenReturn(due);
+        when(orderItemRepository.findAllById(any())).thenReturn(items);
+        when(orderItemRepository.transitionStatus(anyLong(), any(), any(), any())).thenReturn(0);
+
+        assertThat(changer.approveDueClaims(LocalDateTime.now())).isZero();
+
+        verify(productStockService, never()).restore(any());
     }
 
     @Test

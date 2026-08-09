@@ -5,11 +5,12 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 재고 변경의 단일 관문 (02 D33) — 조건부 차감·보상 복원·품절 로그를 한 트랜잭션으로 묶는다.
+ * 재고 변경의 단일 관문 (02 D33) — 조건부 차감·취소반품 복원·품절/재입고 로그를 한 트랜잭션으로 묶는다.
  * OrderStatusChanger가 상태 전이와 로그에 대해 하는 역할을 재고에 대해 한다.
  *
  * <p>조회 전용 {@link ProductService}와 나눠 둔 건 바뀌는 이유가 달라서다 — 저쪽은 "상품을 어떻게
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>2026-08-09 개정</b> — 차감 단위가 상품에서 <b>(상품, 옵션)</b>으로 내려갔다(02 D33 개정).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProductStockService {
@@ -75,5 +77,43 @@ public class ProductStockService {
             productChangeLogRepository.saveAll(stockOutLogs);
         }
         return true;
+    }
+
+    /**
+     * 취소/반품 확정분의 재고를 되돌린다 — 아이템 종결 전이(CANCELLED/RETURNED)와 같은 트랜잭션에서만 호출.
+     *
+     * <p>{@link #deduct}가 안에서 쓰는 보상 복원과 이름은 같아도 성질이 다르다 — 저쪽은 같은 트랜잭션에서
+     * 방금 한 UPDATE를 되돌리는 것이고, 이쪽은 이미 커밋된 판매분을 되돌리는 것이다.
+     *
+     * <p><b>재입고 전환(0 → n)만 로그를 남긴다</b> — 주문에 의한 재고 증감은 order_item으로 복원되므로
+     * 미기록이고 품절이 풀리는 순간만 신호다(02 D32). 차감의 품절 로그와 대칭이며, 이걸 빼면 I-15
+     * 소비자가 "품절됨"만 듣고 "풀림"은 영영 못 듣는다.
+     */
+    @Transactional
+    public void restore(Map<StockKey, Integer> quantities) {
+        // 재입고 로그도 차감과 같은 이유로 모았다 한 번에 쓴다
+        List<ProductChangeLog> restockLogs = new ArrayList<>();
+        List<Map.Entry<StockKey, Integer>> ordered = quantities.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(LOCK_ORDER))
+                .toList();
+
+        for (Map.Entry<StockKey, Integer> entry : ordered) {
+            StockKey key = entry.getKey();
+            int qty = entry.getValue();
+            if (productStockRepository.restore(key.productId(), key.optionId(), qty) == 0) {
+                // 재고 행이 사라진 상품 — 되돌릴 곳이 없다. 취소·반품 자체는 유효하므로 막지 않는다
+                log.warn("재고 복원 대상 행 없음 — 건너뜀 (productId={}, optionId={}, qty={})",
+                        key.productId(), key.optionId(), qty);
+                continue;
+            }
+            // 복원 결과가 복원량과 같으면 직전이 0이었다는 뜻 — 차감의 품절 판정을 뒤집은 것이다
+            if (productStockRepository.findQuantity(key.productId(), key.optionId()).orElse(-1) == qty) {
+                restockLogs.add(ProductChangeLog.ofOption(key.productId(), key.optionId(),
+                        ProductChangeType.STOCK, "0", String.valueOf(qty)));
+            }
+        }
+        if (!restockLogs.isEmpty()) {
+            productChangeLogRepository.saveAll(restockLogs);
+        }
     }
 }

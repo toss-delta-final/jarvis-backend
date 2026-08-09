@@ -155,7 +155,8 @@ CREATE TABLE product_stock (
         REFERENCES product_option (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- 재고 (D33 개정 — 2026-08-09, 구 product.stock_quantity 폐기). 옵션마다 한 행, 옵션 없는 상품은 option_id NULL 한 행.
--- 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행 (D32). 복원 MVP 미구현.
+-- 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행 (D32).
+-- 취소/반품 확정(CANCELLED/RETURNED) 시 같은 트랜잭션에서 복원, 0에서 풀리면 재입고 STOCK 로그 1행 (2026-08-10).
 -- 시드 초기값은 옵션 id에서 결정적으로 유도하며 일부를 0으로 둔다 — 품절이 하나도 없으면 품절 동선을 검증할 수 없다.
 
 CREATE TABLE product_detail_image (

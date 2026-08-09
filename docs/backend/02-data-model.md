@@ -264,14 +264,14 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **문제**: 분석 에이전트 입력 중 주문 상태 전이·상품 가격/재고/상태 변경·인증 이벤트는 FE 행동 이벤트(D31)로 잡을 수 없는 서버 사실. 어디에 어떻게 남길지.
 - **선택**: append-only 로그 테이블 3종 신설 — `order_status_logs` / `product_change_logs` / `account_event_logs`(§3). 전부 FK 미설정(append-only 로그 경량화 — 구 user_event.product_id와 같은 이유). 상세 기록 지점 규칙은 **01 문서 소관**(01에 신설됨) — 02는 테이블 정의 + 요약만.
 - **order_status_logs 요약**: to_status 어휘는 **우리 상태명 그대로** — 주문 수준 `PENDING`/`PAID`/`PAYMENT_FAILED`/`CANCELLED`, 아이템 이행 수준 `SHIPPING`/`DELIVERED`/`CANCELLED`/`RETURNED`. `ORDERED`는 PAID와 같은 트랜잭션이라 별도 기록 안 함, `*_REQUESTED`(신청 접수)는 claim 테이블이 정본이라 미기록, `CONFIRMED`(구매확정)도 미기록. 교환 어휘 없음(D34). actor 규칙: **발송(`ORDERED→SHIPPING`)=SELLER**(판매자 발송 I-30 — 2026-08-06 개정, 구 "SYSTEM 모의 스케줄러·판매자 발송 기능 없음"), 그 이후 배송 전이=SYSTEM(모의 스케줄러), 취소/반품 완료=USER(신청 주체 — 자동 승인 스케줄러가 실행해도 신청 주체 기준) + claim.reason 텍스트, 결제 성공/실패=SYSTEM. **[2026-08-06 개정] 로그 해상도는 "무엇의 상태를 바꿨나"로 가른다** — `order_item_id` 컬럼을 신설해 아이템 상태 전이는 아이템마다 1행(값 필수), 주문 상태 전이만 NULL. 구 "같은 주문 여러 아이템의 동시 동일 전이는 주문 단위 1행만" 규칙은 폐기 — 발송이 아이템별·판매자별로 갈리면서 아이템들이 서로 다른 시각에 다음 단계로 넘어가 "동시 배치" 전제가 사라졌고, 한 주문에 타 브랜드 아이템이 섞이는 이상 order_id만으로는 무엇이 발송됐는지 복원할 수 없다(01 §6.5 규칙 4). **orders.status 어휘에 `CANCELLED` 편입**(4종, 컬럼 타입 무변경) — 전량 취소(소속 아이템 전부 CANCELLED) 시 같은 트랜잭션에서 orders.status→CANCELLED + 로그 1행. 미입금 자동취소 배치는 도입하지 않음(주문=결제 동시 생성이라 해당 없음).
-- **product_change_logs 요약**: 전후 값 동일 시 미기록. 주문에 의한 재고 -1은 미기록(order_item으로 복원 가능) — 수동 조정과 품절(new_value=0)/재입고 전환만 기록. 품절 신호 = STOCK new_value 0 (SOLD_OUT 상태 미도입).
+- **product_change_logs 요약**: 전후 값 동일 시 미기록. 주문에 의한 재고 증감은 미기록(order_item으로 복원 가능) — 수동 조정과 품절(new_value=0)/재입고(old_value=0) 전환만 기록. **[2026-08-10] 재입고 전환은 판매자 수동 조정뿐 아니라 취소/반품 복원으로도 발생한다**(D33) — 기준은 "주문이냐 수동이냐"가 아니라 "0 경계를 넘었나"다. 품절 신호 = STOCK new_value 0 (SOLD_OUT 상태 미도입).
 - **account_event_logs 요약**: AuthService 성공/실패 지점에서 직접 적재(03 §3-1 — formLogin 미사용이라 Security 핸들러 자동 발화 없음). 로그인 실패도 기록 — 없는 계정 시도는 member_id NULL + IP(무차별 대입 탐지 재료). FE의 login 행동 이벤트(D31)와 중복이지만 목적이 다름(행동 vs 보안) — **"마지막 로그인"의 단일 출처는 account_event_logs.LOGIN_SUCCESS**.
 - **트레이드오프**: 쓰기 경로마다 로그 INSERT 1회 추가 — append-only 단순 INSERT라 무시 가능. FK 미설정으로 고아 로그 가능 → 로그는 참조 무결성보다 적재 안정성 우선.
 
 ### D33. 재고를 모델링한다 — product_stock (D8 폐기 — 2026-07-17 · 2026-08-09 개정)
 
 - **문제**: D8(재고 미모델링)의 근거는 "재고의 소비처가 없다"였는데 소비처가 생겼다 — 판매자 에이전트의 재고 조정(internal I-11)과 재고 변경 로그(D32 STOCK)가 재고 실체를 요구.
-- **선택**: `stock_quantity INT NOT NULL DEFAULT 0` + `CHECK (stock_quantity >= 0)`. **결제 성공(PAID 전이)과 같은 트랜잭션**에서 조건부 UPDATE(`SET stock_quantity = stock_quantity - n WHERE stock_quantity >= n`)로 차감(2026-07-17 확정 — 미결제 주문이 재고를 점유하지 않게), 차감 실패 시 결제 실패(PAYMENT_FAILED, reason OUT_OF_STOCK) 처리 — D8 트레이드오프가 예고한 확장 패턴 그대로(01 §6과 동일, 분산 3대에서도 안전). 차감으로 0 도달 시 STOCK 로그(new_value 0) 1행(D32). **2026-08-05** — O-1이 주문 생성 전에 재고를 선검증해 대부분을 400으로 걸러내지만(04 §4), 이 조건부 UPDATE가 최종 방어선이라는 점은 변하지 않는다. 선검증은 경합 구간을 좁힐 뿐 없애지 못한다. 취소/반품 시 복원은 MVP 미구현(감수 — 시드 재고 100).
+- **선택**: `stock_quantity INT NOT NULL DEFAULT 0` + `CHECK (stock_quantity >= 0)`. **결제 성공(PAID 전이)과 같은 트랜잭션**에서 조건부 UPDATE(`SET stock_quantity = stock_quantity - n WHERE stock_quantity >= n`)로 차감(2026-07-17 확정 — 미결제 주문이 재고를 점유하지 않게), 차감 실패 시 결제 실패(PAYMENT_FAILED, reason OUT_OF_STOCK) 처리 — D8 트레이드오프가 예고한 확장 패턴 그대로(01 §6과 동일, 분산 3대에서도 안전). 차감으로 0 도달 시 STOCK 로그(new_value 0) 1행(D32). **2026-08-05** — O-1이 주문 생성 전에 재고를 선검증해 대부분을 400으로 걸러내지만(04 §4), 이 조건부 UPDATE가 최종 방어선이라는 점은 변하지 않는다. 선검증은 경합 구간을 좁힐 뿐 없애지 못한다. 취소/반품 완료(`CANCELLED`/`RETURNED` 확정) 시 같은 트랜잭션에서 복원한다(2026-08-10 — 구 "MVP 미구현, 감수"). 복원으로 0이 풀리면 재입고 STOCK 로그 1행(`old_value=0`) — 안 남기면 I-15 소비자가 품절만 듣고 해제를 못 듣는다.
 - **함께 확정**: `product.updated_at`을 NOT NULL로(생성 시 created_at과 동일 값으로 초기화) + `KEY idx_product_updated (updated_at, id)` — AI 상품 동기화 배치(I-17)의 증분 커서용. 커서 방식은 `(updated_at, id)` Base64URL keyset로 확정(2026-07-23, 05 §I-17).
 - **트레이드오프**: D8이 피하려던 리스크 부활 — 추천 상품이 품절이면 핵심 데모 플로우(추천→담기→구매)가 막힘 → 시드에서 재고를 넉넉히 초기화해 완화. 초기 재고: 크롤링 1만 개+ 상품 전부 **일괄 100** (2026-07-17 확정) — 시드 파이프라인이 INSERT 시 채운다. 크롤링 원본 재고는 신뢰할 수 없어 베이스라인으로 쓰지 않음.
 
@@ -282,7 +282,7 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **왜 상품에 합계를 남기지 않는가**: 같은 사실이 두 곳에 생기면 어긋나도 **에러가 나지 않는다**(D9가 평점에 대해 내린 판단과 같다). 합계가 필요한 화면(P-2·I-9·S-3)은 조회 시 집계한다 — 파생값을 응답에서 계산하는 건 반정규화가 아니다.
 - **왜 "옵션 있으면 옵션 재고, 없으면 상품 재고"가 아닌가**: 그러면 `stock_quantity`가 **어떤 상품에선 진짜, 어떤 상품에선 가짜**가 된다. 그 컬럼을 읽는 코드마다 분기해야 하고, 한 곳만 빠뜨려도 조용히 틀린 재고가 나간다. 같은 이유로 API 입력(I-10·I-11)도 `stocks` 배열 하나로 통일했다 — 옵션 유무로 필드를 가르지 않는다.
 - **왜 `product_option`에 재고 컬럼을 붙이지 않는가**: 그 테이블은 "보여줄 선택지"다. 옵션 없는 상품까지 담으려면 화면에 없는 "기본" 행을 만들어야 하고, 그게 주문 내역 옵션명에 찍힌다.
-- **함께 확정**: ① `order_item.option_id` 추가 — `option_name`은 스냅샷이라 현재 옵션과 매칭이 보장되지 않아 취소·반품 재고 복원의 키로 쓸 수 없다(복원은 여전히 MVP 미구현이지만, ERD를 다시 여는 비용이 컬럼 하나보다 크다). ② `product_change_logs.option_id` 추가 — "재고 100 → 50"이 어느 옵션인지 없으면 판매자 이력이 오해를 부른다.
+- **함께 확정**: ① `order_item.option_id` 추가 — `option_name`은 스냅샷이라 현재 옵션과 매칭이 보장되지 않아 취소·반품 재고 복원의 키로 쓸 수 없다(그 시점엔 복원이 미구현이었지만 ERD를 다시 여는 비용이 컬럼 하나보다 컸다 — 2026-08-10에 이 컬럼이 실제로 복원 키가 됐다). ② `product_change_logs.option_id` 추가 — "재고 100 → 50"이 어느 옵션인지 없으면 판매자 이력이 오해를 부른다.
 - **초기 재고**: 일괄 100을 접는다. 품절이 하나도 없으면 이 기능이 실제로 도는지 검증할 수 없어서다(AI팀도 동의). 옵션 id에서 **결정적으로** 유도하고 일부를 0으로 둔다 — 무작위를 쓰면 다시 시드할 때 다른 화면이 나온다.
 - **트레이드오프**: 조회 경로가 전부 조인 하나씩 늘어난다. 판매자 재고 수정(I-11)의 입력이 정수 하나에서 배열로 바뀌어 **판매자 챗봇(jarvis-ai `agents/seller/`)이 함께 고쳐져야 한다** — 계약 파급이 이 개정의 가장 큰 비용이다.
 
@@ -704,7 +704,7 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 |---|---|---|---|
 | product_id | BIGINT | FK(product) RESTRICT, NOT NULL | |
 | option_id | BIGINT | FK(product_option) RESTRICT, NULL | **NULL = 옵션 없는 상품의 유일한 재고 행** |
-| quantity | INT | NOT NULL DEFAULT 0, CHECK ≥ 0, UNIQUE(product_id, option_id) | 재고 (D33 개정 — 구 `product.stock_quantity`). 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행(D32). 복원 MVP 미구현 |
+| quantity | INT | NOT NULL DEFAULT 0, CHECK ≥ 0, UNIQUE(product_id, option_id) | 재고 (D33 개정 — 구 `product.stock_quantity`). 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행(D32). 취소/반품 확정 시 같은 트랜잭션에서 복원, 0에서 풀리면 재입고 STOCK 로그 1행 |
 
 UNIQUE가 "재고가 사는 곳은 한 군데"를 DB 수준에서 보장한다. 단 **MariaDB는 NULL을 서로 다르게 보므로** `option_id IS NULL` 행의 중복은 이 제약으로 막히지 않는다 — 옵션 없는 상품의 두 번째 행은 서비스가 막는다.
 
