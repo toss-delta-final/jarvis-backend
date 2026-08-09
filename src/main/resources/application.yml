@@ -9,7 +9,8 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.mariadb.jdbc.Driver
     hikari:
-      maximum-pool-size: 10    # 서버 2대 기준 총 20 — db.t3.micro 한도(약 34) 내 유지
+      maximum-pool-size: 7     # 서버 4대 기준 총 28 — RDS max_connections 30(2026-08-09 실측) 내 유지.
+                               # 여유 2는 마이그레이션·수동 쿼리용. 대수를 더 늘리면 이 값을 다시 나눠야 한다
       minimum-idle: 2          # 유휴 시 커넥션 반납해 슬롯 확보
       connection-timeout: 5000 # 기본 30s — 풀 고갈 시 30초 매달리는 대신 5초 fail-fast
       idle-timeout: 300000     # 5분 유휴 시 커넥션 정리
