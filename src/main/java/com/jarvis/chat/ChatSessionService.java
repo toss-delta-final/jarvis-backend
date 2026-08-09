@@ -73,9 +73,8 @@ public class ChatSessionService {
      */
     private ChatSessionResponse create(String ownerKey, ChatIdentity identity, ChatChannel channel, Long brandId) {
         String sessionId = UUID.randomUUID().toString();
-        Duration ttl = sessionTtl();
-        redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(identity, channel, brandId), ttl);
-        if (Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(ownerKey, sessionId, ttl))) {
+        redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(identity, channel, brandId), sessionTtl());
+        if (Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(ownerKey, sessionId, ownerTtl()))) {
             return response(sessionId, identity, brandId);
         }
         Optional<ChatSessionResponse> winner = reuseActive(ownerKey, identity);
@@ -83,7 +82,7 @@ public class ChatSessionService {
             redisTemplate.delete(sessionKey(sessionId));
             return winner.get();
         }
-        redisTemplate.opsForValue().set(ownerKey, sessionId, ttl);
+        redisTemplate.opsForValue().set(ownerKey, sessionId, ownerTtl());
         return response(sessionId, identity, brandId);
     }
 
@@ -159,10 +158,9 @@ public class ChatSessionService {
         }
         llmNotifyClient.notifySessionClaim(sessionId, guestId, memberId);
         Long brandId = brandIdOf(value);
-        Duration ttl = sessionTtl();
-        redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(member, channel, brandId), ttl);
+        redisTemplate.opsForValue().set(sessionKey(sessionId), sessionValue(member, channel, brandId), sessionTtl());
         redisTemplate.delete(ownerKey(ChatIdentity.guest(guestId), channel));
-        redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ttl);
+        redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ownerTtl());
         return response(sessionId, member, brandId);
     }
 
@@ -180,9 +178,8 @@ public class ChatSessionService {
         if (owned != null && !owned.equals(sessionId)) {
             throw new BusinessException(ErrorCode.SESSION_CLAIM_CONFLICT);
         }
-        Duration ttl = sessionTtl();
-        redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ttl);
-        redisTemplate.expire(sessionKey(sessionId), ttl);
+        redisTemplate.opsForValue().set(ownerKey(member, channel), sessionId, ownerTtl());
+        redisTemplate.expire(sessionKey(sessionId), sessionTtl());
         return response(sessionId, member, brandId);
     }
 
@@ -246,13 +243,22 @@ public class ChatSessionService {
 
     /** 세션·owner 키를 함께 민다 — 한쪽만 남으면 발급이 죽은 세션을 재사용하게 된다 */
     private void slide(String sessionId, String ownerKey) {
-        Duration ttl = sessionTtl();
-        redisTemplate.expire(sessionKey(sessionId), ttl);
-        redisTemplate.expire(ownerKey, ttl);
+        redisTemplate.expire(sessionKey(sessionId), sessionTtl());
+        redisTemplate.expire(ownerKey, ownerTtl());
     }
 
     private Duration sessionTtl() {
         return Duration.ofMinutes(chatProperties.sessionTtlMinutes());
+    }
+
+    /**
+     * owner는 세션보다 1분 길게 (07 §3-2) — 두 키의 expire가 원자적이지 않아, 갱신 도중 죽으면
+     * owner가 먼저 만료될 수 있다. 그러면 세션이 살아 있는데 다음 CH-1이 새 세션을 발급해
+     * <b>조용한 맥락 초기화</b>가 된다. 반대 방향(owner만 남음)은 reuseActive가 "없음"으로 처리하므로,
+     * 비대칭은 위험한 방향만 구조적으로 불가능하게 만든다. 세션 TTL을 늘려도 +1분은 그대로 따라간다.
+     */
+    private Duration ownerTtl() {
+        return sessionTtl().plusMinutes(1);
     }
 
     private static String sessionValue(ChatIdentity identity, ChatChannel channel, Long brandId) {

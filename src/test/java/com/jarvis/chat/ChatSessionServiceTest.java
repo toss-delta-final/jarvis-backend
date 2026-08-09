@@ -65,8 +65,9 @@ class ChatSessionServiceTest {
         assertThat(response.ticketTtlSeconds()).isEqualTo(60L);
         verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
                 eq("member|1|SHOPPING"), eq(Duration.ofMinutes(10)));
+        // owner는 세션+1분 — expire 쌍이 원자적이지 않아 owner가 먼저 만료되는 방향을 봉쇄 (07 §3-2)
         verify(valueOperations).setIfAbsent(eq("chat:owner:member:1:SHOPPING"),
-                eq(response.sessionId()), eq(Duration.ofMinutes(10)));
+                eq(response.sessionId()), eq(Duration.ofMinutes(11)));
         verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
 
@@ -80,7 +81,7 @@ class ChatSessionServiceTest {
 
         assertThat(response.sessionId()).isEqualTo("live-session");
         verify(redisTemplate).expire("chat:session:live-session", Duration.ofMinutes(10));
-        verify(redisTemplate).expire("chat:owner:member:1:SHOPPING", Duration.ofMinutes(10));
+        verify(redisTemplate).expire("chat:owner:member:1:SHOPPING", Duration.ofMinutes(11));
         verify(redisTemplate, never()).delete(anyString());
         verify(llmNotifyClient, never()).notifySessionEnd(anyString(), anyLong(), any());
     }
@@ -97,7 +98,7 @@ class ChatSessionServiceTest {
 
         assertThat(response.sessionId()).isNotEqualTo("dead-session");
         verify(valueOperations).set(eq("chat:owner:member:1:SHOPPING"),
-                eq(response.sessionId()), eq(Duration.ofMinutes(10)));
+                eq(response.sessionId()), eq(Duration.ofMinutes(11)));
     }
 
     @Test
@@ -132,7 +133,7 @@ class ChatSessionServiceTest {
         verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
                 eq("member|7|SELLER|3"), eq(Duration.ofMinutes(10)));
         verify(valueOperations).setIfAbsent(eq("chat:owner:member:7:SELLER"),
-                eq(response.sessionId()), eq(Duration.ofMinutes(10)));
+                eq(response.sessionId()), eq(Duration.ofMinutes(11)));
         verify(ticketProvider).createSellerTicket(eq(ChatIdentity.member(7L)), anyString(), eq(3L));
         verify(ticketProvider, never()).createTicket(any(), anyString());
     }
@@ -176,7 +177,7 @@ class ChatSessionServiceTest {
 
         assertThat(response.sessionId()).isEqualTo("s1");
         verify(redisTemplate).expire(eq("chat:session:s1"), eq(Duration.ofMinutes(10)));
-        verify(redisTemplate).expire(eq("chat:owner:guest:g-uuid:CS"), eq(Duration.ofMinutes(10)));
+        verify(redisTemplate).expire(eq("chat:owner:guest:g-uuid:CS"), eq(Duration.ofMinutes(11)));
     }
 
     @Test
@@ -259,7 +260,7 @@ class ChatSessionServiceTest {
         verify(llmNotifyClient).notifySessionClaim("s1", "g-uuid", 7L);
         verify(valueOperations).set("chat:session:s1", "member|7|SHOPPING", Duration.ofMinutes(10));
         verify(redisTemplate).delete("chat:owner:guest:g-uuid:SHOPPING");
-        verify(valueOperations).set("chat:owner:member:7:SHOPPING", "s1", Duration.ofMinutes(10));
+        verify(valueOperations).set("chat:owner:member:7:SHOPPING", "s1", Duration.ofMinutes(11));
     }
 
     @Test
@@ -310,7 +311,7 @@ class ChatSessionServiceTest {
 
         service.claimSession(7L, "s1");
 
-        verify(valueOperations).set("chat:owner:member:7:SHOPPING", "s1", Duration.ofMinutes(10));
+        verify(valueOperations).set("chat:owner:member:7:SHOPPING", "s1", Duration.ofMinutes(11));
     }
 
     @Test
