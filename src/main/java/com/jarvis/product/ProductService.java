@@ -24,6 +24,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -72,14 +73,18 @@ public class ProductService {
      */
     public ProductDetailResponse getDetail(Long id) {
         Product product = getProduct(id);
+        // 상세는 옵션마다 재고를 보여준다 — 합계와 옵션별을 같은 조회에서 뽑는다 (02 D33 개정)
+        List<ProductStock> stocks = productStockRepository.findAllByProductId(id);
+        Map<Long, Integer> stockByOption = stocks.stream()
+                .filter(stock -> stock.getOptionId() != null)
+                .collect(Collectors.toMap(ProductStock::getOptionId, ProductStock::getQuantity));
+        int total = stocks.stream().mapToInt(ProductStock::getQuantity).sum();
         return ProductDetailResponse.from(product, parseJson(product.getAttributes()),
                 categoryService.getCategory(product.getCategoryId()),
                 brandService.getBrand(product.getBrandId()),
                 productOptionRepository.findAllByProductIdOrderByIdAsc(id),
                 reviewService.getStats(id),
-                detailImageUrls(id),
-                // 재고는 상품이 아니라 product_stock에 있다 — 합계는 파생값 (02 D33 개정)
-                productStockRepository.sumMap(List.of(id)).getOrDefault(id, 0));
+                detailImageUrls(id), total, stockByOption);
     }
 
     /**
@@ -307,6 +312,7 @@ public class ProductService {
         return rows.stream()
                 .map(row -> {
                     Product p = row.product();
+                    // all은 이미 품절이 걸러진 목록이라 optionCount도 구매 가능한 것 기준이 된다
                     List<String> all = optionNames.getOrDefault(p.getId(), List.of());
                     List<String> shown = all.size() > CANDIDATE_OPTION_LIMIT
                             ? all.subList(0, CANDIDATE_OPTION_LIMIT) : all;
@@ -318,13 +324,25 @@ public class ProductService {
                 .toList();
     }
 
-    /** 후보 전체의 옵션명을 한 번에 — 빈 IN을 만들지 않도록 후보가 없으면 조회 자체를 건너뛴다 */
+    /**
+     * 후보 전체의 옵션명을 한 번에 — 빈 IN을 만들지 않도록 후보가 없으면 조회 자체를 건너뛴다.
+     *
+     * <p><b>품절 옵션은 빼고 센다</b>(2026-08-09, 노션 I-1 개정). 못 파는 옵션을 후보에 실으면
+     * LLM이 그걸로 되물어서, 사용자가 골라도 담기에서 튕긴다. 여기서 걸러진 목록이 그대로
+     * {@code options}가 되고 그 크기가 {@code optionCount}가 되므로 <b>두 값의 기준이 자동으로 같아진다</b> —
+     * 어긋나면 AI의 정합 가드(I-1 optionCount ↔ I-2 detail.options)가 오작동한다.
+     */
     private Map<Long, List<String>> candidateOptionNames(List<Product> products) {
         if (products.isEmpty()) {
             return Map.of();
         }
         List<Long> ids = products.stream().map(Product::getId).toList();
+        Set<Long> purchasable = productStockRepository.findAllByProductIdIn(ids).stream()
+                .filter(stock -> stock.getOptionId() != null && stock.getQuantity() > 0)
+                .map(ProductStock::getOptionId)
+                .collect(Collectors.toSet());
         return productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(ids).stream()
+                .filter(option -> purchasable.contains(option.getId()))
                 .collect(Collectors.groupingBy(ProductOption::getProductId,
                         Collectors.mapping(ProductOption::getName, Collectors.toList())));
     }

@@ -290,13 +290,30 @@ public class CartService {
         }
     }
 
+    /**
+     * 옵션 소속 검증 + 되물음 목록 구성.
+     *
+     * <p><b>되물음 목록은 구매 가능한 옵션만 담는다</b>(2026-08-09, 노션 C-2·I-2 개정) — 담을 수 없는
+     * 걸 제시하면 사용자가 골라도 또 실패한다. 이 목록의 개수가 I-1 {@code optionCount}와 대조되는
+     * 정합 가드라, 두 기준이 어긋나면 AI의 자동 선택이 에러도 로그도 없이 죽는다.
+     * 품절 포함 전체 목록은 P-2가 옵션별 {@code purchaseState}와 함께 제공한다.
+     *
+     * <p>남은 옵션이 하나도 없으면 {@code CART_OPTION_REQUIRED}가 아니라
+     * {@code CART_STOCK_INSUFFICIENT}다 — 빈 목록을 받은 LLM은 되물을 이름이 없어
+     * "옵션을 선택해 주세요: 옵션." 같은 문구를 낸다(AI팀 실측).
+     */
     private void validateOption(Long productId, Long optionId) {
         List<ProductOption> options = productOptionRepository.findAllByProductIdOrderByIdAsc(productId);
         if (optionId == null) {
             if (!options.isEmpty()) {
+                List<ProductOption> purchasable = purchasableOptions(productId, options);
+                if (purchasable.isEmpty()) {
+                    throw new BusinessException(ErrorCode.CART_STOCK_INSUFFICIENT,
+                            Map.of("availableStock", 0));
+                }
                 // options 목록을 detail로 동반 — LLM 되물음용 (05 §I-2), FE도 동일 수신
                 throw new BusinessException(ErrorCode.CART_OPTION_REQUIRED, Map.of("options",
-                        options.stream().map(com.jarvis.cart.dto.CartOptionDetail::from).toList()));
+                        purchasable.stream().map(com.jarvis.cart.dto.CartOptionDetail::from).toList()));
             }
             return;
         }
@@ -304,6 +321,15 @@ public class CartService {
         if (!belongs) {
             throw new BusinessException(ErrorCode.CART_OPTION_INVALID);
         }
+    }
+
+    /** 재고가 남은 옵션만. 순서는 원본 그대로 유지한다 — 되물음 순서가 화면 순서와 같아야 한다 */
+    private List<ProductOption> purchasableOptions(Long productId, List<ProductOption> options) {
+        Map<Long, Integer> byOption = stocksByProduct(java.util.Set.of(productId))
+                .getOrDefault(productId, Map.of());
+        return options.stream()
+                .filter(option -> byOption.getOrDefault(option.getId(), 0) > 0)
+                .toList();
     }
 
     /** productId → (optionId → 수량). 옵션 없는 줄은 키가 null이라 HashMap을 쓴다(Map.of는 null 키 불가) */

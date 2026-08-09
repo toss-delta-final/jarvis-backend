@@ -9,6 +9,7 @@ import com.jarvis.product.ProductOption;
 import com.jarvis.product.PurchaseState;
 import com.jarvis.review.dto.RatingStats;
 import java.util.List;
+import java.util.Map;
 
 /**
  * P-2 (04 §2) — 평점은 실시간 집계(02 D9).
@@ -38,9 +39,24 @@ public record ProductDetailResponse(@StringId Long id, String name, int price, i
         }
     }
 
-    public record OptionResponse(@StringId Long optionId, String name, int extraPrice) {
-        public static OptionResponse from(ProductOption option) {
-            return new OptionResponse(option.getId(), option.getName(), option.getExtraPrice());
+    /**
+     * 옵션마다 재고와 구매 가능 여부를 함께 내린다 (2026-08-09, 노션 P-2 개정 · FE 합의).
+     *
+     * <p><b>검색(I-1)이 품절 옵션을 아예 빼는 것과 의도적으로 반대다</b> — 상세는 사용자가 고르는
+     * 화면이라 "원래 없는 옵션"인지 "품절"인지 구분돼야 재입고를 기다릴지 판단할 수 있다.
+     * 장바구니·찜이 품절 상품을 숨기지 않고 이유를 표시하는 것과 같은 태도다.
+     *
+     * <p>{@code purchaseState}는 {@code AVAILABLE}·{@code SOLD_OUT} 둘뿐이다 — 옵션에는 HIDDEN이 없다.
+     */
+    public record OptionResponse(@StringId Long optionId, String name, int extraPrice,
+                                 int stockQuantity, String purchaseState) {
+
+        public static OptionResponse from(ProductOption option, int stockQuantity) {
+            // 상품 status를 넘기지 않는다 — HIDDEN 상품의 옵션까지 HIDDEN으로 찍으면 "품절인가
+            // 내려간 건가"가 옵션 줄에서 또 갈린다. 그 판정은 상품 레벨 purchaseState 하나로 충분하다
+            return new OptionResponse(option.getId(), option.getName(), option.getExtraPrice(),
+                    stockQuantity,
+                    (stockQuantity > 0 ? PurchaseState.AVAILABLE : PurchaseState.SOLD_OUT).name());
         }
     }
 
@@ -57,13 +73,18 @@ public record ProductDetailResponse(@StringId Long id, String name, int price, i
     public static ProductDetailResponse from(Product product, JsonNode attributes,
                                              Category category, Brand brand,
                                              List<ProductOption> options, RatingStats stats,
-                                             List<String> detailImages, int stockQuantity) {
+                                             List<String> detailImages, int stockQuantity,
+                                             Map<Long, Integer> stockByOption) {
         return new ProductDetailResponse(product.getId(), product.getName(), product.getPrice(),
                 product.getOriginalPrice(), stockQuantity,
                 PurchaseState.of(product.getStatus(), stockQuantity).name(),
                 product.getStatus().name(), product.getImageUrl(), detailImages, product.getSummary(),
                 attributes, product.getDescription(), CategorySummary.from(category),
-                BrandSummary.from(brand), options.stream().map(OptionResponse::from).toList(),
+                BrandSummary.from(brand),
+                options.stream()
+                        .map(option -> OptionResponse.from(option,
+                                stockByOption.getOrDefault(option.getId(), 0)))
+                        .toList(),
                 Rating.from(stats));
     }
 }

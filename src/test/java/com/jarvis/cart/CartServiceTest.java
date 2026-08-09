@@ -105,6 +105,8 @@ class CartServiceTest {
         ProductOption option = mock(ProductOption.class);
         when(option.getId()).thenReturn(77L);
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of(option));
+        // 되물음 목록은 구매 가능한 옵션만 담는다 (2026-08-09) — 재고가 있어야 이 경로를 탄다
+        stubOptionStock(10L, 77L, 5);
 
         assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null), null))
                 .isInstanceOf(BusinessException.class)
@@ -131,6 +133,25 @@ class CartServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getErrorCode())
                 .isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    @DisplayName("C-2 — 전 옵션 품절이면 CART_OPTION_REQUIRED가 아니라 CART_STOCK_INSUFFICIENT (2026-08-09)")
+    void allOptionsSoldOutIsStockError() {
+        ProductOption option = mock(ProductOption.class);
+        when(option.getId()).thenReturn(77L);
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of(option));
+        stubOptionStock(10L, 77L, 0);
+
+        // 빈 목록으로 CART_OPTION_REQUIRED를 내면 LLM이 되물을 이름이 없어
+        // "옵션을 선택해 주세요: 옵션." 같은 문구가 나간다(AI팀 실측)
+        assertThatThrownBy(() -> cartService.addItem(1L, null, new CartAddRequest(10L, null, 1, null), null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> {
+                    BusinessException ex = (BusinessException) e;
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.CART_STOCK_INSUFFICIENT);
+                    assertThat(ex.getDetail()).isEqualTo(java.util.Map.of("availableStock", 0));
+                });
     }
 
     @Test

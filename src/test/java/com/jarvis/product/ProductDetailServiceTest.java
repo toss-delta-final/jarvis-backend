@@ -123,6 +123,10 @@ class ProductDetailServiceTest {
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         when(productOptionRepository.findAllByProductIdOrderByIdAsc(1L)).thenReturn(options);
         when(reviewService.getStats(1L)).thenReturn(new RatingStats(82, 4.6));
+        // 블랙은 남고 화이트는 품절 — 상세는 검색과 달리 품절도 보여주고 이유를 표시한다 (2026-08-09)
+        when(productStockRepository.findAllByProductId(1L)).thenReturn(List.of(
+                com.jarvis.product.ProductStock.of(1L, 100L, 7),
+                com.jarvis.product.ProductStock.of(1L, 101L, 0)));
 
         ProductDetailResponse res = productService.getDetail(1L);
 
@@ -137,6 +141,12 @@ class ProductDetailServiceTest {
         assertThat(res.brand().logoUrl()).isEqualTo("logo.png");
         assertThat(res.options()).extracting(ProductDetailResponse.OptionResponse::optionId)
                 .containsExactly(100L, 101L);
+        // 품절 옵션도 목록에 남고, 왜 못 사는지가 옵션 줄에 붙는다
+        assertThat(res.options()).extracting(ProductDetailResponse.OptionResponse::purchaseState)
+                .containsExactly("AVAILABLE", "SOLD_OUT");
+        assertThat(res.options()).extracting(ProductDetailResponse.OptionResponse::stockQuantity)
+                .containsExactly(7, 0);
+        assertThat(res.stockQuantity()).isEqualTo(7);
         assertThat(res.rating().average()).isEqualTo(4.6);
         assertThat(res.rating().count()).isEqualTo(82);
     }

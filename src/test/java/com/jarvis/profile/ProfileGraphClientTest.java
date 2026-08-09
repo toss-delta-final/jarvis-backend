@@ -96,17 +96,22 @@ class ProfileGraphClientTest {
     }
 
     @Test
-    @DisplayName("오류 본문이 error 봉투 없이 평문으로 와도 같은 코드로 읽는다")
-    void readsBareErrorBody() {
+    @DisplayName("봉투가 아닌 본문은 읽지 않는다 — 상태코드 폴백으로 떨어지고 detail도 없다 (계약 위반의 결과)")
+    void ignoresNonEnvelopeErrorBody() {
         server.expect(requestTo(BASE_URL + "/internal/profile/7/graph/edges/" + EDGE_ID))
                 .andRespond(withStatus(HttpStatus.CONFLICT)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body("{\"code\":\"PROFILE_VERSION_CONFLICT\",\"detail\":{\"graphVersion\":\"g44\"}}"));
 
+        // 봉투 확정(2026-08-09) 이후 평문은 AI 쪽 위반이다. 코드가 우연히 맞는 건 409 폴백 덕이지
+        // 본문을 읽어서가 아니고, detail이 없어 FE는 graphVersion을 받지 못한다 — 로그가 원인을 가리킨다
         assertThatThrownBy(() -> client.deleteEdge(USER_ID, EDGE_ID, "\"g42\""))
                 .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.PROFILE_VERSION_CONFLICT);
+                .satisfies(e -> {
+                    BusinessException be = (BusinessException) e;
+                    assertThat(be.getErrorCode()).isEqualTo(ErrorCode.PROFILE_VERSION_CONFLICT);
+                    assertThat(be.getDetail()).isNull();
+                });
     }
 
     @Test
