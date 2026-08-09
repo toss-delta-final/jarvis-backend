@@ -1,0 +1,46 @@
+-- review 목록 최신순 정렬 인덱스 (P-3 · 2026-08-10 부하 테스트 근거)
+--
+-- schema.sql은 최초 생성 전용(재실행 불가)이라, 이미 스키마가 깔린 DB(배포 DB·기존 로컬)에는 이 파일을 적용한다.
+-- schema.sql에도 같은 정의가 반영되어 있어 신규 DB와 최종 상태가 같다.
+--
+-- 왜: P-3 후기 목록의 기본 정렬은 `created_at DESC, id DESC`인데, 기존 인덱스
+-- idx_review_product(product_id, status, rating)는 세 번째 칸이 rating이라 **정렬 축을 못 준다**.
+-- product_id·status로 좁히는 것까지는 되지만 created_at을 읽으려 행마다 테이블을 되짚고
+-- 매 요청 filesort가 붙는다. 2026-08-10 부하 테스트(k6 2500VU)에서 이 경로가 초당 1,200회
+-- 호출되며 남은 RDS CPU의 주 소비처로 실측됐다 — 캐시 확장 후에도 RDS가 87%에 머문 이유다.
+--
+-- 왜 캐시가 아니라 인덱스인가: 목록은 (product_id × page × sort)로 키가 갈라져 적중률이 나오지
+-- 않고(07 §3-1 제외 판정 유지), 캐시는 첫 요청·TTL 만료·롱테일 상품에서 여전히 느리다.
+-- 인덱스는 전부 빠르게 만들고 무효화 부채도 없다.
+--
+-- 왜 교체가 아니라 추가인가: rating 축은 평점 집계(P-2·I-1)의 커버링으로 여전히 쓰인다.
+-- 한 인덱스로 합치려면 (product_id, status, created_at, rating) 4컬럼이 되는데, 그 경우
+-- fk_review_product 때문에 DROP+ADD를 한 문장으로 묶어야 하고(2026-08-09 스크립트의 함정)
+-- 집계 커버링이 유지되는지 EXPLAIN 재검증이 필요하다. 순수 추가는 그 위험이 없고
+-- 되돌리기도 DROP INDEX 한 줄이다.
+--
+-- 정렬 방향: 인덱스는 ASC지만 `created_at DESC, id DESC`처럼 **모든 축이 같은 방향**이면
+-- 역방향 인덱스 스캔으로 정렬이 해결된다. InnoDB 보조 인덱스는 PK(id)를 암묵적으로 뒤에 달고
+-- 있어 (product_id, status, created_at, id)와 같으므로 tie-break까지 인덱스가 커버한다.
+--
+-- 실측 (로컬 MariaDB, 한 상품에 리뷰 5,000행, ANALYZE FORMAT=JSON):
+--   전: type=range, Extra="Using index condition; Using filesort"  → review 접근 4.567 ms
+--   후: type=ref,   Extra="Using where; Using index"(커버링)        → review 접근 0.038 ms
+-- LIMIT 10인데도 전에는 조건에 맞는 행 전부를 읽어 정렬했다. 인덱스가 정렬 순서를 주면
+-- 앞에서 10건만 읽고 끝나므로, **상품당 리뷰가 많을수록 격차가 벌어진다** — filesort 비용은
+-- 행 수에 비례하고 인덱스 스캔 비용은 LIMIT에 묶인다.
+--
+-- 쓰기 비용: 리뷰 INSERT마다 인덱스 엔트리가 하나 더 생긴다. 리뷰 작성은 구매 확정 후에만
+-- 가능해 극히 드물다(읽기와 자릿수가 다르다).
+--
+-- 적용 시점: **앱 배포와 무관하다.** ddl-auto=validate는 테이블·컬럼만 검사하고 인덱스는 보지
+-- 않으므로, 컬럼 추가와 달리 배포 전/후 순서 제약이 없다. 앱 재배포 없이 DB에만 적용해도 된다.
+-- ALTER ... ADD KEY는 MariaDB에서 ONLINE(INPLACE, 동시 DML 허용)이라 서비스가 멈추지 않지만,
+-- review 행 수만큼 시간과 임시 디스크를 쓴다 — 적용 전 `SELECT COUNT(*) FROM review`로 규모 확인.
+
+-- IF NOT EXISTS는 MariaDB 확장 — 재실행 무해 규칙(scripts/README.md)을 지키려고 쓴다.
+-- setup-frontend-dev.sh가 로컬 셋업마다 전 마이그레이션을 다시 흘리므로 필수다.
+ALTER TABLE review
+    ADD KEY IF NOT EXISTS idx_review_latest (product_id, status, created_at);
+
+-- 되돌리기: ALTER TABLE review DROP INDEX IF EXISTS idx_review_latest;
