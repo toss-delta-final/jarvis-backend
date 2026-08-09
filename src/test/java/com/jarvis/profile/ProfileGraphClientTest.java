@@ -50,24 +50,27 @@ class ProfileGraphClientTest {
     @Test
     @DisplayName("응답 본문을 손실 없이 통과시킨다 — 계약에 없는 필드도 살아남아야 한다")
     void passesResponseThrough() {
-        // 노션 예시가 축약본이라 3필드가 빠져 있던 사고(2026-08-08)의 회귀 테스트다.
-        // DTO로 매핑하면 여기서 아무 에러 없이 필드가 사라진다.
+        // 이틀 새 두 번(8/8 3필드 추가, 8/9 그 셋 제거 + nodes→object 인라인) 모양이 바뀐 회귀 테스트다.
+        // DTO로 매핑하면 여기서 아무 에러 없이 필드가 사라진다. 아래 본문은 2026-08-09 확정 모양 +
+        // 계약에 없는 필드 하나 — 계약이 또 바뀌어도 이 테스트는 그대로 통과해야 한다.
         server.expect(requestTo(BASE_URL + "/internal/profile/7/graph"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(InternalTokenFilter.HEADER, TOKEN))
                 .andRespond(withSuccess("""
                         {"userId":123,"exists":true,"graphVersion":"g42",
-                         "usagePolicy":{"filterSafe":false},"truncated":false,
-                         "edges":[{"edgeId":"e_1","lastConfirmedAt":"2026-08-04T13:40:00Z"}],
-                         "미래에추가될필드":42}""", MediaType.APPLICATION_JSON));
+                         "personalization":{"enabled":true},
+                         "edges":[{"edgeId":"e_1","predicate":"avoids",
+                                   "object":{"nodeId":"brand:소니","type":"brand","label":"소니"},
+                                   "editable":true,"challenged":false}],
+                         "계약에없는필드":42}""", MediaType.APPLICATION_JSON));
 
         JsonNode body = client.getGraph(USER_ID);
 
-        assertThat(body.path("usagePolicy").path("filterSafe").asBoolean(true)).isFalse();
-        assertThat(body.path("truncated").isBoolean()).isTrue();
-        assertThat(body.path("edges").get(0).path("lastConfirmedAt").asText())
-                .isEqualTo("2026-08-04T13:40:00Z");
-        assertThat(body.path("미래에추가될필드").asInt()).isEqualTo(42);
+        // 중첩 객체가 통째로 살아남는다 — nodes 룩업 없이 object가 인라인인 현행 모양
+        assertThat(body.path("edges").get(0).path("object").path("label").asText())
+                .isEqualTo("소니");
+        assertThat(body.path("personalization").path("enabled").asBoolean()).isTrue();
+        assertThat(body.path("계약에없는필드").asInt()).isEqualTo(42);
     }
 
     @Test
