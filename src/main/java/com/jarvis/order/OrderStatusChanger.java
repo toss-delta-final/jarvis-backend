@@ -1,7 +1,9 @@
 package com.jarvis.order;
 
+import com.jarvis.product.ProductStockService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -29,6 +31,7 @@ public class OrderStatusChanger {
     private final OrderItemRepository orderItemRepository;
     private final ClaimRepository claimRepository;
     private final OrderStatusLogRepository logRepository;
+    private final ProductStockService productStockService;
 
     /** O-1 주문 생성 — NULL → PENDING (SYSTEM) */
     public void logOrderCreated(Order order) {
@@ -111,6 +114,10 @@ public class OrderStatusChanger {
      * 클레임 자동 승인 배치 (01 D10·§6) — 아이템 종결 전이 + claim COMPLETED 같은 트랜잭션.
      * 로그는 아이템마다 1행, actor=USER(신청 주체), reason=claim.reason (01 §6.5 규칙 3·4).
      * 전량 취소 도달 시 orders.status → CANCELLED 승격 + 주문 단위 로그 1행 (01 §2-1).
+     *
+     * <p>확정분의 재고를 같은 트랜잭션에서 되돌린다(2026-08-10 — 구 "복원 MVP 미구현"). 신청
+     * 시점이 아니라 이 승인 지점인 이유는, 신청은 반려될 수 있는 상태라 재고를 미리 풀면 팔 수 없는
+     * 물건을 파는 셈이 되기 때문이다.
      */
     @Transactional
     public int approveDueClaims(LocalDateTime threshold) {
@@ -124,6 +131,8 @@ public class OrderStatusChanger {
 
         LocalDateTime now = LocalDateTime.now();
         List<Long> cancelledOrderIds = new ArrayList<>();
+        // 취소·반품 모두 복원 대상이다. 같은 (상품, 옵션)이 여러 클레임에 걸리면 합산해 한 번만 친다
+        Map<ProductStockService.StockKey, Integer> toRestore = new HashMap<>();
         int approved = 0;
         for (Claim claim : due) {
             OrderItem item = items.get(claim.getOrderItemId());
@@ -144,7 +153,12 @@ public class OrderStatusChanger {
             if (to == OrderItemStatus.CANCELLED) {
                 cancelledOrderIds.add(item.getOrderId());
             }
+            toRestore.merge(new ProductStockService.StockKey(item.getProductId(), item.getOptionId()),
+                    item.getQuantity(), Integer::sum);
             approved++;
+        }
+        if (!toRestore.isEmpty()) {
+            productStockService.restore(toRestore);
         }
         promoteFullyCancelledOrders(cancelledOrderIds);
         return approved;

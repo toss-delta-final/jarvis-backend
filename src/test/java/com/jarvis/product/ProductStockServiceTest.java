@@ -115,6 +115,70 @@ class ProductStockServiceTest {
         verify(productChangeLogRepository, never()).save(any());
     }
 
+    // ---- 취소/반품 복원 (2026-08-10 — 구 "MVP 미구현") ----
+
+    @Test
+    @DisplayName("복원으로 재고가 0에서 풀리면 재입고 로그 1행 — 차감의 품절 로그와 대칭 (02 D32)")
+    void logsRestockWhenStockLeavesZero() {
+        when(productStockRepository.restore(10L, 100L, 2)).thenReturn(1);
+        // 복원 결과가 복원량과 같다 = 직전이 0이었다
+        when(productStockRepository.findQuantity(10L, 100L)).thenReturn(Optional.of(2));
+
+        productStockService.restore(Map.of(BLACK, 2));
+
+        verify(productChangeLogRepository).saveAll(logsCaptor.capture());
+        assertThat(logsCaptor.getValue()).singleElement()
+                .satisfies(log -> {
+                    assertThat(log.getProductId()).isEqualTo(10L);
+                    assertThat(log.getOptionId()).isEqualTo(100L);
+                    assertThat(log.getChangeType()).isEqualTo(ProductChangeType.STOCK);
+                    assertThat(log.getOldValue()).isEqualTo("0");
+                    assertThat(log.getNewValue()).isEqualTo("2");
+                });
+    }
+
+    @Test
+    @DisplayName("품절이 아니었던 재고의 복원은 로그를 쓰지 않는다 — 주문에 의한 증감은 미기록 (02 D32)")
+    void noLogWhenStockWasNotZero() {
+        when(productStockRepository.restore(10L, 100L, 2)).thenReturn(1);
+        when(productStockRepository.findQuantity(10L, 100L)).thenReturn(Optional.of(7));
+
+        productStockService.restore(Map.of(BLACK, 2));
+
+        verify(productChangeLogRepository, never()).saveAll(anyList());
+        verify(productChangeLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("재고 행이 사라진 상품은 건너뛴다 — 취소·반품 자체를 막지는 않는다")
+    void skipsMissingStockRow() {
+        when(productStockRepository.restore(20L, null, 1)).thenReturn(0);
+
+        productStockService.restore(Map.of(NO_OPTION, 1));
+
+        verify(productStockRepository, never()).findQuantity(anyLong(), any());
+        verify(productChangeLogRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    @DisplayName("복원도 차감과 같은 순서로 잠근다 — 취소 배치와 결제가 엇갈려도 데드락이 없게")
+    void restoreLocksInAscendingKeyOrder() {
+        Map<StockKey, Integer> shuffled = new LinkedHashMap<>();
+        shuffled.put(WHITE, 1);
+        shuffled.put(new StockKey(10L, null), 1);
+        shuffled.put(BLACK, 1);
+        when(productStockRepository.restore(anyLong(), any(), anyInt())).thenReturn(1);
+        lenient().when(productStockRepository.findQuantity(anyLong(), any()))
+                .thenReturn(Optional.of(5));
+
+        productStockService.restore(shuffled);
+
+        InOrder order = inOrder(productStockRepository);
+        order.verify(productStockRepository).restore(10L, null, 1);
+        order.verify(productStockRepository).restore(10L, 100L, 1);
+        order.verify(productStockRepository).restore(10L, 101L, 1);
+    }
+
     @Test
     @DisplayName("호출자가 뒤섞인 순서로 넘겨도 (상품, 옵션) 오름차순으로 잠근다 — 동시 주문 데드락 방지")
     void locksInAscendingKeyOrder() {
