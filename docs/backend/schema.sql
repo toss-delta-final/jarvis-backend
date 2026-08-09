@@ -99,7 +99,7 @@ CREATE TABLE product (
     name              VARCHAR(200) NOT NULL,
     original_price    INT          NOT NULL,               -- 정가 (KRW 원 단위 정수)
     price             INT          NOT NULL,               -- 판매가 (D15). price ≤ original_price 서비스 검증 (D28). 할인율은 파생 계산
-    stock_quantity    INT          NOT NULL DEFAULT 0,     -- 재고 (D33 — D8 폐기). 시드 초기값 일괄 100. 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행 (D32). 복원 MVP 미구현
+    -- 재고 컬럼 없음 — product_stock으로 이관 (D33 개정, 2026-08-09). 여기 두면 옵션이 있는 상품에서 거짓말하는 컬럼이 된다
     image_url         VARCHAR(500) NOT NULL,               -- 대표 이미지 1장 — 단일 확정 (D14)
     base_sales_count  INT          NOT NULL DEFAULT 0,     -- 크롤링 시점 누적 판매량, 시드 후 불변 (D18). 표시 판매량 = 이 값 + order_item 집계
     summary           VARCHAR(500) NULL,                   -- 주요 특징 요약
@@ -112,7 +112,6 @@ CREATE TABLE product (
     KEY idx_product_category (category_id),
     KEY idx_product_brand (brand_id),
     KEY idx_product_updated (updated_at, id),              -- AI 상품 동기화 배치(I-17) 증분 커서용 (D33)
-    CONSTRAINT chk_product_stock CHECK (stock_quantity >= 0),
     CONSTRAINT fk_product_brand FOREIGN KEY (brand_id)
         REFERENCES brand (id) ON DELETE RESTRICT,
     CONSTRAINT fk_product_category FOREIGN KEY (category_id)
@@ -132,6 +131,29 @@ CREATE TABLE product_option (
     CONSTRAINT fk_product_option_product FOREIGN KEY (product_id)
         REFERENCES product (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 이 테이블은 "보여줄 선택지"다. 재고는 product_stock에 있다 — 안 보여줄 행을 여기 섞지 않는다 (D33 개정)
+
+CREATE TABLE product_stock (
+    id          BIGINT   NOT NULL AUTO_INCREMENT,
+    product_id  BIGINT   NOT NULL,
+    option_id   BIGINT   NULL,                              -- NULL = 옵션 없는 상품의 유일한 재고 행
+    quantity    INT      NOT NULL DEFAULT 0,
+    created_at  DATETIME NOT NULL,
+    updated_at  DATETIME NULL,
+    PRIMARY KEY (id),
+    -- 재고가 사는 곳이 한 군데임을 DB가 보장한다. MariaDB는 NULL을 서로 다르게 보므로
+    -- option_id IS NULL 행의 중복은 이 제약으로 막히지 않는다 — 서비스가 막는다
+    UNIQUE KEY uk_product_stock (product_id, option_id),
+    KEY idx_product_stock_option (option_id),               -- 장바구니·주문의 옵션 단위 조회·차감 경로
+    CONSTRAINT chk_product_stock_quantity CHECK (quantity >= 0),
+    CONSTRAINT fk_product_stock_product FOREIGN KEY (product_id)
+        REFERENCES product (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_product_stock_option FOREIGN KEY (option_id)
+        REFERENCES product_option (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 재고 (D33 개정 — 2026-08-09, 구 product.stock_quantity 폐기). 옵션마다 한 행, 옵션 없는 상품은 option_id NULL 한 행.
+-- 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행 (D32). 복원 MVP 미구현.
+-- 시드 초기값은 옵션 id에서 결정적으로 유도하며 일부를 0으로 둔다 — 품절이 하나도 없으면 품절 동선을 검증할 수 없다.
 
 CREATE TABLE product_detail_image (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
@@ -228,6 +250,9 @@ CREATE TABLE order_item (
     id                 BIGINT       NOT NULL AUTO_INCREMENT,
     order_id           BIGINT       NOT NULL,
     product_id         BIGINT       NOT NULL,              -- 상세 이동 링크용 — 값은 아래 스냅샷 사용 (D1)
+    option_id          BIGINT       NULL,                  -- 스냅샷이 아니라 참조 (D33 개정, 2026-08-09). 재고가 옵션별이라
+                                                           --   취소·반품 복원이 어느 행으로 되돌릴지 알아야 한다. option_name은
+                                                           --   스냅샷이라 현재 옵션과 매칭이 보장되지 않아 복원 키로 쓸 수 없다
     product_name       VARCHAR(200) NOT NULL,              -- 스냅샷
     option_name        VARCHAR(100) NULL,                  -- 스냅샷
     price              INT          NOT NULL,              -- 스냅샷: product.price + extra_price
@@ -245,7 +270,8 @@ CREATE TABLE order_item (
     KEY idx_order_item_status (status, status_changed_at), -- 배송 전이 스케줄러 스캔용
     KEY idx_order_item_list (list_id),                     -- 추천 목록별 구매 전환·매출 집계. FK 없음(cart_item과 동일 이유)
     CONSTRAINT fk_order_item_order   FOREIGN KEY (order_id)   REFERENCES orders (id)  ON DELETE RESTRICT,
-    CONSTRAINT fk_order_item_product FOREIGN KEY (product_id) REFERENCES product (id) ON DELETE RESTRICT
+    CONSTRAINT fk_order_item_product FOREIGN KEY (product_id) REFERENCES product (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_order_item_option  FOREIGN KEY (option_id)  REFERENCES product_option (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE claim (
@@ -392,6 +418,8 @@ CREATE TABLE order_status_logs (
 CREATE TABLE product_change_logs (
     id           BIGINT      NOT NULL AUTO_INCREMENT,
     product_id   BIGINT      NOT NULL,                     -- FK 미설정 (append-only 로그)
+    option_id    BIGINT      NULL,                         -- STOCK 로그에서 어느 옵션인지 (D33 개정, 2026-08-09).
+                                                           --   PRICE·STATUS는 상품 단위라 NULL. FK 미설정 — 위와 같은 이유
     change_type  ENUM('PRICE','STOCK','STATUS') NOT NULL,
     old_value    VARCHAR(50) NULL,
     new_value    VARCHAR(50) NULL,                         -- 품절 신호 = STOCK new_value 0 (SOLD_OUT 상태 미도입)
@@ -466,5 +494,7 @@ CREATE TABLE recommendation_list_item (
 --   평점 평균/리뷰 수 컬럼(D9) · 개인화 프로필(D13 — LLM팀 소유)
 --   채팅 세션(D12 존속분 — Redis TTL 휘발)
 --   상품 이미지: 대표 1장은 product.image_url(D14 유지), 상세 이미지는 product_detail_image(D42 — 2026-08-05 재도입)
---   재고는 D33으로 도입됨(D8 폐기) — product.stock_quantity
+--   재고는 D33으로 도입됨(D8 폐기) — 2026-08-09 개정으로 product.stock_quantity에서 product_stock 테이블로 이관.
+--     상품에 합계 컬럼을 두지 않는다 — 같은 사실이 두 곳에 생기면 어긋나도 에러가 나지 않는다(D9와 같은 이유).
+--     합계가 필요한 화면(P-2·I-9·S-3)은 조회 시 집계한다
 -- ============================================================
