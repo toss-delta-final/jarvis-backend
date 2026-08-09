@@ -2,7 +2,7 @@ package com.jarvis.recommendation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jarvis.global.event.BehaviorEvent;
-import com.jarvis.global.event.BehaviorEventAppender;
+import com.jarvis.global.event.BehaviorEventPublisher;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -27,7 +27,7 @@ public class RecommendationEventRecorder {
 
     public static final String EVENT_TYPE = "recommendation_generated";
 
-    private final BehaviorEventAppender behaviorEventAppender;
+    private final BehaviorEventPublisher behaviorEventPublisher;
     private final ObjectMapper objectMapper;
 
     /**
@@ -47,7 +47,7 @@ public class RecommendationEventRecorder {
                             list.getRecommendationRequestId(), list.getListId(),
                             list.getSurface().name(), properties(list), now))
                     .toList();
-            behaviorEventAppender.append(events);
+            behaviorEventPublisher.publish(events);
         } catch (Exception e) {
             log.warn("recommendation_generated 적재 실패 — {}건 유실", lists.size(), e);
         }
@@ -105,7 +105,7 @@ public class RecommendationEventRecorder {
     public void recordHomeGenerated(RecommendationList list, String fallbackReason) {
         try {
             LocalDateTime now = LocalDateTime.now();
-            behaviorEventAppender.append(List.of(BehaviorEvent.serverGenerated(EVENT_TYPE,
+            behaviorEventPublisher.publish(List.of(BehaviorEvent.serverGenerated(EVENT_TYPE,
                     clientEventId(list), list.getMemberId(), list.getGuestId(), list.getListId(),
                     list.getRecommendationRequestId(), list.getListId(), list.getSurface().name(),
                     properties(list, fallbackReason), now)));

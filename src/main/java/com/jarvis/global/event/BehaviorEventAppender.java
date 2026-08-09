@@ -7,15 +7,18 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * E-1의 202 즉시 응답을 위한 비동기 적재 (04 §8). 실패는 로그만 — 행동 이벤트는 유실 감수.
+ * behavior_events DB 적재 (04 §8). 컨슈머 A(정상 경로)와 발행 실패 시 폴백(08 D7)이 함께 쓴다.
  * 중복은 INSERT 전 검증 후 무시 — INSERT IGNORE는 중복 외 오류까지 삼키므로 금지 (02 D35).
  * 사전 검증을 통과한 뒤 경합으로 UNIQUE에 걸리면(같은 배치 동시 재전송) 배치 저장이 통째로
  * 롤백되므로, 그때만 건별 저장으로 내려가 충돌한 건만 버린다 — 정상 이벤트 동반 유실 방지.
+ *
+ * <p><b>실패를 삼키지 않는다</b>(2026-08-10, 08 D7) — 종전에는 {@code @Async} + warn 로그로
+ * 유실을 감수했으나, 이제 적재 실패는 호출자가 판단한다: 폴백까지 실패한 E-1은 500(계약대로),
+ * 컨슈머는 재시도 후 DLT. 조용한 유실이 관측 가능한 실패가 된 것이 이 변경의 핵심이다.
  */
 @Slf4j
 @Component
@@ -25,20 +28,15 @@ public class BehaviorEventAppender {
     private final BehaviorEventRepository behaviorEventRepository;
     private final TransactionTemplate transactionTemplate;
 
-    @Async
     public void append(List<BehaviorEvent> events) {
+        List<BehaviorEvent> fresh = dropKnownDuplicates(events);
+        if (fresh.isEmpty()) {
+            return;
+        }
         try {
-            List<BehaviorEvent> fresh = dropKnownDuplicates(events);
-            if (fresh.isEmpty()) {
-                return;
-            }
-            try {
-                transactionTemplate.executeWithoutResult(s -> behaviorEventRepository.saveAll(fresh));
-            } catch (DataIntegrityViolationException e) {
-                saveIndividually(fresh);
-            }
-        } catch (Exception e) {
-            log.warn("behavior_events 적재 실패 — 배치 {}건 유실", events.size(), e);
+            transactionTemplate.executeWithoutResult(s -> behaviorEventRepository.saveAll(fresh));
+        } catch (DataIntegrityViolationException e) {
+            saveIndividually(fresh);
         }
     }
 

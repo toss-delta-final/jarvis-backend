@@ -75,7 +75,7 @@ public class EventService {
     /** 이 이상 과거면 브라우저 시계를 믿지 않는다 (노션 E-1 이상치 처리) */
     private static final Duration MAX_CLOCK_LAG = Duration.ofDays(3);
 
-    private final BehaviorEventAppender behaviorEventAppender;
+    private final BehaviorEventPublisher behaviorEventPublisher;
     private final GuestRepository guestRepository;
     private final RecommendationAttributionResolver attributionResolver;
     private final ObjectMapper objectMapper;
@@ -106,7 +106,9 @@ public class EventService {
                     item.eventType(), item.productId(), serialize(properties), occurredAt,
                     attribution, receivedAt));
         }
-        behaviorEventAppender.append(events);
+        // 토픽 우선, 실패하면 DB 직접 적재 — 둘 다 실패하면 예외가 올라가 500이 된다(08 D7).
+        // 노션 E-1의 "저장 실패 시 500"이 그때 발동한다: 202는 어딘가에 영속됐다는 뜻이다
+        behaviorEventPublisher.publish(events);
     }
 
     /** ②·중복 — 타입 화이트리스트와 배치 내 중복만 걸러낸다. 나머지 이상은 표시를 남기고 통과 */
