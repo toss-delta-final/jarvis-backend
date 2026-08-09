@@ -35,7 +35,7 @@ class LoginRateLimiterTest {
 
     /** 창 10분 / 계정 5회 / IP 30회 */
     private LoginRateLimiter limiter() {
-        return new LoginRateLimiter(redisTemplate, 10, 5, 30);
+        return new LoginRateLimiter(new FixedWindowCounter(redisTemplate), 10, 5, 30);
     }
 
     private void stub(String key, long count, long ttlMillis) {
@@ -94,7 +94,7 @@ class LoginRateLimiterTest {
         stub(ACCT_KEY, 1, 120_000);    // 120초
 
         assertThatThrownBy(() -> limiter().check(IP, EMAIL))
-                .isInstanceOf(LoginRateLimiter.RateLimitedException.class)
+                .isInstanceOf(RateLimitedException.class)
                 .extracting("retryAfterSeconds").isEqualTo(120L);
     }
 
