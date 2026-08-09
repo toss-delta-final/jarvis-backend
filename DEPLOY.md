@@ -96,6 +96,7 @@ done
 | `migrate-2026-07-30-recommendation-list.sql` | 추천 목록 영구 사본 테이블 2개 신설 + `behavior_events` 컬럼 5개(전부 NULL 허용)·인덱스 2개 | **앱 배포 전.** 새 앱은 이 테이블이 없으면 `ddl-auto=validate`에 걸려 기동 자체를 거부한다. 이미 새 이미지가 crash loop 중이면 적용하는 즉시 정상 기동된다 |
 | `migrate-2026-07-31-guest-converted-at.sql` | `guest.converted_at`(은퇴 시각) 컬럼 추가 — NULL 허용 | **앱 배포 전.** 컬럼 추가 자체는 구 앱과 무해하게 공존하지만, **새 앱은 이 컬럼이 없으면 `ddl-auto=validate`에 걸려 기동을 거부한다**(2026-07-31 CD 실패 원인 — `Schema-validation: missing column [converted_at] in table [guest]`). crash loop 중이면 적용하는 즉시 정상 기동된다 |
 | `migrate-2026-07-31-behavior-events-not-null.sql` | `behavior_events.occurred_at`·`client_event_id`를 백필 후 `NOT NULL`로 (기존 행 삭제 없음) | **앱 배포 후.** 앱이 `occurred_at`을 채우기 시작한 뒤에야 조일 수 있다. 순서: 새 이미지 배포 → `/actuator/health` UP 확인 → 적용. 먼저 적용해도 서비스는 죽지 않지만, 그 사이 들어온 **행동 이벤트만 유실**된다(적재는 비동기) |
+| `migrate-2026-08-10-review-latest-index.sql` | `review`에 `idx_review_latest(product_id, status, created_at)` 추가 — 후기 목록 정렬의 filesort 제거 (2026-08-10 부하 테스트 근거) | **순서 무관 — 언제 적용해도 된다.** 인덱스만 바뀌고 `ddl-auto=validate`는 테이블·컬럼만 검사하므로 컬럼 추가와 달리 기동을 막지 않는다. `ADD KEY`는 MariaDB에서 ONLINE이라 서비스도 멈추지 않지만 `review` 행 수만큼 시간·임시 디스크를 쓴다 — 적용 전 `SELECT COUNT(*) FROM review`로 규모를 보고, 트래픽이 한산한 때를 고르면 안전하다 |
 
 ## 5. 헬스체크
 

@@ -316,6 +316,11 @@ CREATE TABLE review (
     -- product_id 단독이던 것을 2026-08-09에 확장: I-1은 후보 수 상한이 없어(05 §I-1) 매칭된 상품
     -- 전부를 한 번에 집계하는데, status·rating이 인덱스에 없어 행마다 테이블을 되짚고 있었다.
     KEY idx_review_product (product_id, status, rating),
+    -- (product_id, status, created_at) — P-3 목록의 기본 정렬(created_at DESC, id DESC)용.
+    -- 위 인덱스는 세 번째가 rating이라 정렬 축을 못 줘 매 요청 filesort가 붙었다. 2026-08-10
+    -- 부하 테스트에서 이 경로가 초당 1,200회로 남은 RDS CPU의 주 소비처로 실측돼 추가했다.
+    -- 보조 인덱스는 PK(id)를 암묵 포함하므로 tie-break(id DESC)까지 커버된다.
+    KEY idx_review_latest (product_id, status, created_at),
     CONSTRAINT chk_review_rating CHECK (rating BETWEEN 1 AND 5),
     CONSTRAINT fk_review_order_item FOREIGN KEY (order_item_id) REFERENCES order_item (id) ON DELETE RESTRICT,
     CONSTRAINT fk_review_product    FOREIGN KEY (product_id)    REFERENCES product (id)    ON DELETE RESTRICT,
