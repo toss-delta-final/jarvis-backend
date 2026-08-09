@@ -99,7 +99,7 @@ class SellerAttributionServiceTest {
         assertThat(ai.aiShare()).isEqualTo(25.7);          // 1180000/4600000
         assertThat(ai.aiOrderCount()).isEqualTo(34);
         assertThat(ai.windowDays()).isEqualTo(7);
-        assertThat(ai.policyVersion()).isEqualTo("v1");
+        assertThat(ai.policyVersion()).isEqualTo("v2");
         assertThat(ai.funnel().purchase()).isEqualTo(61);  // 구매 단만 주문 정본에서 센다
         assertThat(ai.coverage()).isEqualTo(0.93);
     }
