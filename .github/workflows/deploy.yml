@@ -56,21 +56,28 @@ jobs:
 
   # 3단계: 무중단 배포 (CD)
   #   대상그룹에서 뺀 뒤 교체하고, 정상 확인 후 다시 넣음
-  #   max-parallel: 1 이라 항상 최소 한 대는 대상그룹에 남아 트래픽을 받음
+  #   배포 중인 서버는 대상그룹 밖이므로, 동시 배포 대수만큼 처리 능력이 빠진다
   deploy:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       packages: read   # EC2에서 GHCR pull 시 필요
     strategy:
-      max-parallel: 1   # 동시 배포 금지 — 두 대가 동시에 빠지면 서비스 중단
-      fail-fast: true   # 1호기 실패 시 2호기 중단
+      # 4대 중 2대씩 교체 — 배포 중에도 항상 2대가 트래픽을 받는다(증설 전 상시 대수와 동일).
+      # 2대 시절에는 1이었다. 한 대만 빼도 남는 게 한 대뿐이라 2 이상이면 전면 중단이었다.
+      # 3 이상으로 올리면 살아남는 대수가 1대 이하가 되므로 올리지 말 것.
+      max-parallel: 2
+      fail-fast: true   # 앞 배치가 실패하면 뒤 배치는 시작하지 않음
       matrix:
         include:
           - host: EC2_HOST
             instance: i-07d7478729bc460da   # jarvis-backend-server
           - host: EC2_HOST_2
             instance: i-0605ad8b59fc4b03e   # jarvis-backend-server2
+          - host: EC2_HOST_3
+            instance: i-03f32c3c7a9145f64   # jarvis-backend-server3
+          - host: EC2_HOST_4
+            instance: i-00518087caef51eb8   # jarvis-backend-server4
     env:
       # 인스턴스를 재생성하면 ID가 바뀌므로 matrix 값도 함께 수정해야 함
       TG_ARN: arn:aws:elasticloadbalancing:ap-northeast-2:049705857330:targetgroup/jarvis-nginx-tg/d471e3090ff3c8b1
@@ -144,7 +151,6 @@ jobs:
             ENVEOF
 
             # 4. 교체 — host 네트워크 + 8080 단일 포트라 동시 실행 불가
-            #    (t3.micro RAM 1GB 에서 JVM 2개 동시 기동도 불가)
             #    docker run 뒤의 || true 는 필수: 기동 명령 자체가 실패해도
             #    스크립트를 중단시키지 않고 아래 롤백 경로로 흘려보내기 위함
             docker stop jarvis-backend || true
