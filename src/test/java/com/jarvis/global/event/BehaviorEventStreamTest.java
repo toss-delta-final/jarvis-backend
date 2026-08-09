@@ -58,6 +58,7 @@ class BehaviorEventStreamTest {
 
     @Autowired BehaviorEventPublisher publisher;
     @MockitoBean BehaviorEventAppender behaviorEventAppender;
+    @MockitoBean BehaviorStreamHealth streamHealth;
 
     @Test
     @DisplayName("발행한 이벤트가 컨슈머 A에 같은 값으로 도착한다 — 시각·추천 귀속 포함")

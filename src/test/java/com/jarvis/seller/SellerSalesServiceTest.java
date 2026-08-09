@@ -9,6 +9,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.jarvis.brand.Brand;
@@ -44,6 +46,7 @@ class SellerSalesServiceTest {
     @Mock com.jarvis.product.ProductOptionRepository productOptionRepository;
     @Mock private BrandRepository brandRepository;
     @Mock private SellerAttributionService sellerAttributionService;
+    @Mock private ActiveVisitorStore activeVisitorStore;
 
     @InjectMocks private SellerSalesService service;
 
@@ -148,6 +151,8 @@ class SellerSalesServiceTest {
         // today() → sumSellerSales(오늘), 그다음 sumSellerSales(어제)
         when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any()))
                 .thenReturn(totals(120000, 4, 0), totals(100000, 2, 0));
+        // 스트림을 못 믿는 상태 → 기존 DB 집계로 폴백 (08 D5)
+        when(activeVisitorStore.count(eq(BRAND_ID), any())).thenReturn(java.util.OptionalLong.empty());
         when(behaviorEventRepository.countActiveVisitors(eq(BRAND_ID), any())).thenReturn(42L);
         when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(), any()))
                 .thenReturn(List.of());
@@ -214,6 +219,7 @@ class SellerSalesServiceTest {
     private Brand stubDashboardBasics() {
         lenient().when(orderItemRepository.countSellerItemsByStatus(BRAND_ID)).thenReturn(List.of());
         lenient().when(orderStatusLogRepository.avgSellerDeliverySeconds(BRAND_ID)).thenReturn(null);
+        lenient().when(activeVisitorStore.count(eq(BRAND_ID), any())).thenReturn(java.util.OptionalLong.empty());
         lenient().when(behaviorEventRepository.countActiveVisitors(eq(BRAND_ID), any())).thenReturn(0L);
         lenient().when(orderItemRepository.sumSellerSalesByPeriod(eq(BRAND_ID), anyString(), any(),
                 any())).thenReturn(List.of());
@@ -241,5 +247,18 @@ class SellerSalesServiceTest {
         assertThat(response.aiAttribution()).isNull();
         assertThat(response.orderStatus()).isNotNull();
         assertThat(response.salesTrend()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("S-1 실시간 방문자 — 스트림 집계가 있으면 그 값을 쓰고 30분 스캔은 하지 않는다 (08 D4)")
+    void activeVisitorsComeFromStreamWithoutScanning() {
+        Brand brand = stubDashboardBasics();
+        when(orderItemRepository.sumSellerSales(eq(BRAND_ID), any(), any())).thenReturn(totals(0, 0, 0));
+        when(activeVisitorStore.count(eq(BRAND_ID), any())).thenReturn(java.util.OptionalLong.of(17L));
+
+        SellerSummaryResponse response = service.summary(brand, null, null, null, null);
+
+        assertThat(response.today().activeVisitors()).isEqualTo(17);
+        verify(behaviorEventRepository, never()).countActiveVisitors(any(), any());
     }
 }

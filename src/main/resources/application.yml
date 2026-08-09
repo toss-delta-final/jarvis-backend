@@ -63,6 +63,9 @@ spring:
     listener:
       # 적재는 원래 배치 INSERT였다 — 건별 리스너로 바꾸면 DB 왕복이 건수만큼 는다
       type: batch
+      # 레코드가 없어도 30초마다 유휴 이벤트를 낸다 — 한산한 시간대를 파이프라인 장애로
+      # 오인하지 않으려면 "살아 있다"는 신호가 트래픽과 무관해야 한다 (08 D5)
+      idle-event-interval: 30s
 
 server:
   port: 8080
