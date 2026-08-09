@@ -1,0 +1,56 @@
+package com.jarvis.seller;
+
+import com.jarvis.global.config.KafkaConfig;
+import com.jarvis.global.event.BehaviorEventMessage;
+import com.jarvis.global.event.BehaviorStreamHealth;
+import com.jarvis.product.ProductBrandIndex;
+import java.util.List;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.event.ListenerContainerIdleEvent;
+import org.springframework.stereotype.Component;
+
+/**
+ * 컨슈머 그룹 B — visitor-tracker (08 §0). 같은 토픽을 컨슈머 A와 <b>독립적으로</b> 읽어
+ * S-1 실시간 방문자 집계를 유지한다. 그룹이 다르므로 A가 밀리거나 죽어도 이쪽은 영향이 없다 —
+ * 이 팬아웃이 파이프라인을 스트림으로 만든 이유다.
+ *
+ * <p>브랜드 귀속은 S-1 정의와 같다 — {@code product_id}가 있는 이벤트만 해당 상품의 브랜드로 센다.
+ * 상품과 무관한 이벤트({@code session_start}·{@code page_view} 등)는 귀속할 브랜드가 없어 제외된다.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ActiveVisitorConsumer {
+
+    static final String GROUP_ID = "visitor-tracker";
+
+    private final ProductBrandIndex productBrandIndex;
+    private final ActiveVisitorStore activeVisitorStore;
+    private final BehaviorStreamHealth streamHealth;
+
+    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = GROUP_ID)
+    public void consume(List<BehaviorEventMessage> messages) {
+        for (BehaviorEventMessage message : messages) {
+            Long brandId = productBrandIndex.brandOf(message.productId());
+            if (brandId == null || message.sessionKey() == null) {
+                continue;
+            }
+            activeVisitorStore.record(brandId, message.sessionKey(), message.createdAt());
+        }
+        streamHealth.markConsumerAlive();
+    }
+
+    /**
+     * 트래픽이 없어도 살아 있음을 알린다 — 레코드 수신만으로 생존을 판정하면 <b>한산한 시간대가
+     * 장애로 오인</b>돼 S-1이 불필요하게 DB 폴백을 탄다. 컨테이너가 유휴 폴을 돌 때마다 갱신한다.
+     */
+    @EventListener
+    public void onIdle(ListenerContainerIdleEvent event) {
+        if (GROUP_ID.equals(event.getConsumer().groupMetadata().groupId())) {
+            streamHealth.markConsumerAlive();
+        }
+    }
+}

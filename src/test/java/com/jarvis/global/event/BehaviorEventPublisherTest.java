@@ -31,6 +31,7 @@ class BehaviorEventPublisherTest {
 
     @Mock KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate;
     @Mock BehaviorEventAppender behaviorEventAppender;
+    @Mock BehaviorStreamHealth streamHealth;
 
     @InjectMocks BehaviorEventPublisher publisher;
 
@@ -58,7 +59,7 @@ class BehaviorEventPublisherTest {
 
         publisher.publish(List.of(event("id-1", "sess-1")));
 
-        verifyNoInteractions(behaviorEventAppender);
+        verifyNoInteractions(behaviorEventAppender, streamHealth);
     }
 
     @Test
@@ -81,6 +82,7 @@ class BehaviorEventPublisherTest {
 
         publisher.publish(List.of(event("id-ok", "sess-ok"), event("id-fail", "sess-fail")));
 
+        verify(streamHealth).markProduceFailure();  // 읽는 쪽이 DB로 돌아가게 알린다 (08 D5)
         verify(behaviorEventAppender).append(fallbackCaptor.capture());
         assertThat(fallbackCaptor.getValue())
                 .extracting(BehaviorEvent::getClientEventId)
@@ -103,6 +105,6 @@ class BehaviorEventPublisherTest {
     void skipsEmptyBatch() {
         publisher.publish(List.of());
 
-        verifyNoInteractions(kafkaTemplate, behaviorEventAppender);
+        verifyNoInteractions(kafkaTemplate, behaviorEventAppender, streamHealth);
     }
 }

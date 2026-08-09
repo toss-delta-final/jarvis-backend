@@ -24,6 +24,18 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     // 재고 차감·복원·조회는 ProductStockRepository로 이관 (02 D33 개정, 2026-08-09)
 
+    interface ProductBrandRow {
+        Long getProductId();
+        Long getBrandId();
+    }
+
+    /**
+     * 상품→브랜드 매핑 전량 (08 D4) — 실시간 방문자 컨슈머가 기동 시 메모리에 얹어두고 쓴다.
+     * 이벤트마다 조회하면 컨슈머가 커넥션을 상시 물어 RDS 여유(2)를 먹는다.
+     */
+    @Query(value = "SELECT p.id AS productId, p.brand_id AS brandId FROM product p", nativeQuery = true)
+    List<ProductBrandRow> findAllProductBrandIds();
+
     /**
      * I-17 상품 변경분 커서 조회 (05 §I-17) — (updated_at, id) 복합 인덱스 keyset 페이지네이션.
      * 커서 이후 조건: updatedAt > cur.updatedAt OR (= AND id > cur.id). since="0"이면 cursor=null →

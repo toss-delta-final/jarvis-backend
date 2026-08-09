@@ -57,6 +57,7 @@ public class SellerSalesService {
     private final ProductOptionRepository productOptionRepository;
     private final BrandRepository brandRepository;
     private final SellerAttributionService sellerAttributionService;
+    private final ActiveVisitorStore activeVisitorStore;
 
     private static final int DEFAULT_LOW_STOCK = 10;
     private static final int DEFAULT_TREND_DAYS = 7;
@@ -122,10 +123,22 @@ public class SellerSalesService {
         long ySales = y.getSales();
         long yOrders = y.getOrders();
         long yAov = yOrders == 0 ? 0 : Math.round((double) ySales / yOrders);
-        long activeVisitors = behaviorEventRepository.countActiveVisitors(
-                brandId, LocalDateTime.now().minusMinutes(ACTIVE_VISITOR_MINUTES));
+        long activeVisitors = activeVisitors(brandId);
         return new SellerSummaryResponse.Today(sales, orders, aov, activeVisitors,
                 changeRate(sales, ySales), changeRate(orders, yOrders), changeRate(aov, yAov));
+    }
+
+    /**
+     * 실시간 방문자 — 최근 30분 자사 상품 관련 이벤트의 고유 세션 수 (노션 S-1).
+     *
+     * <p>원천은 스트림 컨슈머가 유지하는 라이브 집합이다(08 D4) — 대시보드 진입마다
+     * {@code behavior_events} 30분 구간을 스캔하던 것을 없앴다. 스트림이 멈췄거나 Redis가 죽으면
+     * <b>기존 DB 집계로 폴백</b>한다(08 D5). 숫자의 정의는 양쪽이 같아 화면은 달라지지 않는다.
+     */
+    private long activeVisitors(Long brandId) {
+        LocalDateTime since = LocalDateTime.now().minusMinutes(ACTIVE_VISITOR_MINUTES);
+        return activeVisitorStore.count(brandId, since)
+                .orElseGet(() -> behaviorEventRepository.countActiveVisitors(brandId, since));
     }
 
     /** 매출 추이 — to 기준 trend일, 매출 0인 날도 채워 반환 + total = points 합 */

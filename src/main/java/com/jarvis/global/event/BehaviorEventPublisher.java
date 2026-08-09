@@ -38,6 +38,7 @@ public class BehaviorEventPublisher {
 
     private final KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate;
     private final BehaviorEventAppender behaviorEventAppender;
+    private final BehaviorStreamHealth streamHealth;
 
     /**
      * @throws RuntimeException 토픽·DB 양쪽 적재가 모두 실패한 경우 — 호출부가 500 여부를 정한다
@@ -51,6 +52,8 @@ public class BehaviorEventPublisher {
             return;
         }
         log.warn("behavior-events 발행 실패 {}건 — DB 직접 적재로 폴백 (08 D7)", undelivered.size());
+        // 이 구간 이벤트는 토픽에 없다 = 스트림 파생 지표에도 없다. 읽는 쪽이 DB로 돌아가게 알린다
+        streamHealth.markProduceFailure();
         behaviorEventAppender.append(undelivered);
     }
 
