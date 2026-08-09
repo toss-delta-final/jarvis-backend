@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
+import com.jarvis.global.cache.RedisCache;
 import com.jarvis.global.response.BusinessException;
 import com.jarvis.global.response.ErrorCode;
 import com.jarvis.order.Order;
@@ -45,6 +46,7 @@ class ReviewWriteServiceTest {
     @Mock OrderItemRepository orderItemRepository;
     @Mock OrderRepository orderRepository;
     @Mock ProductRepository productRepository;
+    @Mock RedisCache cache;
 
     @InjectMocks ReviewService reviewService;
 
@@ -68,6 +70,15 @@ class ReviewWriteServiceTest {
             ReflectionTestUtils.setField(review, "createdAt", LocalDateTime.now());
             return review;
         });
+    }
+
+    @Test
+    @DisplayName("M-1 — 작성 성공 시 해당 상품의 평점 캐시를 무효화한다 (07 §3-1)")
+    void writeEvictsStatsCache() {
+        reviewService.write(MEMBER_ID, new ReviewCreateRequest(ORDER_ITEM_ID, 5, "좋아요"));
+
+        // 단위 테스트엔 트랜잭션이 없어 즉시 evict 경로를 탄다 — 커밋 후 지연은 통합 환경에서만
+        verify(cache).evict("v1:review:stats:10");
     }
 
     @Test

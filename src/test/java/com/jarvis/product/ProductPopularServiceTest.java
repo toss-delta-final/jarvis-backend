@@ -48,7 +48,7 @@ class ProductPopularServiceTest {
     @Mock RedisCache cache;
 
     /**
-     * 인기 id는 요청 size가 아니라 <b>캐시 상한만큼</b> 계산해 캐시하고 잘라 쓴다(07 §3-1) —
+     * 인기 카드는 요청 size가 아니라 <b>캐시 상한만큼</b> 만들어 통째로 캐시하고 잘라 쓴다(07 §3-1) —
      * 그래서 리포지토리에 가는 size는 항상 이 값이다. ProductService.POPULAR_CACHE_SIZE와 같은 값.
      */
     private static final int CACHE_SIZE = 50;
@@ -89,7 +89,8 @@ class ProductPopularServiceTest {
     void salesFillsAllSkipsFallbacks() {
         List<Product> shuffled = List.of(product(10L), product(20L), product(30L)); // findAllById는 순서 미보장
         when(productRepository.findPopularIdsBySales(any(), eq(CACHE_SIZE))).thenReturn(fill(30L, 10L, 20L));
-        when(productRepository.findAllById(List.of(30L, 10L, 20L))).thenReturn(shuffled);
+        // 하이드레이션은 슬라이스 전 — 캐시 상한 전체(50건)로 조회하고, 실체 없는 더미 id는 드롭된다
+        when(productRepository.findAllById(fill(30L, 10L, 20L))).thenReturn(shuffled);
 
         List<PopularCardResponse> cards = productService.getPopular(3);
 

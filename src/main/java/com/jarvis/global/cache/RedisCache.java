@@ -3,6 +3,13 @@ package com.jarvis.global.cache;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +77,49 @@ public class RedisCache {
         }
     }
 
+    /**
+     * 배치 cache-aside — {@code keyPrefix + id}로 id마다 한 키. 적중분은 캐시에서 읽고,
+     * 미적중분만 {@code loader}로 <b>한 번에</b> 채워 되캐시한다(MGET 1회 + 미스분 쓰기).
+     *
+     * <p>반환 맵에는 <b>요청한 모든 id의 엔트리가 있다</b> — 로더 결과에 없는 id는
+     * {@code absentValue}로 채워서 함께 캐시한다(negative cache). 원본에 행이 없는 id
+     * (리뷰 0개 상품 등)가 영원한 미스로 남아 매 요청 DB를 되짚는 것을 막기 위함이다.
+     *
+     * <p>단건 {@link #get}과 달리 <b>스탬피드 락이 없다</b> — 키가 id 단위로 흩어져 만료 시각도
+     * 흩어지고, 로더가 IN 절 집계 한 방이라 중복 계산 비용이 락 왕복 비용보다 싸다.
+     */
+    public <T> Map<Long, T> getAll(String keyPrefix, Collection<Long> ids, Duration ttl,
+                                   TypeReference<T> type, Function<List<Long>, Map<Long, T>> loader,
+                                   T absentValue) {
+        List<Long> distinct = ids.stream().distinct().toList();
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, T> result = new HashMap<>();
+        List<Long> missed = new ArrayList<>();
+        List<String> raws = readAll(keyPrefix, distinct);
+        for (int i = 0; i < distinct.size(); i++) {
+            T hit = raws == null ? null : parse(raws.get(i), type);
+            if (hit == null) {
+                missed.add(distinct.get(i));
+            } else {
+                result.put(distinct.get(i), hit);
+            }
+        }
+        if (missed.isEmpty()) {
+            return result;
+        }
+        Map<Long, T> loaded = loader.apply(missed);
+        Map<Long, T> toWrite = new LinkedHashMap<>();
+        for (Long id : missed) {
+            T value = loaded.getOrDefault(id, absentValue);
+            result.put(id, value);
+            toWrite.put(id, value);
+        }
+        writeAll(keyPrefix, ttl, toWrite);
+        return result;
+    }
+
     /** 쓰기 경로에서 명시적으로 무효화할 때. 실패는 무시한다 — TTL이 최후의 그물이다 */
     public void evict(String key) {
         try {
@@ -81,12 +131,46 @@ public class RedisCache {
 
     private <T> T read(String key, TypeReference<T> type) {
         try {
-            String raw = redisTemplate.opsForValue().get(key);
-            return raw == null ? null : objectMapper.readValue(raw, type);
-        } catch (Exception e) {
-            // 역직렬화 실패(스키마 변경 등)도 여기로 온다 — 캐시를 없는 셈 치고 DB로 간다
+            return parse(redisTemplate.opsForValue().get(key), type);
+        } catch (RuntimeException e) {
             log.warn("캐시 조회 실패 — DB로 우회. key={}", key, e);
             return null;
+        }
+    }
+
+    /** null이거나 역직렬화가 실패하면(스키마 변경 등) 미적중으로 취급한다 */
+    private <T> T parse(String raw, TypeReference<T> type) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(raw, type);
+        } catch (Exception e) {
+            log.warn("캐시 역직렬화 실패 — DB로 우회", e);
+            return null;
+        }
+    }
+
+    /** MGET 1회 — 실패하면 null을 돌려 전량 미스로 처리한다(fail-open) */
+    private List<String> readAll(String keyPrefix, List<Long> ids) {
+        try {
+            return redisTemplate.opsForValue()
+                    .multiGet(ids.stream().map(id -> keyPrefix + id).toList());
+        } catch (RuntimeException e) {
+            log.warn("캐시 배치 조회 실패 — 전량 DB로 우회. prefix={}", keyPrefix, e);
+            return null;
+        }
+    }
+
+    /** 첫 실패에서 나머지 저장을 포기한다 — Redis 장애 시 키 수만큼 타임아웃이 쌓이지 않게 */
+    private <T> void writeAll(String keyPrefix, Duration ttl, Map<Long, T> values) {
+        try {
+            for (Map.Entry<Long, T> entry : values.entrySet()) {
+                redisTemplate.opsForValue().set(keyPrefix + entry.getKey(),
+                        objectMapper.writeValueAsString(entry.getValue()), ttl);
+            }
+        } catch (Exception e) {
+            log.warn("캐시 배치 저장 실패 — 남은 키 저장 생략. prefix={}", keyPrefix, e);
         }
     }
 
