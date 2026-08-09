@@ -50,3 +50,5 @@
 - `bench-2026-08-10-active-visitors.sql` + `bench-active-visitors.sh` — S-1 실시간 방문자의
   **스캔(전) vs 스트림 집계(후)** 소요 비교 (08 §5-2). 격리 스키마 `jarvis_bench`에서 돌므로
   개발·운영 DB를 건드리지 않는다. 준비 절차는 `.sql` 머리말 참조.
+- `verify-kafka-pipeline.sh` — 배포 환경에서 **정말 Kafka 경로로 도는지** 판정 (08 §5-5).
+  폴백이 있어 DB 행·화면만으로는 구분되지 않으므로, 컨슈머 그룹 활성 멤버와 Redis 산출물만 본다.
