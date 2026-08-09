@@ -15,9 +15,10 @@ if [ ! -f src/main/resources/application-local.yml ]; then
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "[setup] docker를 찾을 수 없습니다 — MariaDB(3306)·Redis(6379)를 다른 방법으로 띄웠다면 무시해도 됩니다." >&2
+  echo "[setup] docker를 찾을 수 없습니다 — MariaDB(3306)·Redis(6379)·Kafka(9092)를 다른 방법으로 띄웠다면 무시해도 됩니다." >&2
   exit 1
 fi
 
 docker compose up -d --wait
-echo "[setup] MariaDB(3306)·Redis(6379) healthy — 이제 ./gradlew bootRun (JAVA_HOME 필요, README 참조)"
+# Kafka가 없어도 앱은 뜬다 — produce 실패 시 DB 직접 적재로 폴백한다 (08 D7)
+echo "[setup] MariaDB(3306)·Redis(6379)·Kafka(9092) healthy — 이제 ./gradlew bootRun (JAVA_HOME 필요, README 참조)"

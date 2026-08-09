@@ -32,6 +32,10 @@ dependencies {
     runtimeOnly 'org.mariadb.jdbc:mariadb-java-client'
 
 
+    // 행동 이벤트 스트림 (08 §0) — 프로듀서·컨슈머 모두 앱 안에 둔다 (08 D9)
+    implementation 'org.springframework.kafka:spring-kafka'
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
+
     // 스케줄러 분산 락 (03 §4, D-분산5 — 틱당 1대만 실행, 단일 인스턴스에서도 무해)
     implementation 'net.javacrumbs.shedlock:shedlock-spring:6.2.0'
     implementation 'net.javacrumbs.shedlock:shedlock-provider-redis-spring:6.2.0'
