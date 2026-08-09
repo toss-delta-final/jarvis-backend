@@ -67,13 +67,22 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
 
     /**
      * S-1 실시간 방문자 — 최근 30분 자사 상품 관련 이벤트의 distinct session_key (노션 S-1).
-     * session_key는 30분 무활동 시 재발급이라 "실시간 접속" 정의와 정합. 캐시 미적용(성격이 실시간).
+     * session_key는 30분 무활동 시 재발급이라 "실시간 접속" 정의와 정합.
+     *
+     * <p><b>챗봇 sentinel 제외</b>(2026-08-10 정정) — 챗봇 경로의 서버 적재 이벤트는 session_key가
+     * {@code chat:{채팅sessionId}}로, 브라우저 세션과 <b>ID 공간이 다르다</b>(노션 E-1·I-2 한계 ①).
+     * 세지 않고 두면 챗봇으로 담은 사람이 자기 브라우저 세션과 별개로 한 번 더 세어져 방문자가 부풀었다.
+     * 접두사는 {@code CartEventRecorder.CHAT_SESSION_KEY_PREFIX}이고, 스트림 집계(08 D4)도 같은 기준으로
+     * 거른다 — <b>두 경로가 같은 숫자를 내야 폴백이 값을 바꾸지 않는다.</b>
+     *
+     * <p>스트림이 살아 있으면 이 쿼리는 돌지 않는다(08 D5 폴백 전용).
      */
     @Query(value = """
             SELECT COUNT(DISTINCT be.session_key)
             FROM behavior_events be
             JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
             WHERE be.created_at >= :since
+              AND be.session_key NOT LIKE 'chat:%'
             """, nativeQuery = true)
     long countActiveVisitors(@Param("brandId") Long brandId, @Param("since") LocalDateTime since);
 

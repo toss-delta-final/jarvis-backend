@@ -1,5 +1,6 @@
 package com.jarvis.seller;
 
+import com.jarvis.cart.CartEventRecorder;
 import com.jarvis.global.config.KafkaConfig;
 import com.jarvis.global.event.BehaviorEventMessage;
 import com.jarvis.global.event.BehaviorStreamHealth;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>브랜드 귀속은 S-1 정의와 같다 — {@code product_id}가 있는 이벤트만 해당 상품의 브랜드로 센다.
  * 상품과 무관한 이벤트({@code session_start}·{@code page_view} 등)는 귀속할 브랜드가 없어 제외된다.
+ * 챗봇 sentinel 세션도 제외한다(아래) — 폴백 쿼리와 같은 기준이어야 숫자가 흔들리지 않는다.
  */
 @Slf4j
 @Component
@@ -35,7 +37,9 @@ public class ActiveVisitorConsumer {
     public void consume(List<BehaviorEventMessage> messages) {
         for (BehaviorEventMessage message : messages) {
             Long brandId = productBrandIndex.brandOf(message.productId());
-            if (brandId == null || message.sessionKey() == null) {
+            // 챗봇 sentinel은 브라우저 세션과 ID 공간이 달라 방문자로 세면 같은 사람이 두 번 잡힌다
+            // (노션 E-1·I-2 한계 ①). 폴백 쿼리도 같은 기준으로 거른다 — 두 경로의 숫자가 같아야 한다
+            if (brandId == null || !CartEventRecorder.isBrowserSession(message.sessionKey())) {
                 continue;
             }
             activeVisitorStore.record(brandId, message.sessionKey(), message.createdAt());
