@@ -184,7 +184,7 @@ com.jarvis
 │   ├── response/        # ApiResponse envelope, ErrorCode enum, GlobalExceptionHandler
 │   ├── event/           # 이벤트 수집 API(E-1)·behavior_events 적재
 │   ├── cache/           # RedisCache — 읽기 캐시 공용 진입점(07 §3-1, cache-aside)
-│   ├── ratelimit/       # LoginRateLimiter — Redis 기반 로그인 시도 제한
+│   ├── ratelimit/       # FixedWindowCounter(공용 집계) + LoginRateLimiter(A-1·A-2)·UploadRateLimiter(S-6)
 │   └── entity/          # BaseTimeEntity (createdAt/updatedAt 공통 상속)
 ├── member    ├── brand     ├── category  ├── product
 ├── cart      ├── order     ├── review    ├── wishlist

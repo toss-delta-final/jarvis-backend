@@ -3,12 +3,17 @@ package com.jarvis.seller;
 import com.jarvis.brand.Brand;
 import com.jarvis.global.auth.AuthUser;
 import com.jarvis.global.response.ApiResponse;
+import com.jarvis.seller.dto.SellerImageUploadUrlRequest;
+import com.jarvis.seller.dto.SellerImageUploadUrlResponse;
 import com.jarvis.seller.dto.SellerOrderListResponse;
 import com.jarvis.seller.dto.SellerProductListResponse;
 import com.jarvis.seller.dto.SellerSummaryResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,6 +32,21 @@ public class SellerController {
     private final SellerSalesService sellerSalesService;
     private final SellerOrderService sellerOrderService;
     private final SellerProductService sellerProductService;
+    private final SellerImageUploadService sellerImageUploadService;
+
+    /**
+     * S-6 — 상품 이미지 업로드용 presigned URL 발급. 리소스 생성이 아니라 URL 발급이라 200이다.
+     *
+     * <p>brandId를 쓰지 않는데도 브랜드를 도출하는 이유 — 브랜드가 없는 SELLER는 상품을 만들 수
+     * 없으므로 업로드 티켓도 주지 않는다(S-1~S-3과 같은 404 SELLER_BRAND_NOT_FOUND).
+     */
+    @PostMapping("/product-images/upload-url")
+    public ApiResponse<SellerImageUploadUrlResponse> issueImageUploadUrl(
+            @AuthenticationPrincipal AuthUser authUser,
+            @Valid @RequestBody SellerImageUploadUrlRequest request) {
+        brandResolver.resolve(authUser.memberId());
+        return ApiResponse.success(sellerImageUploadService.issue(authUser.memberId(), request));
+    }
 
     /** S-1 — 자사 대시보드(주문상태·오늘지표·매출추이·재고부족·상품퍼널). from/to 생략 시 둘 다 오늘. */
     @GetMapping("/summary")

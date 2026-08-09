@@ -84,11 +84,27 @@ app:
       window-minutes: 10
       account-limit: 5   # 정상 사용자가 10분에 5번 틀릴 일은 드물다
       ip-limit: 30       # 회사·카페 등 공유 IP를 고려해 넉넉히
+    # 업로드 URL 발급 제한 (S-6) — 전송 없이 반복 발급이 가능해 회원 단위로 센다.
+    # 로그인과 달리 IP 축을 두지 않는다: 이미 인증된 판매자라 계정이 곧 책임 주체다.
+    upload:
+      window-minutes: 10
+      member-limit: 60
   # 상품 이미지 호스트 (02 D42) — DB엔 버킷 내 경로(key)만 저장하고 앞부분은 여기서 붙인다.
   # 이미지가 Cloudflare 뒤로 옮겨질 예정이라 URL을 통째로 넣으면 그때 5만여 행을 UPDATE해야 한다.
   # 시크릿이 아니라 공개 버킷 주소이므로 기본값을 여기 두고(로컬은 무설정 동작) 배포만 환경변수로 덮어쓴다.
   image:
     base-url: ${APP_IMAGE_BASE_URL:https://jarvis-storage-049705857330-ap-northeast-2-an.s3.ap-northeast-2.amazonaws.com}
+  # 판매자 상품 이미지 업로드용 presigned URL (S-6). 시크릿이 아니라 공개 버킷 정보라 기본값을 둔다.
+  # key-prefix가 uploads/인 이유 — 삭제 권한이 없어 파일을 옮기는 단계가 없다. 등록 후에도 여기 그대로
+  # 남고 image_url에 그 주소가 저장되므로 "temp"라는 이름이면 나중에 정리 대상으로 오인된다.
+  s3:
+    bucket: ${APP_S3_BUCKET:jarvis-storage-049705857330-ap-northeast-2-an}
+    region: ${APP_S3_REGION:ap-northeast-2}
+    key-prefix: products/uploads
+    presign-expiry-minutes: 5
+    # 리사이즈(긴 변 1200px·JPEG 0.85) 후 최악이 800KB라 2.5배 여유. 정상 사용자를 위한 값이 아니라
+    # 브라우저 리사이즈를 건너뛴 업로드를 막는 값이다 (2026-08-09 BE·FE 합의).
+    max-upload-bytes: 2097152
   mock:
     # shipping-minutes 제거 (2026-08-06) — ORDERED→SHIPPING은 판매자 발송(I-30) 소관이라
     # 스케줄러가 더는 일으키지 않는다 (01 D4 개정)
