@@ -35,6 +35,7 @@ class ProductCandidateSearchTest {
 
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
+    @Mock ProductStockRepository productStockRepository;
     @Mock BrandService brandService;
     @Mock CategoryService categoryService;
     @Mock ReviewService reviewService;
@@ -199,9 +200,10 @@ class ProductCandidateSearchTest {
         lenient().when(brandService.getNames(anyCollection())).thenReturn(Map.of(2L, "브랜드"));
         // 목 생성을 스터빙 밖에서 끝낸다 — thenReturn 인자 안에서 만들면 스터빙이 중첩돼 깨진다
         List<ProductOption> options =
-                LongStream.rangeClosed(1, 25).mapToObj(i -> option(1L, "색상" + i)).toList();
+                LongStream.rangeClosed(1, 25).mapToObj(i -> option(1L, i, "색상" + i)).toList();
         when(productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(List.of(1L)))
                 .thenReturn(options);
+        stubPurchasable(1L, LongStream.rangeClosed(1, 25).boxed().toList());
 
         ProductCandidateResponse candidate = productService.searchCandidates(
                 null, null, null, null, null, null).get(0);
@@ -220,6 +222,7 @@ class ProductCandidateSearchTest {
         lenient().when(brandService.getNames(anyCollection())).thenReturn(Map.of(2L, "브랜드"));
         when(productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(List.of(1L)))
                 .thenReturn(List.of());
+        stubPurchasable(1L, List.of());
 
         ProductCandidateResponse candidate = productService.searchCandidates(
                 null, null, null, null, null, null).get(0);
@@ -228,10 +231,45 @@ class ProductCandidateSearchTest {
         assertThat(candidate.optionCount()).isZero();
     }
 
-    private static ProductOption option(long productId, String name) {
+    @Test
+    @DisplayName("I-1 — 품절 옵션은 options에서 빠지고 optionCount도 구매 가능한 것만 센다 (2026-08-09)")
+    void soldOutOptionsAreExcluded() {
+        CandidateRow row = new CandidateRow(product(1L, 11L, 2L, 1000), 0L, null);
+        when(productRepository.searchCandidates(any(), eq(false), any(), eq(false), any(),
+                any(), any(), any())).thenReturn(List.of(row));
+        lenient().when(categoryService.getNames(anyCollection())).thenReturn(Map.of(11L, "티셔츠"));
+        lenient().when(brandService.getNames(anyCollection())).thenReturn(Map.of(2L, "브랜드"));
+        // 목 생성을 스터빙 밖에서 끝낸다 — thenReturn 인자 안에서 만들면 스터빙이 중첩돼 깨진다
+        List<ProductOption> options =
+                List.of(option(1L, 10L, "S"), option(1L, 11L, "M"), option(1L, 12L, "L"));
+        when(productOptionRepository.findAllByProductIdInOrderByProductIdAscIdAsc(List.of(1L)))
+                .thenReturn(options);
+        // M(11L)만 품절
+        when(productStockRepository.findAllByProductIdIn(List.of(1L))).thenReturn(List.of(
+                ProductStock.of(1L, 10L, 5), ProductStock.of(1L, 11L, 0), ProductStock.of(1L, 12L, 3)));
+
+        ProductCandidateResponse candidate = productService.searchCandidates(
+                null, null, null, null, null, null).get(0);
+
+        assertThat(candidate.options()).containsExactly("S", "L");
+        // 20개 상한에 안 걸렸으므로 optionCount == options.size() — 여기가 어긋나면 AI의 정합 가드가
+        // "잘렸다"로 오판해 자동 선택을 포기한다
+        assertThat(candidate.optionCount()).isEqualTo(2);
+    }
+
+    private static ProductOption option(long productId, long optionId, String name) {
         ProductOption option = mock(ProductOption.class, withSettings().strictness(Strictness.LENIENT));
+        when(option.getId()).thenReturn(optionId);
         when(option.getProductId()).thenReturn(productId);
         when(option.getName()).thenReturn(name);
         return option;
+    }
+
+    /** 재고가 남은 옵션들 — I-1은 여기 없는 옵션을 후보에서 뺀다 (2026-08-09) */
+    private void stubPurchasable(long productId, java.util.List<Long> optionIds) {
+        when(productStockRepository.findAllByProductIdIn(java.util.List.of(productId)))
+                .thenReturn(optionIds.stream()
+                        .map(id -> ProductStock.of(productId, id, 10))
+                        .toList());
     }
 }

@@ -154,7 +154,7 @@ public class ProfileGraphClient {
      * {@code detail.graphVersion}으로 FE가 곧바로 재조회한다.
      */
     private BusinessException translate(String api, HttpStatusCodeException e) {
-        JsonNode error = errorBody(e.getResponseBodyAsString());
+        JsonNode error = errorBody(api, e.getResponseBodyAsString());
         String code = error.path("code").asText(null);
         JsonNode detail = error.path("detail");
 
@@ -187,15 +187,24 @@ public class ProfileGraphClient {
     }
 
     /**
-     * AI 오류 본문은 {@code {"error": {...}}} 봉투일 수도, 평문 {@code {"code": ...}}일 수도 있다 —
-     * 계약이 {@code error.detail.graphVersion} 위치만 지정하고 봉투 유무는 명시하지 않았다.
-     * 둘 다 받아들여, 나중에 한쪽으로 확정돼도 코드를 고칠 일이 없게 한다.
+     * AI 오류 본문은 <b>{@code {"error": {...}}} 봉투로 확정</b>됐다(2026-08-09 AI팀 확답).
+     * 봉투가 아니면 <b>읽지 않는다</b> — 계약이 정해진 뒤에도 다른 모양을 받아주면
+     * "둘 다 유효한가?"가 코드에 남아 다음 사람이 헷갈린다.
+     *
+     * <p>봉투가 아닌 본문이 오면 {@code code}를 못 읽어 {@link #byStatus} 폴백으로 떨어지고
+     * {@code detail}도 실리지 않는다 — <b>그건 AI 쪽 계약 위반이지 우리 쪽 처리 실패가 아니다.</b>
+     * 대신 조용히 지나가지 않도록 경고를 남긴다. 로그가 원인을 바로 가리켜야 한다.
      */
-    private JsonNode errorBody(String body) {
+    private JsonNode errorBody(String api, String body) {
         try {
             JsonNode root = objectMapper.readTree(body == null ? "" : body);
             JsonNode wrapped = root.path("error");
-            return wrapped.isObject() ? wrapped : root;
+            if (wrapped.isObject()) {
+                return wrapped;
+            }
+            log.warn("{} 오류 본문이 error 봉투가 아니다 — 2026-08-09 확정 위반. code·detail을 읽지 못한다. body={}",
+                    api, body);
+            return objectMapper.createObjectNode();
         } catch (Exception e) {
             return objectMapper.createObjectNode();
         }

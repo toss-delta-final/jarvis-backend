@@ -38,7 +38,9 @@ public enum ErrorCode {
     CART_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "장바구니 항목을 찾을 수 없습니다."),
     CART_OPTION_REQUIRED(HttpStatus.BAD_REQUEST, "옵션을 선택해 주세요."),
     CART_OPTION_INVALID(HttpStatus.BAD_REQUEST, "해당 상품의 옵션이 아닙니다."),
-    // 재고는 상품 단위(02 D33). 합산 후 수량 > stock_quantity면 담기/수량변경 차단 — detail.availableStock 동반
+    // 재고는 옵션 단위(02 D33 개정) — 담은 옵션의 재고를 넘으면 담기/수량변경 차단, detail.availableStock 동반.
+    // 전 옵션이 품절인 상품에 optionId 없이 담기를 시도해도 이 코드다(CART_OPTION_REQUIRED는 빈 목록이 돼
+    // LLM이 되물을 이름을 잃는다 — 2026-08-09 AI팀 실측)
     CART_STOCK_INSUFFICIENT(HttpStatus.BAD_REQUEST, "재고가 부족합니다."),
 
     // order / claim (04 §4 — Phase 3)
