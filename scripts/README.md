@@ -44,3 +44,9 @@
 적용 순서: `seed-accounts` → `seed-catalog` → `seed-commerce-demo` → `seed-analytics-demo`
 
 수동 적용법: `docker exec -i jarvis-mariadb mariadb -ujarvis -pjarvis-local jarvis < scripts/seed-accounts.sql` (나머지도 같은 방식)
+
+## 벤치마크
+
+- `bench-2026-08-10-active-visitors.sql` + `bench-active-visitors.sh` — S-1 실시간 방문자의
+  **스캔(전) vs 스트림 집계(후)** 소요 비교 (08 §5-2). 격리 스키마 `jarvis_bench`에서 돌므로
+  개발·운영 DB를 건드리지 않는다. 준비 절차는 `.sql` 머리말 참조.
