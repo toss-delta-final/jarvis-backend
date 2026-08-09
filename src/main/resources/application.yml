@@ -30,6 +30,23 @@ spring:
       timeout: 2s  # Lettuce 커맨드 타임아웃(기본 60s) — Redis 장애 시 채팅/세션 경로 fail-fast
   jackson:
     time-zone: Asia/Seoul
+  # 행동 이벤트 스트림 (08 §0). 운영 브로커는 전용 EC2 사설 IP — 퍼블릭 경로 없음 (08 D6)
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # ⚠️ 아래 타임아웃 4종은 08 D7의 성립 조건이다. 기본값의 max.block.ms는 60초라
+      # 브로커가 죽으면 produce 호출이 요청 스레드를 60초씩 물고, 평상시 트래픽만으로도
+      # 1분 안에 톰캣 스레드가 고갈된다 — DB 폴백 판정에 도달하기 전에 앱 전체가 죽는다.
+      # "폭발 반경은 수집 엔드포인트뿐"이라는 설계 주장은 이 값들이 있어야 성립한다.
+      retries: 1
+      acks: all                   # 단일 브로커라 사실상 leader ack — 복제 추가 시 그대로 의미가 확장된다
+      properties:
+        max.block.ms: 1000        # 메타데이터 대기·버퍼 확보 상한
+        request.timeout.ms: 1000  # 브로커 응답 대기 상한
+        delivery.timeout.ms: 2000 # 재시도 포함 전체 상한 (≥ linger + request.timeout)
+        spring.json.add.type.headers: false  # 컨슈머가 프로듀서 클래스명에 묶이지 않게
 
 server:
   port: 8080
