@@ -3,14 +3,11 @@ package com.jarvis.seller;
 import com.jarvis.cart.CartEventRecorder;
 import com.jarvis.global.config.KafkaConfig;
 import com.jarvis.global.event.BehaviorEventMessage;
-import com.jarvis.global.event.BehaviorStreamHealth;
 import com.jarvis.product.ProductBrandIndex;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.event.ListenerContainerIdleEvent;
 import org.springframework.stereotype.Component;
 
 /**
@@ -27,13 +24,10 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ActiveVisitorConsumer {
 
-    static final String GROUP_ID = "visitor-tracker";
-
     private final ProductBrandIndex productBrandIndex;
     private final ActiveVisitorStore activeVisitorStore;
-    private final BehaviorStreamHealth streamHealth;
 
-    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = GROUP_ID)
+    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = KafkaConfig.VISITOR_TRACKER_GROUP)
     public void consume(List<BehaviorEventMessage> messages) {
         for (BehaviorEventMessage message : messages) {
             Long brandId = productBrandIndex.brandOf(message.productId());
@@ -44,17 +38,6 @@ public class ActiveVisitorConsumer {
             }
             activeVisitorStore.record(brandId, message.sessionKey(), message.createdAt());
         }
-        streamHealth.markConsumerAlive();
     }
 
-    /**
-     * 트래픽이 없어도 살아 있음을 알린다 — 레코드 수신만으로 생존을 판정하면 <b>한산한 시간대가
-     * 장애로 오인</b>돼 S-1이 불필요하게 DB 폴백을 탄다. 컨테이너가 유휴 폴을 돌 때마다 갱신한다.
-     */
-    @EventListener
-    public void onIdle(ListenerContainerIdleEvent event) {
-        if (GROUP_ID.equals(event.getConsumer().groupMetadata().groupId())) {
-            streamHealth.markConsumerAlive();
-        }
-    }
 }

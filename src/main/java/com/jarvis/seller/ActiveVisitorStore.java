@@ -49,7 +49,7 @@ public class ActiveVisitorStore {
      *         DB 집계로 폴백한다(08 D5). "0명"과 "모름"을 구분하려고 {@code OptionalLong}이다.
      */
     public OptionalLong count(Long brandId, LocalDateTime since) {
-        if (!streamHealth.isLive()) {
+        if (!streamHealth.canTrustAggregate()) {
             return OptionalLong.empty();
         }
         String key = KEY_PREFIX + brandId;
