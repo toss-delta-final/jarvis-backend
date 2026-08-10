@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.jarvis.global.event.BehaviorEventMessage;
-import com.jarvis.global.event.BehaviorStreamHealth;
 import com.jarvis.product.ProductBrandIndex;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,7 +25,6 @@ class ActiveVisitorConsumerTest {
 
     @Mock ProductBrandIndex productBrandIndex;
     @Mock ActiveVisitorStore activeVisitorStore;
-    @Mock BehaviorStreamHealth streamHealth;
 
     @InjectMocks ActiveVisitorConsumer consumer;
 
@@ -57,13 +55,4 @@ class ActiveVisitorConsumerTest {
         verify(activeVisitorStore, never()).record(anyLong(), anyString(), any());
     }
 
-    @Test
-    @DisplayName("레코드를 처리하면 컨슈머 생존을 알린다 — 낡음 판정의 한 축 (08 D5)")
-    void marksConsumerAlive() {
-        lenient().when(productBrandIndex.brandOf(any())).thenReturn(null);
-
-        consumer.consume(List.of(event("sess-1", 101L)));
-
-        verify(streamHealth).markConsumerAlive();
-    }
 }

@@ -40,9 +40,9 @@ class ActiveVisitorStoreTest {
     }
 
     @Test
-    @DisplayName("스트림이 살아 있으면 창 밖을 잘라내고 남은 고유 세션 수를 센다")
+    @DisplayName("집계를 믿을 수 있으면 창 밖을 잘라내고 남은 고유 세션 수를 센다")
     void countsDistinctSessionsInWindow() {
-        when(streamHealth.isLive()).thenReturn(true);
+        when(streamHealth.canTrustAggregate()).thenReturn(true);
         when(zSetOperations.zCard("visitors:7")).thenReturn(17L);
 
         assertThat(store.count(BRAND_ID, SINCE)).hasValue(17L);
@@ -52,7 +52,7 @@ class ActiveVisitorStoreTest {
     @Test
     @DisplayName("스트림을 믿을 수 없으면 Redis를 읽지 않고 비운 채 돌려준다 — 호출부가 DB로 폴백한다")
     void returnsEmptyWhenStreamIsNotLive() {
-        when(streamHealth.isLive()).thenReturn(false);
+        when(streamHealth.canTrustAggregate()).thenReturn(false);
 
         assertThat(store.count(BRAND_ID, SINCE)).isEmpty();
         verifyNoInteractions(zSetOperations);
@@ -61,7 +61,7 @@ class ActiveVisitorStoreTest {
     @Test
     @DisplayName("Redis가 죽어도 예외를 올리지 않는다 — 비운 채 돌려주고 DB 폴백에 맡긴다")
     void returnsEmptyOnRedisFailure() {
-        when(streamHealth.isLive()).thenReturn(true);
+        when(streamHealth.canTrustAggregate()).thenReturn(true);
         when(zSetOperations.zCard(anyString())).thenThrow(new RuntimeException("redis down"));
 
         assertThat(store.count(BRAND_ID, SINCE)).isEmpty();

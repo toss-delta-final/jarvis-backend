@@ -25,6 +25,11 @@ public class KafkaConfig {
     /** 재시도까지 실패한 레코드가 가는 곳. 이름은 DeadLetterPublishingRecoverer 기본 규칙(.DLT) */
     public static final String BEHAVIOR_EVENTS_DLT = BEHAVIOR_EVENTS_TOPIC + ".DLT";
 
+    /** 컨슈머 그룹 A — 적재. 그룹 이름도 토픽처럼 앱 내부 계약이라 한곳에 모은다 */
+    public static final String PERSISTER_GROUP = "persister";
+    /** 컨슈머 그룹 B — S-1 실시간 방문자 집계 */
+    public static final String VISITOR_TRACKER_GROUP = "visitor-tracker";
+
     private static final int PARTITIONS = 3;
 
     @Bean

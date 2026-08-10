@@ -22,11 +22,9 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class BehaviorEventConsumer {
 
-    static final String GROUP_ID = "persister";
-
     private final BehaviorEventAppender behaviorEventAppender;
 
-    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = GROUP_ID)
+    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = KafkaConfig.PERSISTER_GROUP)
     public void consume(List<BehaviorEventMessage> messages) {
         List<BehaviorEvent> events = messages.stream().map(BehaviorEventMessage::toEntity).toList();
         behaviorEventAppender.append(events);
