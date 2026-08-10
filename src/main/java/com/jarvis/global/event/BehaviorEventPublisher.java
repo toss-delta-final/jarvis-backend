@@ -39,6 +39,7 @@ public class BehaviorEventPublisher {
     private final KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate;
     private final BehaviorEventAppender behaviorEventAppender;
     private final BehaviorStreamHealth streamHealth;
+    private final ProduceCircuitBreaker circuitBreaker;
 
     /**
      * @throws RuntimeException 토픽·DB 양쪽 적재가 모두 실패한 경우 — 호출부가 500 여부를 정한다
@@ -47,12 +48,21 @@ public class BehaviorEventPublisher {
         if (events.isEmpty()) {
             return;
         }
-        List<BehaviorEvent> undelivered = sendAll(events);
-        if (undelivered.isEmpty()) {
+        // 브로커가 죽은 걸 이미 아는 동안은 시도조차 하지 않는다 — 매 요청이 타임아웃을 무는 걸 막는다
+        if (!circuitBreaker.allowAttempt()) {
+            behaviorEventAppender.append(events);
             return;
         }
+
+        List<BehaviorEvent> undelivered = sendAll(events);
+        if (undelivered.isEmpty()) {
+            circuitBreaker.recordSuccess();
+            return;
+        }
+        circuitBreaker.recordFailure();
         log.warn("behavior-events 발행 실패 {}건 — DB 직접 적재로 폴백 (08 D7)", undelivered.size());
-        // 이 구간 이벤트는 토픽에 없다 = 스트림 파생 지표에도 없다. 읽는 쪽이 DB로 돌아가게 알린다
+        // 이 구간 이벤트는 토픽에 없다 = 스트림 파생 지표에도 없다. 읽는 쪽이 DB로 돌아가게 알린다.
+        // 차단 중에는 이 표시를 갱신하지 않지만, 10초마다 도는 시험 발행이 실패하며 계속 갱신한다
         streamHealth.markProduceFailure();
         behaviorEventAppender.append(undelivered);
     }
