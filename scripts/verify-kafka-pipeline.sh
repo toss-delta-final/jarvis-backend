@@ -72,11 +72,35 @@ else
 fi
 
 echo
-echo "== 4. 스트림 상태 신호 =="
-alive=$(redis exists stream:behavior:alive 2>/dev/null)
+echo "== 4. DLT — 적재에 끝내 실패한 레코드 =="
+# 소비해도 사라지지 않으므로(보존 7일) 끝 오프셋 합 = 그 기간에 밀려난 총 건수다.
+if dlt_offsets=$(kafka kafka-get-offsets.sh --topic "$TOPIC-dlt" 2>/dev/null); then
+  dlt_total=$(echo "$dlt_offsets" | awk -F: '{s+=$3} END{print s+0}')
+  if [ "$dlt_total" -eq 0 ]; then
+    ok "DLT 비어 있음 — 최종 실패한 레코드 없음"
+  else
+    bad "DLT에 ${dlt_total}건 — 적재에 끝내 실패한 이벤트가 있다"
+    note "원인은 앱 로그의 '적재 최종 실패' 항목. 고친 뒤 dlt-monitor 그룹 오프셋을 되감아 재처리할 수 있다"
+  fi
+else
+  note "DLT 토픽이 아직 없다 — 실패한 적이 없다는 뜻이다(앱이 기동하면 생성된다)"
+fi
+
+echo
+echo "== 5. 스트림 상태 신호 =="
+connected=$(redis exists stream:behavior:connected 2>/dev/null)
 degraded=$(redis exists stream:behavior:degraded 2>/dev/null)
-[ "$alive" = "1" ] && ok "컨슈머 생존 신호 있음 (폴링 중)" \
-                   || bad "생존 신호 없음 — 컨슈머 B가 죽었거나 Redis에 못 쓰고 있다"
+if [ "$connected" = "1" ]; then
+  since=$(redis get stream:behavior:connected 2>/dev/null)
+  elapsed=$(( $(date +%s) - ${since:-0} ))
+  if [ "$elapsed" -ge 1800 ]; then
+    ok "브로커 연결 확인 · 연속 $((elapsed / 60))분 — 집계 창(30분)이 채워져 스트림 값을 쓴다"
+  else
+    warn "브로커 연결은 확인됐으나 연속 $((elapsed / 60))분뿐 — 창이 채워질 때까지 DB 폴백 (정상 동작)"
+  fi
+else
+  bad "브로커 연결 신호 없음 — 컨슈머가 브로커와 못 통하거나 Redis에 못 쓰고 있다"
+fi
 if [ "$degraded" = "1" ]; then
   bad "강등 마커 있음 — 최근 30분 안에 발행 실패가 있었다 (그 구간은 DB 폴백으로 우회했다)"
   note "TTL $(redis ttl stream:behavior:degraded 2>/dev/null)초 뒤 자동 해제 · 원인은 앱 로그의 '발행 실패' 경고"
