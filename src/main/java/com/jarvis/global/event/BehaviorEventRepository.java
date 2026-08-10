@@ -336,4 +336,109 @@ public interface BehaviorEventRepository extends JpaRepository<BehaviorEvent, Lo
     RecommendationFunnelRow aggregateRecommendationFunnel(@Param("brandId") Long brandId,
                                                           @Param("from") LocalDateTime from,
                                                           @Param("to") LocalDateTime to);
+
+    interface MemberTypeCountRow {
+        Long getMemberId();
+        String getEventType();
+        Long getCnt();
+    }
+
+    interface ActivitySpanRow {
+        Long getMemberId();
+        LocalDateTime getFirstSeen();
+        LocalDateTime getLastActivity();
+    }
+
+    /**
+     * I-38 회원×타입 이벤트 집계 — {@code product_id} 컬럼으로 브랜드에 귀속되는 타입만
+     * ({@code product_view}·{@code add_to_cart}). {@code checkout_start}는 그 컬럼이 비어 있어
+     * {@link #countCustomerCheckoutStarts}가 JSON으로 따로 센다(I-13과 같은 귀속 경로 분리).
+     *
+     * <p>고객 식별은 I-16 코호트와 같은 {@code COALESCE(member_id, converted_member_id)}다 —
+     * 접지 않으면 로그인 전 탐색이 통째로 빠져 같은 사람의 피처가 둘로 갈린다.
+     */
+    @Query(value = """
+            SELECT COALESCE(be.member_id, g.converted_member_id) AS memberId,
+                   be.event_type AS eventType, COUNT(*) AS cnt
+            FROM behavior_events be
+            JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE be.event_type IN (:types)
+              AND COALESCE(be.member_id, g.converted_member_id) IS NOT NULL
+              AND be.created_at >= :from AND be.created_at < :to
+            GROUP BY COALESCE(be.member_id, g.converted_member_id), be.event_type
+            """, nativeQuery = true)
+    List<MemberTypeCountRow> countCustomerEventsByType(@Param("brandId") Long brandId,
+                                                       @Param("types") Collection<String> types,
+                                                       @Param("from") LocalDateTime from,
+                                                       @Param("to") LocalDateTime to);
+
+    interface MemberCheckoutRow {
+        Long getMemberId();
+        String getProperties();
+    }
+
+    /**
+     * I-38 회원별 {@code checkout_start} 재료 — 자사 상품이 담긴 주문서 진입(주문서 1회=1, 02 §4).
+     *
+     * <p>{@link #findBrandCheckouts}와 같은 구조다: 브랜드 필터는 {@code JSON_OVERLAPS}로 SQL에서
+     * 끝내되 <b>매칭 판정은 호출부가 properties를 파싱해 다시 한다</b>(숫자 노드만 인정). SQL에서
+     * 바로 세면 I-7 3단·I-13 {@code checkoutStart}와 판정 기준이 미세하게 갈려 같은 기간에 다른
+     * 숫자가 나온다.
+     */
+    @Query(value = """
+            SELECT COALESCE(be.member_id, g.converted_member_id) AS memberId,
+                   be.properties AS properties
+            FROM behavior_events be
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE be.event_type = 'checkout_start'
+              AND COALESCE(be.member_id, g.converted_member_id) IS NOT NULL
+              AND be.created_at >= :from AND be.created_at < :to
+              AND JSON_OVERLAPS(JSON_EXTRACT(be.properties, '$.productIds'), :targetIdsJson)
+            """, nativeQuery = true)
+    List<MemberCheckoutRow> findCustomerCheckouts(@Param("targetIdsJson") String targetIdsJson,
+                                                  @Param("from") LocalDateTime from,
+                                                  @Param("to") LocalDateTime to);
+
+    /**
+     * I-38 sessions — 기간 내 {@code session_start}의 distinct {@code session_key}
+     * (I-16 {@code sessions30d}와 같은 정의, 기간만 {@code from}~{@code to}).
+     *
+     * <p>{@code session_start}엔 {@code product_id}가 없어 브랜드로 좁힐 수 없다 — 그래서 자사
+     * 코호트로 이미 추린 {@code memberIds}로만 거른다.
+     */
+    @Query(value = """
+            SELECT COALESCE(be.member_id, g.converted_member_id) AS memberId,
+                   COUNT(DISTINCT be.session_key) AS cnt
+            FROM behavior_events be
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE COALESCE(be.member_id, g.converted_member_id) IN (:memberIds)
+              AND be.event_type = 'session_start'
+              AND be.created_at >= :from AND be.created_at < :to
+            GROUP BY COALESCE(be.member_id, g.converted_member_id)
+            """, nativeQuery = true)
+    List<MemberCntRow> countCustomerSessions(@Param("memberIds") Collection<Long> memberIds,
+                                             @Param("from") LocalDateTime from,
+                                             @Param("to") LocalDateTime to);
+
+    /**
+     * I-38 recency·tenure 재료 — <b>자사 브랜드</b> 상호작용의 처음·마지막 시각.
+     *
+     * <p>브랜드 무관으로 세면 이 판매자에게 타 브랜드 활동 여부가 새어 나간다(I-16이 브랜드 무관인
+     * 건 "정말 무활동인가"를 판정하는 다른 목적 때문이다). 하한을 걸지 않아 {@code firstSeen}은
+     * {@code from} 이전까지 거슬러 가고(tenure), 상한만 {@code to}라 recency가 음수가 되지 않는다.
+     */
+    @Query(value = """
+            SELECT COALESCE(be.member_id, g.converted_member_id) AS memberId,
+                   MIN(be.created_at) AS firstSeen, MAX(be.created_at) AS lastActivity
+            FROM behavior_events be
+            JOIN product p ON p.id = be.product_id AND p.brand_id = :brandId
+            LEFT JOIN guest g ON g.id = be.guest_id
+            WHERE COALESCE(be.member_id, g.converted_member_id) IN (:memberIds)
+              AND be.created_at < :to
+            GROUP BY COALESCE(be.member_id, g.converted_member_id)
+            """, nativeQuery = true)
+    List<ActivitySpanRow> findCustomerActivitySpans(@Param("brandId") Long brandId,
+                                                    @Param("memberIds") Collection<Long> memberIds,
+                                                    @Param("to") LocalDateTime to);
 }

@@ -17,6 +17,7 @@ import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
 import com.jarvis.seller.dto.BrandAccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
+import com.jarvis.seller.dto.SellerCustomerFeaturesResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
 import com.jarvis.seller.dto.SellerOrderEventsResponse;
@@ -25,6 +26,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -40,7 +42,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 판매자 분석 콜백 I-7/I-8/I-13/I-14/I-15/I-16 (04 §10, 노션 명세 기준) — 전부 집계·조회 전용.
+ * 판매자 분석 콜백 I-7/I-8/I-13/I-14/I-15/I-16/I-38 (04 §10, 노션 명세 기준) — 전부 집계·조회 전용.
  * LLM에 raw 개인 데이터를 주지 않는다(I-8 IP 마스킹·집계 전용 — 05 §I-6 원칙 공유).
  * from/to는 전 엔드포인트 필수 — 컨트롤러의 AnalysisPeriod가 INVALID_PERIOD로 사전 검증.
  */
@@ -61,6 +63,17 @@ public class SellerAnalyticsService {
     private static final int CANCEL_REASON_TOP_LIMIT = 10;
     private static final int RETURN_REASON_TOP_LIMIT = 5;
     private static final int SESSIONS_WINDOW_DAYS = 30;
+    /** I-38 최소 모집단 — 미만이면 행을 주지 않는다(과소 표본 세그멘테이션·소집단 재식별 차단) */
+    private static final int MIN_COHORT_SIZE = 30;
+    /** I-38 행 상한 — 초과분은 활동량 순으로 잘리고 truncated로 알린다. 페이지네이션 없음 */
+    private static final int CUSTOMER_ROW_LIMIT = 1000;
+    /**
+     * I-38 피처 이벤트 — {@code product_id} 컬럼으로 브랜드 귀속이 되는 2종만이다.
+     * {@code checkout_start}는 JSON 경로라 따로 세고, {@code purchase_complete}는 상품 귀속이
+     * 구조적으로 불가능해 아예 빠졌다(노션 I-38 2026-08-10 — {@code orderCount}로 단일화).
+     */
+    private static final List<String> CUSTOMER_FEATURE_EVENT_TYPES =
+            List.of("product_view", "add_to_cart");
     private static final String CHECKOUT_START = "checkout_start";
     private static final String PURCHASE_COMPLETE = "purchase_complete";
     /**
@@ -369,6 +382,146 @@ public class SellerAnalyticsService {
                 : buildChurnMembers(brandId, listed, lastActivities);
         return new SellerChurnResponse(brandId, period.from(), period.to(), inactiveDays,
                 cohort.size(), churnRate, signals, members);
+    }
+
+    /**
+     * I-38 — 고객 행동 피처 집계 (노션 I-38, 2026-08-10 확정). AI팀 세그멘테이션(k-means) 입력이라
+     * 행 단위로 나가지만, 회원 노출은 I-14·I-16과 같은 HMAC 라벨뿐이고 금액은 구간, 시각은 일 단위다.
+     *
+     * <p>코호트는 I-16 {@code churn}과 <b>같은 조인</b>을 재사용한다 — 두 워커가 같은 브랜드에서
+     * 모순된 모집단을 보면 세그먼트와 이탈률을 연결할 수 없다.
+     *
+     * <p>표본이 {@link #MIN_COHORT_SIZE}명 미만이면 행을 주지 않는다({@code insufficientCohort}).
+     * 과소 표본 세그멘테이션 방지이자 소집단 재식별 차단이며, "고객이 없다"는 뜻이 아니다.
+     */
+    public SellerCustomerFeaturesResponse customerFeatures(Long brandId, AnalysisPeriod period) {
+        requireBrand(brandId);
+        LocalDateTime fromDt = period.from().atStartOfDay();
+        LocalDateTime toDt = period.to().plusDays(1).atStartOfDay();
+
+        List<Long> cohort = behaviorEventRepository.findChurnCohortMemberIds(brandId, fromDt, toDt);
+        if (cohort.size() < MIN_COHORT_SIZE) {
+            return new SellerCustomerFeaturesResponse(period.from(), period.to(), cohort.size(),
+                    CUSTOMER_ROW_LIMIT, false, true,
+                    SellerCustomerFeaturesResponse.AMOUNT_BUCKETS, List.of());
+        }
+
+        Map<Long, Map<String, Long>> byMember = new HashMap<>();
+        behaviorEventRepository
+                .countCustomerEventsByType(brandId, CUSTOMER_FEATURE_EVENT_TYPES, fromDt, toDt)
+                .forEach(row -> byMember
+                        .computeIfAbsent(row.getMemberId(), k -> new HashMap<>())
+                        .put(row.getEventType(), row.getCnt()));
+        Map<Long, Long> checkoutStarts = countCheckoutStartsByCustomer(brandId, fromDt, toDt);
+
+        // 활동량 내림차순으로 자른다 — 동률은 memberId로 갈라 같은 질문에 같은 명단이 나오게 한다
+        List<Long> listed = cohort.stream()
+                .sorted(Comparator
+                        .comparingLong((Long id) -> activitySum(byMember.get(id), checkoutStarts, id))
+                        .reversed()
+                        .thenComparing(Comparator.naturalOrder()))
+                .limit(CUSTOMER_ROW_LIMIT)
+                .toList();
+
+        Map<Long, Long> sessions = behaviorEventRepository
+                .countCustomerSessions(listed, fromDt, toDt).stream()
+                .collect(Collectors.toMap(BehaviorEventRepository.MemberCntRow::getMemberId,
+                        BehaviorEventRepository.MemberCntRow::getCnt));
+        Map<Long, BehaviorEventRepository.ActivitySpanRow> spans = behaviorEventRepository
+                .findCustomerActivitySpans(brandId, listed, toDt).stream()
+                .collect(Collectors.toMap(
+                        BehaviorEventRepository.ActivitySpanRow::getMemberId, row -> row));
+        Map<Long, OrderItemRepository.CustomerOrderRow> orders = orderItemRepository
+                .sumSellerOrdersByCustomer(brandId, listed, fromDt, toDt).stream()
+                .collect(Collectors.toMap(
+                        OrderItemRepository.CustomerOrderRow::getMemberId, row -> row));
+        Map<Long, Long> cancels = orderStatusLogRepository
+                .countCancelsByCustomer(brandId, listed, fromDt, toDt).stream()
+                .collect(Collectors.toMap(OrderStatusLogRepository.MemberCancelRow::getMemberId,
+                        OrderStatusLogRepository.MemberCancelRow::getCnt));
+
+        List<SellerCustomerFeaturesResponse.Row> rows = listed.stream()
+                .map(id -> toCustomerRow(brandId, id, period.to(), byMember.get(id), checkoutStarts,
+                        sessions, spans, orders, cancels))
+                .toList();
+        return new SellerCustomerFeaturesResponse(period.from(), period.to(), cohort.size(),
+                CUSTOMER_ROW_LIMIT, cohort.size() > CUSTOMER_ROW_LIMIT, false,
+                SellerCustomerFeaturesResponse.AMOUNT_BUCKETS, rows);
+    }
+
+    private SellerCustomerFeaturesResponse.Row toCustomerRow(
+            Long brandId, Long memberId, LocalDate to, Map<String, Long> counts,
+            Map<Long, Long> checkoutStarts, Map<Long, Long> sessions,
+            Map<Long, BehaviorEventRepository.ActivitySpanRow> spans,
+            Map<Long, OrderItemRepository.CustomerOrderRow> orders, Map<Long, Long> cancels) {
+        Map<String, Long> safeCounts = counts == null ? Map.of() : counts;
+        OrderItemRepository.CustomerOrderRow order = orders.get(memberId);
+        BehaviorEventRepository.ActivitySpanRow span = spans.get(memberId);
+        return new SellerCustomerFeaturesResponse.Row(
+                customerLabeler.label(brandId, memberId),
+                sessions.getOrDefault(memberId, 0L),
+                safeCounts.getOrDefault("product_view", 0L),
+                safeCounts.getOrDefault("add_to_cart", 0L),
+                checkoutStarts.getOrDefault(memberId, 0L),
+                order == null ? 0L : order.getOrderCount(),
+                cancels.getOrDefault(memberId, 0L),
+                amountBucket(order == null ? 0L : order.getAmount()),
+                daysAgo(span == null ? null : span.getLastActivity(), to),
+                daysAgo(span == null ? null : span.getFirstSeen(), to));
+    }
+
+    /** 정렬 기준 — 이벤트 3종 합. 주문·금액은 넣지 않는다(단위가 달라 합산에 의미가 없다) */
+    private static long activitySum(Map<String, Long> counts, Map<Long, Long> checkoutStarts,
+                                    Long memberId) {
+        long events = counts == null ? 0L
+                : counts.values().stream().mapToLong(Long::longValue).sum();
+        return events + checkoutStarts.getOrDefault(memberId, 0L);
+    }
+
+    private Map<Long, Long> countCheckoutStartsByCustomer(Long brandId, LocalDateTime from,
+                                                          LocalDateTime to) {
+        Set<Long> targetIds = productRepository.findAllByBrandId(brandId).stream()
+                .map(Product::getId)
+                .collect(Collectors.toSet());
+        if (targetIds.isEmpty()) {
+            return Map.of();
+        }
+        String targetIdsJson = targetIds.stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(",", "[", "]"));
+        Map<Long, Long> counts = new HashMap<>();
+        behaviorEventRepository.findCustomerCheckouts(targetIdsJson, from, to).stream()
+                .filter(row -> !matchedProductIds(row.getProperties(), targetIds).isEmpty())
+                .forEach(row -> counts.merge(row.getMemberId(), 1L, Long::sum));
+        return counts;
+    }
+
+    /** 원값 대신 구간 — 경계는 응답 amountBuckets가 정본이라 여기 순서와 어긋나면 안 된다 */
+    private static String amountBucket(long amount) {
+        if (amount <= 0) {
+            return "ZERO";
+        }
+        if (amount < 10_000) {
+            return "LT_10K";
+        }
+        if (amount < 50_000) {
+            return "10K_50K";
+        }
+        if (amount < 100_000) {
+            return "50K_100K";
+        }
+        if (amount < 300_000) {
+            return "100K_300K";
+        }
+        return "GTE_300K";
+    }
+
+    /** to 기준 일 단위 절사 — 정밀 시각은 어떤 필드로도 내려가지 않는다 */
+    private static long daysAgo(LocalDateTime at, LocalDate to) {
+        if (at == null) {
+            return 0L;
+        }
+        return Math.max(0L, ChronoUnit.DAYS.between(at.toLocalDate(), to));
     }
 
     private List<SellerChurnResponse.Member> buildChurnMembers(

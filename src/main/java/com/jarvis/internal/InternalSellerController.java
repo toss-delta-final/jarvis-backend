@@ -11,6 +11,7 @@ import com.jarvis.seller.SellerSalesService;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
 import com.jarvis.seller.dto.BrandAccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
+import com.jarvis.seller.dto.SellerCustomerFeaturesResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
 import com.jarvis.seller.dto.SellerOrderEventsResponse;
@@ -44,7 +45,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 판매자 콜백 I-6~I-16 (04 §10, 05 §1-3) — InternalTokenFilter가 지킨다(03 D4).
+ * 판매자 콜백 I-6~I-16·I-38 (04 §10, 05 §1-3) — InternalTokenFilter가 지킨다(03 D4).
  * brandId는 FastAPI가 티켓 claim에서 코드 주입한 값(§1-0) — 그래도 상품 소유권은 매번 재검증.
  * 쓰기(I-10/I-11/I-12)는 HITL confirm 후에만 호출된다는 계약(05 §1-3).
  * 분석 API의 from/to는 전부 필수 — 누락·형식 오류·역전을 INVALID_PERIOD로 통일하려고
@@ -262,5 +263,18 @@ public class InternalSellerController {
             @RequestParam(defaultValue = "30") int inactiveDays) {
         return ApiResponse.success(
                 sellerAnalyticsService.churn(brandId, AnalysisPeriod.of(from, to), inactiveDays));
+    }
+
+    /**
+     * I-38 — 고객 행동 피처 집계(세그멘테이션 입력 — 노션 I-38, 2026-08-10 확정).
+     * 코호트는 I-16과 같은 조인이고 회원 노출은 I-14·I-16과 같은 HMAC 라벨뿐이다.
+     */
+    @GetMapping("/seller/{brandId}/customer-features")
+    public ApiResponse<SellerCustomerFeaturesResponse> customerFeatures(
+            @PathVariable Long brandId,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        return ApiResponse.success(
+                sellerAnalyticsService.customerFeatures(brandId, AnalysisPeriod.of(from, to)));
     }
 }
