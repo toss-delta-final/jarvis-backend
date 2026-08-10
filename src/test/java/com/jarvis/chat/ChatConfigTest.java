@@ -2,9 +2,16 @@ package com.jarvis.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -38,6 +45,56 @@ class ChatConfigTest {
     void profileWriteClientIsSeparate() {
         runner.run(context -> assertThat(context.getBean("profileWriteRestClient", RestClient.class))
                 .isNotSameAs(context.getBean("llmRestClient", RestClient.class)));
+    }
+
+    /**
+     * <b>진짜 소켓으로 PATCH를 보낸다.</b> 이 자리를 mock으로 대신할 수 없다 —
+     * {@code MockRestServiceServer.bindTo(builder)}는 request factory를 통째로 갈아끼워서
+     * 여기서 터지는 종류의 결함을 <b>구조적으로 못 본다</b>. 실제로 {@code ProfileGraphClient} 테스트는
+     * 전부 통과하는데 M-12는 운영에서 body와 무관하게 100% 500이었다(2026-08-10 FE 제보):
+     * {@code SimpleClientHttpRequestFactory}의 {@code HttpURLConnection}이 PATCH를 거부해
+     * 요청이 소켓에 나가지도 못했다. 메서드 하나 때문에 생긴 구멍이라 메서드로 확인해야 한다.
+     */
+    @Test
+    @DisplayName("아웃바운드 PATCH가 실제로 나간다 — 요청 팩토리가 메서드를 거르면 여기서 잡힌다")
+    void outboundPatchReachesTheServer() throws Exception {
+        AtomicReference<String> seenMethod = new AtomicReference<>();
+        HttpServer server = HttpServer.create(
+                new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext("/edge", exchange -> {
+            seenMethod.set(exchange.getRequestMethod());
+            exchange.getRequestBody().readAllBytes();
+            byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        String url = "http://" + server.getAddress().getHostString()
+                + ":" + server.getAddress().getPort() + "/edge";
+
+        try {
+            runner.run(context -> {
+                // 지금 PATCH를 쓰는 건 I-33뿐이지만 한쪽만 고쳐두면 다음 PATCH가 같은 데 빠진다
+                for (String beanName : new String[] {"llmRestClient", "profileWriteRestClient"}) {
+                    seenMethod.set(null);
+                    String response = context.getBean(beanName, RestClient.class)
+                            .patch()
+                            .uri(url)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"predicate\":\"likes\"}")
+                            .retrieve()
+                            .body(String.class);
+
+                    assertThat(seenMethod.get()).as(beanName).isEqualTo("PATCH");
+                    assertThat(response).as(beanName).isEqualTo("{\"ok\":true}");
+                }
+            });
+        } finally {
+            server.stop(0);
+        }
     }
 
 }

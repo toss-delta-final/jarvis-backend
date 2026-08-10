@@ -1,15 +1,20 @@
 package com.jarvis.chat;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 @Configuration
 @EnableConfigurationProperties({StreamTicketProperties.class, ChatProperties.class, LlmProperties.class})
 public class ChatConfig {
+
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
 
     /**
      * Spring→FastAPI 아웃바운드 — 타임아웃 필수 (03 §5: 연결 2s/응답 3s 기준).
@@ -22,10 +27,7 @@ public class ChatConfig {
     @Primary
     @Bean
     public RestClient llmRestClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(2000);
-        factory.setReadTimeout(3000);
-        return RestClient.builder().requestFactory(factory).build();
+        return RestClient.builder().requestFactory(requestFactory(Duration.ofSeconds(3))).build();
     }
 
     /**
@@ -36,9 +38,28 @@ public class ChatConfig {
      */
     @Bean
     public RestClient profileWriteRestClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(2000);
-        factory.setReadTimeout(4000);
-        return RestClient.builder().requestFactory(factory).build();
+        return RestClient.builder().requestFactory(requestFactory(Duration.ofSeconds(4))).build();
+    }
+
+    /**
+     * {@code SimpleClientHttpRequestFactory}(JDK {@code HttpURLConnection})를 쓰면 <b>PATCH가 아예
+     * 나가지 못한다</b> — {@code HttpURLConnection.setRequestMethod}가 GET·POST·HEAD·OPTIONS·PUT·
+     * DELETE·TRACE만 허용해 {@code ProtocolException: Invalid HTTP method: PATCH}로 죽는다. 그 IOException은
+     * {@code ResourceAccessException}이 돼 타임아웃·연결실패와 같은 자리에서 잡히고, FE에는 원인을 알 수 없는
+     * 500만 남는다. 실제로 <b>M-12(I-33)가 body와 무관하게 100% 500</b>이었고 다른 메서드인 M-11·M-13·M-15·M-16만
+     * 멀쩡했다(2026-08-10 FE 제보). {@code JdkClientHttpRequestFactory}는 {@code java.net.http.HttpClient}
+     * 기반이라 메서드 화이트리스트가 없다.
+     *
+     * <p>HTTP/1.1 고정: {@code HttpClient} 기본값(HTTP/2)은 평문 h2c 업그레이드를 시도한다. 상대는 uvicorn
+     * 한 대뿐이고 얻을 게 없는데 프로토콜 협상이라는 실패 지점만 는다 — 종전 와이어 동작을 그대로 둔다.
+     */
+    private static ClientHttpRequestFactory requestFactory(Duration readTimeout) {
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder()
+                        .version(HttpClient.Version.HTTP_1_1)
+                        .connectTimeout(CONNECT_TIMEOUT)
+                        .build());
+        factory.setReadTimeout(readTimeout);
+        return factory;
     }
 }
