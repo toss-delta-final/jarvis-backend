@@ -52,7 +52,8 @@ class BehaviorEventStreamTest {
     @EnableKafka
     @EnableConfigurationProperties(org.springframework.boot.autoconfigure.kafka.KafkaProperties.class)
     @Import({KafkaAutoConfiguration.class, KafkaConfig.class,
-            BehaviorEventPublisher.class, BehaviorEventConsumer.class})
+            BehaviorEventPublisher.class, BehaviorEventConsumer.class,
+            ProduceCircuitBreaker.class})
     static class TestConfig {
     }
 

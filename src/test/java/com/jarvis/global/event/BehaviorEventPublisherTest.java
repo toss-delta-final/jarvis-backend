@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -15,6 +17,7 @@ import com.jarvis.global.config.KafkaConfig;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,11 +35,17 @@ class BehaviorEventPublisherTest {
     @Mock KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate;
     @Mock BehaviorEventAppender behaviorEventAppender;
     @Mock BehaviorStreamHealth streamHealth;
+    @Mock ProduceCircuitBreaker circuitBreaker;
 
     @InjectMocks BehaviorEventPublisher publisher;
 
     @Captor ArgumentCaptor<List<BehaviorEvent>> fallbackCaptor;
     @Captor ArgumentCaptor<BehaviorEventMessage> messageCaptor;
+
+    @BeforeEach
+    void closedByDefault() {
+        lenient().when(circuitBreaker.allowAttempt()).thenReturn(true);
+    }
 
     private static BehaviorEvent event(String clientEventId, String sessionKey) {
         LocalDateTime now = LocalDateTime.now();
@@ -118,6 +127,18 @@ class BehaviorEventPublisherTest {
         assertThat(fallbackCaptor.getValue())
                 .extracting(BehaviorEvent::getClientEventId)
                 .containsExactly("id-1", "id-2");
+    }
+
+    @Test
+    @DisplayName("차단 중이면 produce를 시도조차 하지 않고 바로 DB로 간다 — 요청마다 타임아웃을 물지 않게")
+    void skipsProduceWhileCircuitOpen() {
+        when(circuitBreaker.allowAttempt()).thenReturn(false);
+
+        publisher.publish(List.of(event("id-1", "sess-1")));
+
+        verify(kafkaTemplate, never()).send(anyString(), anyString(), any());
+        verify(behaviorEventAppender).append(fallbackCaptor.capture());
+        assertThat(fallbackCaptor.getValue()).hasSize(1);
     }
 
     @Test
