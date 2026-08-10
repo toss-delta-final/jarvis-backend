@@ -241,6 +241,37 @@ public interface OrderStatusLogRepository extends JpaRepository<OrderStatusLog, 
     long countChurnedMemberCancels(@Param("brandId") Long brandId,
                                    @Param("memberIds") Collection<Long> memberIds);
 
+    interface MemberCancelRow {
+        Long getMemberId();
+        Long getCnt();
+    }
+
+    /**
+     * I-38 회원별 취소 주문 수 — 바로 위 I-16 {@code preChurnSignals.cancelCount}와 <b>같은 기준</b>이다
+     * (노션 I-38 2026-08-10 확정: 주문 단위 {@code COUNT(DISTINCT order_id)}). 다른 점은 기간을
+     * {@code from}~{@code to}로 좁힌다는 것뿐이고, 그 판정 시각은 전이 로그의 {@code created_at}이다.
+     *
+     * <p><b>같은 응답의 {@code orderCount}와 모수가 다르다 — 의도된 설계다.</b> {@code orderCount}는
+     * PAID 주문만 세므로 취소된 주문은 애초에 거기 없다. 따라서 두 값의 비는 취소율이 아니며,
+     * 취소율이 필요하면 분모가 갖춰진 I-14 {@code cancelRatio}를 쓴다.
+     */
+    @Query(value = """
+            SELECT o.member_id AS memberId, COUNT(DISTINCT l.order_id) AS cnt
+            FROM order_status_logs l
+            JOIN orders o ON o.id = l.order_id
+            WHERE o.member_id IN (:memberIds)
+              AND l.to_status = 'CANCELLED'
+              AND l.created_at >= :from AND l.created_at < :to
+              AND l.order_id IN (SELECT DISTINCT oi.order_id FROM order_item oi
+                                 JOIN product p ON p.id = oi.product_id
+                                 WHERE p.brand_id = :brandId)
+            GROUP BY o.member_id
+            """, nativeQuery = true)
+    List<MemberCancelRow> countCancelsByCustomer(@Param("brandId") Long brandId,
+                                                 @Param("memberIds") Collection<Long> memberIds,
+                                                 @Param("from") LocalDateTime from,
+                                                 @Param("to") LocalDateTime to);
+
     /** I-16 preChurnSignals.returnReasonsTop — 이탈 회원들의 반품 reason 상위 */
     @Query(value = """
             SELECT l.reason AS reason, COUNT(*) AS cnt

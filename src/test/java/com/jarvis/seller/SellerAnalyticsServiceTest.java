@@ -28,6 +28,7 @@ import com.jarvis.product.ProductRepository;
 import com.jarvis.seller.dto.AccountEventAggregateResponse;
 import com.jarvis.seller.dto.BrandAccountEventAggregateResponse;
 import com.jarvis.seller.dto.SellerChurnResponse;
+import com.jarvis.seller.dto.SellerCustomerFeaturesResponse;
 import com.jarvis.seller.dto.SellerEventsResponse;
 import com.jarvis.seller.dto.SellerFunnelResponse;
 import com.jarvis.seller.dto.SellerOrderEventsResponse;
@@ -41,7 +42,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** I-7 퍼널 + I-8 IP 집계·마스킹 + I-13 검증 + I-14 어뷰징 판정 + I-15 변경 이력 + I-16 이탈 (04 §10, 노션 명세) */
+/**
+ * I-7 퍼널 + I-8 IP 집계·마스킹 + I-13 검증 + I-14 어뷰징 판정 + I-15 변경 이력 + I-16 이탈
+ * + I-38 고객 피처 (04 §10, 노션 명세)
+ */
 @ExtendWith(MockitoExtension.class)
 class SellerAnalyticsServiceTest {
 
@@ -710,5 +714,162 @@ class SellerAnalyticsServiceTest {
         when(row.getFirstSeen()).thenReturn(java.time.LocalDateTime.of(2026, 6, 1, 0, 0));
         when(row.getLastSeen()).thenReturn(java.time.LocalDateTime.of(2026, 6, 30, 0, 0));
         return row;
+    }
+
+    // ---- I-38 고객 행동 피처 (노션 I-38 2026-08-10 확정) ----
+
+    private static BehaviorEventRepository.MemberTypeCountRow memberTypeCount(long memberId,
+                                                                              String type,
+                                                                              long cnt) {
+        return new BehaviorEventRepository.MemberTypeCountRow() {
+            public Long getMemberId() { return memberId; }
+            public String getEventType() { return type; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
+    private static BehaviorEventRepository.MemberCheckoutRow memberCheckout(long memberId,
+                                                                            String properties) {
+        return new BehaviorEventRepository.MemberCheckoutRow() {
+            public Long getMemberId() { return memberId; }
+            public String getProperties() { return properties; }
+        };
+    }
+
+    private static BehaviorEventRepository.MemberCntRow memberCnt(long memberId, long cnt) {
+        return new BehaviorEventRepository.MemberCntRow() {
+            public Long getMemberId() { return memberId; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
+    private static BehaviorEventRepository.ActivitySpanRow activitySpan(long memberId,
+                                                                        LocalDateTime firstSeen,
+                                                                        LocalDateTime lastActivity) {
+        return new BehaviorEventRepository.ActivitySpanRow() {
+            public Long getMemberId() { return memberId; }
+            public LocalDateTime getFirstSeen() { return firstSeen; }
+            public LocalDateTime getLastActivity() { return lastActivity; }
+        };
+    }
+
+    private static OrderItemRepository.CustomerOrderRow customerOrder(long memberId,
+                                                                      long orderCount,
+                                                                      long amount) {
+        return new OrderItemRepository.CustomerOrderRow() {
+            public Long getMemberId() { return memberId; }
+            public Long getOrderCount() { return orderCount; }
+            public Long getAmount() { return amount; }
+        };
+    }
+
+    private static OrderStatusLogRepository.MemberCancelRow memberCancel(long memberId, long cnt) {
+        return new OrderStatusLogRepository.MemberCancelRow() {
+            public Long getMemberId() { return memberId; }
+            public Long getCnt() { return cnt; }
+        };
+    }
+
+    private static List<Long> cohortOf(int size) {
+        return java.util.stream.LongStream.rangeClosed(1, size).boxed().toList();
+    }
+
+    @Test
+    @DisplayName("I-38 — 라벨·이벤트 3종·구간 금액·일 단위 절사로 회원별 피처를 조립한다 (노션 I-38)")
+    void customerFeaturesAggregatesPerCustomer() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.findChurnCohortMemberIds(eq(BRAND_ID), any(), any()))
+                .thenReturn(cohortOf(30));
+        when(behaviorEventRepository.countCustomerEventsByType(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(memberTypeCount(1L, "product_view", 35L),
+                        memberTypeCount(1L, "add_to_cart", 8L)));
+        stubBrandProducts(false, 100L);
+        // 마지막 행(productIds에 자사 상품 없음)은 서비스가 파싱해 걸러야 한다 — I-7·I-13과 같은 판정
+        when(behaviorEventRepository.findCustomerCheckouts(anyString(), any(), any()))
+                .thenReturn(List.of(memberCheckout(1L, "{\"productIds\":[100]}"),
+                        memberCheckout(1L, "{\"productIds\":[100,999]}"),
+                        memberCheckout(1L, "{\"productIds\":[100]}"),
+                        memberCheckout(1L, "{\"productIds\":[999]}")));
+        when(behaviorEventRepository.countCustomerSessions(any(), any(), any()))
+                .thenReturn(List.of(memberCnt(1L, 12L)));
+        when(behaviorEventRepository.findCustomerActivitySpans(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of(activitySpan(1L, LocalDateTime.of(2026, 4, 1, 9, 0),
+                        LocalDateTime.of(2026, 6, 16, 9, 0))));
+        when(orderItemRepository.sumSellerOrdersByCustomer(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(customerOrder(1L, 2L, 75_000L)));
+        when(orderStatusLogRepository.countCancelsByCustomer(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of(memberCancel(1L, 1L)));
+
+        SellerCustomerFeaturesResponse response = service.customerFeatures(BRAND_ID, PERIOD);
+
+        assertThat(response.totalCustomers()).isEqualTo(30);
+        assertThat(response.insufficientCohort()).isFalse();
+        assertThat(response.truncated()).isFalse();
+        assertThat(response.rowLimit()).isEqualTo(1000);
+        assertThat(response.amountBuckets())
+                .isEqualTo(SellerCustomerFeaturesResponse.AMOUNT_BUCKETS);
+        assertThat(response.rows()).hasSize(30);
+
+        // 활동량 내림차순이라 유일하게 이벤트가 있는 1번이 머리에 온다
+        SellerCustomerFeaturesResponse.Row top = response.rows().get(0);
+        assertThat(top.customerLabel()).isEqualTo(customerLabeler.label(BRAND_ID, 1L));
+        assertThat(top.sessions()).isEqualTo(12);
+        assertThat(top.productViews()).isEqualTo(35);
+        assertThat(top.cartAdds()).isEqualTo(8);
+        assertThat(top.checkoutStarts()).isEqualTo(3);
+        assertThat(top.orderCount()).isEqualTo(2);
+        assertThat(top.cancelCount()).isEqualTo(1);
+        assertThat(top.amountBucket()).isEqualTo("50K_100K");
+        assertThat(top.lastActivityDaysAgo()).isEqualTo(14);
+        assertThat(top.firstSeenDaysAgo()).isEqualTo(90);
+
+        // 활동 없는 회원도 행으로 남되 전부 0 + ZERO 구간이다
+        SellerCustomerFeaturesResponse.Row tail = response.rows().get(29);
+        assertThat(tail.productViews()).isZero();
+        assertThat(tail.orderCount()).isZero();
+        assertThat(tail.amountBucket()).isEqualTo("ZERO");
+        // memberId·원금액은 어떤 필드로도 나가지 않는다 — 라벨은 6자 사례번호다
+        assertThat(top.customerLabel()).hasSize(6).isNotEqualTo("1");
+    }
+
+    // "고객이 없다"가 아니라 "표본이 모자라다" — 소집단 재식별 차단이자 과소 표본 세그멘테이션 방지
+    @Test
+    @DisplayName("I-38 — 모집단 30명 미만이면 rows 없이 insufficientCohort (노션 I-38)")
+    void customerFeaturesGuardsSmallCohort() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.findChurnCohortMemberIds(eq(BRAND_ID), any(), any()))
+                .thenReturn(cohortOf(29));
+
+        SellerCustomerFeaturesResponse response = service.customerFeatures(BRAND_ID, PERIOD);
+
+        assertThat(response.insufficientCohort()).isTrue();
+        assertThat(response.rows()).isEmpty();
+        assertThat(response.totalCustomers()).isEqualTo(29);
+        assertThat(response.truncated()).isFalse();
+    }
+
+    @Test
+    @DisplayName("I-38 — rowLimit 초과분은 잘리고 truncated=true, totalCustomers는 자르기 전 수 (노션 I-38)")
+    void customerFeaturesTruncatesBeyondRowLimit() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+        when(behaviorEventRepository.findChurnCohortMemberIds(eq(BRAND_ID), any(), any()))
+                .thenReturn(cohortOf(1001));
+        when(behaviorEventRepository.countCustomerEventsByType(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of());
+        when(productRepository.findAllByBrandId(BRAND_ID)).thenReturn(List.of());
+        when(behaviorEventRepository.countCustomerSessions(any(), any(), any()))
+                .thenReturn(List.of());
+        when(behaviorEventRepository.findCustomerActivitySpans(eq(BRAND_ID), any(), any()))
+                .thenReturn(List.of());
+        when(orderItemRepository.sumSellerOrdersByCustomer(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of());
+        when(orderStatusLogRepository.countCancelsByCustomer(eq(BRAND_ID), any(), any(), any()))
+                .thenReturn(List.of());
+
+        SellerCustomerFeaturesResponse response = service.customerFeatures(BRAND_ID, PERIOD);
+
+        assertThat(response.rows()).hasSize(1000);
+        assertThat(response.truncated()).isTrue();
+        assertThat(response.totalCustomers()).isEqualTo(1001);
     }
 }

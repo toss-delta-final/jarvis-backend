@@ -183,6 +183,37 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
                                   @Param("from") LocalDateTime from,
                                   @Param("to") LocalDateTime to);
 
+    interface CustomerOrderRow {
+        Long getMemberId();
+        Long getOrderCount();
+        Long getAmount();
+    }
+
+    /**
+     * I-38 회원별 주문 건수·금액 — 바로 위 {@link #sumSellerSales}와 <b>같은 필터</b>를 쓴다
+     * (노션 I-38 2026-08-10 확정). 갈라두면 같은 고객 금액이 세그먼트와 매출 화면에서 달라지고,
+     * 그때 어느 쪽이 맞는지 판정할 근거가 없다.
+     *
+     * <p>게스트 주문은 존재하지 않으므로(02 D30 — 결제는 로그인 유도) {@code orders.member_id}를
+     * 그대로 쓴다. behavior_events 쪽의 게스트 승계 COALESCE가 여기엔 필요 없는 이유다.
+     */
+    @Query(value = """
+            SELECT o.member_id AS memberId,
+                   COUNT(DISTINCT oi.order_id) AS orderCount,
+                   COALESCE(SUM(oi.price * oi.quantity), 0) AS amount
+            FROM order_item oi
+            JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+            JOIN product p ON p.id = oi.product_id AND p.brand_id = :brandId
+            WHERE oi.status NOT IN ('PENDING', 'CANCELLED', 'RETURNED')
+              AND o.paid_at >= :from AND o.paid_at < :to
+              AND o.member_id IN (:memberIds)
+            GROUP BY o.member_id
+            """, nativeQuery = true)
+    List<CustomerOrderRow> sumSellerOrdersByCustomer(@Param("brandId") Long brandId,
+                                                     @Param("memberIds") Collection<Long> memberIds,
+                                                     @Param("from") LocalDateTime from,
+                                                     @Param("to") LocalDateTime to);
+
     /** S-1 상품별 판매수 (04 §7) */
     @Query(value = """
             SELECT oi.product_id AS productId, SUM(oi.quantity) AS quantity
