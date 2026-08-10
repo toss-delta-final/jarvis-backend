@@ -70,7 +70,11 @@ public class SellerImageUploadService {
     }
 
     /**
-     * 서명 파라미터를 떼어 저장용 주소를 만든다.
+     * 서명 파라미터를 떼어 등록 요청에 넘길 주소를 만든다.
+     *
+     * <p>이 주소는 <b>24시간짜리 임시 주소다</b>(2026-08-10) — {@code products/temp/}에 1일 만료
+     * 라이프사이클이 걸려 있다. DB에 남는 값은 등록·수정 때 {@link ProductImageStorage}가 만드는
+     * 최종 주소다.
      *
      * <p>버킷·리전으로 URL을 다시 조립하지 않고 <b>발급된 URL에서 잘라내는</b> 이유는, 그래야
      * "서명한 자리"와 "저장하는 자리"가 어긋날 수 없기 때문이다. 엔드포인트 형식(virtual-host/path)이

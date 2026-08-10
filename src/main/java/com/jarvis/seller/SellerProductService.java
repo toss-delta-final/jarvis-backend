@@ -73,6 +73,7 @@ public class SellerProductService {
     private final BrandRepository brandRepository;
     private final ObjectMapper objectMapper;
     private final RedisCache cache;
+    private final ProductImageStorage productImageStorage;
 
     private static final List<String> PRODUCT_SORTS = List.of("latest", "sales", "stock", "price");
 
@@ -249,7 +250,7 @@ public class SellerProductService {
             }
         }
         if (changed(request.imageUrl(), product.getImageUrl())) {
-            product.changeImageUrl(request.imageUrl());
+            product.changeImageUrl(resolveImageUrl(request.imageUrl(), productId));
         }
         if (request.price() != null && request.price() != product.getPrice()) {
             recordLog(productId, ProductChangeType.PRICE, product.getPrice(), request.price());
@@ -306,10 +307,24 @@ public class SellerProductService {
                 sanitizeDescription(request.description()),
                 request.status() != null ? request.status() : ProductStatus.ON_SALE);
         Product saved = productRepository.save(product);
+        // 이미지 복사는 여기서만 가능하다 — S-6은 발급 시점에 productId를 모른다 (04 §7 S-6, 2026-08-10)
+        saved.changeImageUrl(resolveImageUrl(saved.getImageUrl(), saved.getId()));
         // 재고 행은 상품과 함께 생긴다 — 없으면 그 상품은 영원히 품절이다 (02 D33 개정)
         productStockRepository.save(ProductStock.of(saved.getId(), null,
                 stocks.get(0).quantity()));
         return new SellerProductCreateResponse(saved.getId(), saved.getStatus().name());
+    }
+
+    /**
+     * S-6이 준 임시 주소일 때만 상품 경로로 옮긴다 (04 §7 S-6, 2026-08-10).
+     *
+     * <p>이미 최종 주소이거나 플레이스홀더·외부 주소면 그대로 둔다 — 가격만 고치는 I-11 호출이
+     * 매번 S3를 때리지 않게 하려는 것이다. 복사가 실패하면 예외가 올라가 트랜잭션이 통째로 롤백된다.
+     */
+    private String resolveImageUrl(String imageUrl, Long productId) {
+        return productImageStorage.isTemporary(imageUrl)
+                ? productImageStorage.moveToProduct(imageUrl, productId)
+                : imageUrl;
     }
 
     /**

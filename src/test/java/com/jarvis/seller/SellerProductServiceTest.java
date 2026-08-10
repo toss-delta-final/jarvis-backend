@@ -61,6 +61,7 @@ class SellerProductServiceTest {
     @Mock private ProductChangeLogRepository productChangeLogRepository;
     @Mock private BrandRepository brandRepository;
     @Mock private com.jarvis.global.cache.RedisCache cache;
+    @Mock private ProductImageStorage productImageStorage;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -70,7 +71,8 @@ class SellerProductServiceTest {
     void setUp() {
         service = new SellerProductService(productRepository, productStockRepository,
                 productOptionRepository, orderItemRepository,
-                categoryRepository, productChangeLogRepository, brandRepository, objectMapper, cache);
+                categoryRepository, productChangeLogRepository, brandRepository, objectMapper, cache,
+                productImageStorage);
         // I-9·I-11 응답의 stocks·합계 — 재고 시나리오가 필요한 테스트는 각자 덮어쓴다
         lenient().when(productStockRepository.findAllByProductIdIn(any())).thenReturn(List.of());
         lenient().when(productStockRepository.sumMap(any())).thenReturn(java.util.Map.of());
