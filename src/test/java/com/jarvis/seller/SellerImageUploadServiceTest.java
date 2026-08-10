@@ -31,7 +31,7 @@ class SellerImageUploadServiceTest {
     private static final long MEMBER_ID = 7L;
     private static final long MAX_BYTES = 2 * 1024 * 1024;
     private static final String SIGNED =
-            "https://bucket.s3.ap-northeast-2.amazonaws.com/products/uploads/a3f1.jpg"
+            "https://bucket.s3.ap-northeast-2.amazonaws.com/products/temp/a3f1.jpg"
                     + "?X-Amz-Signature=sig&X-Amz-Expires=300";
 
     @Mock S3Presigner presigner;
@@ -43,7 +43,7 @@ class SellerImageUploadServiceTest {
     @BeforeEach
     void setUp() {
         S3Properties properties = new S3Properties(
-                "bucket", "ap-northeast-2", "products/uploads", 5, MAX_BYTES);
+                "bucket", "ap-northeast-2", "products/temp", 5, MAX_BYTES);
         service = new SellerImageUploadService(presigner, properties, uploadRateLimiter);
     }
 
@@ -67,7 +67,7 @@ class SellerImageUploadServiceTest {
         assertThat(response.uploadUrl()).isEqualTo(SIGNED);
         // 저장되는 쪽에 서명이 남으면 만료 시점에 이미지가 조용히 죽는다
         assertThat(response.imageUrl())
-                .isEqualTo("https://bucket.s3.ap-northeast-2.amazonaws.com/products/uploads/a3f1.jpg")
+                .isEqualTo("https://bucket.s3.ap-northeast-2.amazonaws.com/products/temp/a3f1.jpg")
                 .doesNotContain("?");
     }
 
@@ -83,7 +83,7 @@ class SellerImageUploadServiceTest {
         verify(presigner).presignPutObject(captor.capture());
         assertThat(captor.getValue().putObjectRequest().contentLength()).isEqualTo(284_913L);
         assertThat(captor.getValue().putObjectRequest().contentType()).isEqualTo("image/jpeg");
-        assertThat(captor.getValue().putObjectRequest().key()).startsWith("products/uploads/");
+        assertThat(captor.getValue().putObjectRequest().key()).startsWith("products/temp/");
     }
 
     @Test
