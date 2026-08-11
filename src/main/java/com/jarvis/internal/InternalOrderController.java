@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** I-4·I-19 (04 §10) — CS 챗봇용. userId는 채팅 티켓의 메아리 (05 §0-1) */
+/** I-4·I-19 (04 §10) — 구매자 챗봇용(구 "CS 챗봇" 표기 — CH-2 흡수). userId는 채팅 티켓의 메아리 (05 §0-1) */
 @RestController
 @RequestMapping("/internal/members/{userId}")
 @RequiredArgsConstructor
