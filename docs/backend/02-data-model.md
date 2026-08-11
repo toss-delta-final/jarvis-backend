@@ -440,7 +440,7 @@ erDiagram
     }
     brand {
         bigint id PK
-        bigint seller_id FK,UK "판매자 1:1, NULL=크롤링(D25)"
+        bigint seller_id FK,UK "판매자 1:1 (D25 개정 - 시드로 전 브랜드 부여)"
         varchar name UK
         varchar logo_url
         text description
@@ -693,7 +693,7 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 ### brand
 | 컬럼 | 타입 | 제약 | 비고 |
 |---|---|---|---|
-| seller_id | BIGINT | FK(member), UNIQUE, NULL | 판매자 1명 = 브랜드 1개. NULL = 주인 없는 브랜드(크롤링 적재분, D25) — UNIQUE는 NULL 다중 허용이라 제약 유지 |
+| seller_id | BIGINT | FK(member), UNIQUE, NULL | 판매자 1명 = 브랜드 1개 (D25). 개정(2026-08-06)으로 시드가 전 브랜드에 SELLER를 부여해 NULL 행은 실질 없음 — 컬럼은 NULL 허용 유지(되돌릴 여지), UNIQUE는 NULL 다중 허용이라 제약 무관 |
 | name | VARCHAR(100) | UNIQUE, NOT NULL | |
 | logo_url | VARCHAR(500) | NULL | |
 | description | TEXT | NULL | |

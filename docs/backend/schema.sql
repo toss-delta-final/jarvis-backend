@@ -69,7 +69,8 @@ CREATE TABLE refresh_token (
 
 CREATE TABLE brand (
     id           BIGINT       NOT NULL AUTO_INCREMENT,
-    seller_id    BIGINT       NULL,                        -- 판매자 1명 = 브랜드 1개. NULL = 크롤링 적재 브랜드 (D25)
+    seller_id    BIGINT       NULL,                        -- 판매자 1명 = 브랜드 1개 (D25). 개정(2026-08-06): 발송이 판매자 행위가 되며(I-30) 시드가 전 브랜드에
+                                                        --   SELLER를 부여 — NULL 행은 실질 없음. 컬럼은 되돌릴 여지로 NULL 허용 유지
     name         VARCHAR(100) NOT NULL,
     logo_url     VARCHAR(500) NULL,
     description  TEXT         NULL,
