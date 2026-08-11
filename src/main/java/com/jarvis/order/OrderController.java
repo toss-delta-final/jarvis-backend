@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,15 +33,21 @@ public class OrderController {
 
     @PostMapping
     public ApiResponse<OrderCreateResponse> create(@Valid @RequestBody OrderCreateRequest request,
-                                                   @AuthenticationPrincipal AuthUser authUser) {
-        return ApiResponse.success(orderService.create(authUser.memberId(), request));
+                                                   @AuthenticationPrincipal AuthUser authUser,
+                                                   // 분석용 세션 키 — 신원 아님(노션 O-1 2026-08-11, C-2와 동일).
+                                                   // 누락 시 결제는 정상, purchase_complete 적재만 스킵
+                                                   @RequestHeader(value = "X-Session-Key", required = false)
+                                                   String sessionKey) {
+        return ApiResponse.success(orderService.create(authUser.memberId(), request, sessionKey));
     }
 
     @PostMapping("/{id}/retry-payment")
     public ApiResponse<OrderCreateResponse> retryPayment(@PathVariable Long id,
                                                          @Valid @RequestBody RetryPaymentRequest request,
-                                                         @AuthenticationPrincipal AuthUser authUser) {
-        return ApiResponse.success(orderService.retryPayment(authUser.memberId(), id, request));
+                                                         @AuthenticationPrincipal AuthUser authUser,
+                                                         @RequestHeader(value = "X-Session-Key", required = false)
+                                                         String sessionKey) {
+        return ApiResponse.success(orderService.retryPayment(authUser.memberId(), id, request, sessionKey));
     }
 
     @GetMapping
