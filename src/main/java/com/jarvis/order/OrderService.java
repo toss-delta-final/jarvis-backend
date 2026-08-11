@@ -30,6 +30,7 @@ import com.jarvis.recommendation.RecommendationAttributionResolver;
 import com.jarvis.review.ReviewRepository;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,6 +61,7 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final OrderEventRecorder orderEventRecorder;
     private final CartService cartService;
     private final ProductRepository productRepository;
     private final ProductOptionRepository productOptionRepository;
@@ -89,9 +91,19 @@ public class OrderService {
                             String address1, String address2) {
     }
 
-    /** O-1 — PENDING 생성(아이템도 PENDING — 01 D9) → 스냅샷 복사 → mock 결제 → PAID/PAYMENT_FAILED */
+    /** 테스트·내부 호출 편의 — 세션 키 없는 경로(이벤트 적재만 스킵) */
     @Transactional
     public OrderCreateResponse create(Long memberId, OrderCreateRequest request) {
+        return doCreate(memberId, request, null);
+    }
+
+    /** O-1 — PENDING 생성(아이템도 PENDING — 01 D9) → 스냅샷 복사 → mock 결제 → PAID/PAYMENT_FAILED */
+    @Transactional
+    public OrderCreateResponse create(Long memberId, OrderCreateRequest request, String sessionKey) {
+        return doCreate(memberId, request, sessionKey);
+    }
+
+    private OrderCreateResponse doCreate(Long memberId, OrderCreateRequest request, String sessionKey) {
         List<Line> lines = resolveLines(memberId, request);
         Shipping shipping = resolveShipping(memberId, request);
         // long으로 합산 후 INT 컬럼 상한 검증 — 크롤링 고가 상품 × 수량으로 int 곱셈이 넘치면 금액이 음수가 된다 (02 D26④)
@@ -118,15 +130,30 @@ public class OrderService {
         String failureReason = completePayment(order, items, aggregateQuantities(items), request.paymentMethod());
         // 장바구니 경유분만 삭제 — 바로 구매는 장바구니 미접촉 (04 §4)
         List<CartItem> purchasedCartLines = lines.stream().map(Line::cartItem).filter(Objects::nonNull).toList();
-        if (order.getStatus() == OrderStatus.PAID && !purchasedCartLines.isEmpty()) {
-            cartService.removeOrderedLines(purchasedCartLines);
+        if (order.getStatus() == OrderStatus.PAID) {
+            if (!purchasedCartLines.isEmpty()) {
+                cartService.removeOrderedLines(purchasedCartLines);
+            }
+            recordPurchase(order, items, sessionKey);
         }
         return OrderCreateResponse.from(order, failureReason);
     }
 
-    /** O-2 — 실패 주문 재결제. 성공 부수효과는 O-1의 PAID와 동일 (04 §4) */
+    /** 테스트·내부 호출 편의 — 세션 키 없는 경로(이벤트 적재만 스킵) */
     @Transactional
     public OrderCreateResponse retryPayment(Long memberId, Long orderId, RetryPaymentRequest request) {
+        return doRetryPayment(memberId, orderId, request, null);
+    }
+
+    /** O-2 — 실패 주문 재결제. 성공 부수효과는 O-1의 PAID와 동일 (04 §4) */
+    @Transactional
+    public OrderCreateResponse retryPayment(Long memberId, Long orderId, RetryPaymentRequest request,
+                                            String sessionKey) {
+        return doRetryPayment(memberId, orderId, request, sessionKey);
+    }
+
+    private OrderCreateResponse doRetryPayment(Long memberId, Long orderId, RetryPaymentRequest request,
+                                               String sessionKey) {
         // 비관적 락으로 동시 재결제 직렬화 — 락 안에서 상태를 재확인해 이중 차감·PAID 로그 2행을 막는다 (01 §2-1)
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .filter(o -> o.getMemberId().equals(memberId))
@@ -140,8 +167,22 @@ public class OrderService {
         String failureReason = completePayment(order, items, aggregateQuantities(items), request.paymentMethod());
         if (order.getStatus() == OrderStatus.PAID) {
             removeMatchingCartLines(memberId, items);
+            recordPurchase(order, items, sessionKey);
         }
         return OrderCreateResponse.from(order, failureReason);
+    }
+
+    /**
+     * 결제 성공 시 purchase_complete 서버 적재 (노션 E-1·O-1·O-2 — 2026-08-11 개정).
+     * 대표 상품은 금액 최대 아이템 — S-2 대표상품 규칙과 동일 기준(판매자 집계에는 미사용).
+     */
+    private void recordPurchase(Order order, List<OrderItem> items, String sessionKey) {
+        Long representative = items.stream()
+                .max(Comparator.comparingLong(item -> (long) item.getPrice() * item.getQuantity()))
+                .map(OrderItem::getProductId)
+                .orElse(null);
+        orderEventRecorder.record(new OrderEventRecorder.PurchaseEvent(
+                order.getMemberId(), sessionKey, order.getId(), order.getTotalAmount(), representative));
     }
 
     /** O-3 — 대표 상태는 enum 코드 8종 (01 §4) */

@@ -251,6 +251,24 @@ class EventServiceTest {
                 .containsExactly("product_view");
     }
 
+    // 2026-08-11 이관 — 결제 성사의 정본은 서버 트랜잭션이라 OrderService에서 적재한다.
+    @Test
+    @DisplayName("E-1 — purchase_complete도 서버 전용이라 HTTP로 들어오면 드롭 (2026-08-11 이관)")
+    void purchaseCompleteDropped() {
+        EventBatchRequest mixed = new EventBatchRequest(List.of(
+                new EventItem("u-1", "sess-1", "purchase_complete", 10L, null,
+                        Map.of("orderId", 1001, "amount", 24000), justNow(), null),
+                new EventItem("u-2", "sess-1", "product_view", 10L, null,
+                        Map.of("price", 1000), justNow(), null)));
+
+        eventService.collect(mixed, 1L, null, "1.2.3.4");
+
+        verify(behaviorEventPublisher).publish(eventsCaptor.capture());
+        assertThat(eventsCaptor.getValue())
+                .extracting(BehaviorEvent::getEventType)
+                .containsExactly("product_view");
+    }
+
     // 정상이면 occurred_at은 created_at보다 살짝 과거다 — 미래면 브라우저 시계를 믿지 않는다
     @Test
     @DisplayName("E-1 — occurredAt이 수신 시각보다 미래면 수신 시각으로 대체 + _timeShifted")

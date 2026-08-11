@@ -6,6 +6,7 @@ import com.jarvis.cart.CartEventRecorder;
 import com.jarvis.global.auth.TokenHasher;
 import com.jarvis.global.event.dto.EventBatchRequest;
 import com.jarvis.member.GuestRepository;
+import com.jarvis.order.OrderEventRecorder;
 import com.jarvis.recommendation.RecommendationAttributionResolver;
 import com.jarvis.recommendation.RecommendationEventRecorder;
 import java.time.Duration;
@@ -35,10 +36,13 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class EventService {
 
-    /** FE가 보내는 11종 (노션 E-1 — 2026-08-06 개정으로 add_to_cart가 서버 적재로 빠져 12종→11종) */
+    /**
+     * FE가 보내는 10종 (노션 E-1 — 2026-08-06 add_to_cart 이관으로 12종→11종,
+     * 2026-08-11 purchase_complete 이관으로 11종→10종)
+     */
     private static final Set<String> EVENT_TYPES = Set.of(
             "session_start", "page_view", "search", "product_view",
-            "checkout_start", "purchase_complete", "login",
+            "checkout_start", "login",
             "recommendation_impression", "product_visible", "product_click",
             "recommendation_dismiss");
     /**
@@ -54,7 +58,10 @@ public class EventService {
     private static final Set<String> SERVER_ONLY_EVENT_TYPES = Set.of(
             RecommendationEventRecorder.EVENT_TYPE,
             CartEventRecorder.ADD_EVENT_TYPE,
-            CartEventRecorder.REMOVE_EVENT_TYPE);
+            CartEventRecorder.REMOVE_EVENT_TYPE,
+            // purchase_complete도 2026-08-11 서버 이관(노션 E-1) — 결제 성사의 정본은 서버 트랜잭션이고,
+            // FE 발사는 유실·미발사로 coverage가 0이었다. cart 2종과 같은 규칙으로 드롭을 동시 활성화한다
+            OrderEventRecorder.EVENT_TYPE);
     private static final String SESSION_START = "session_start";
 
     /**
@@ -66,10 +73,9 @@ public class EventService {
             "page_view", Set.of("pageType"),
             "search", Set.of("query", "resultsCount"),
             "product_view", Set.of("price"),
-            // add_to_cart·remove_from_cart는 서버 전용이 되어 이 경로로 못 들어온다 —
-            // 필수 키는 CartEventRecorder가 항상 채운다 (노션 E-1 2026-08-06)
+            // add_to_cart·remove_from_cart·purchase_complete는 서버 전용이 되어 이 경로로 못 들어온다 —
+            // 필수 키는 CartEventRecorder·OrderEventRecorder가 항상 채운다 (노션 E-1 2026-08-06·08-11)
             "checkout_start", Set.of("amount", "productIds"),
-            "purchase_complete", Set.of("orderId", "amount"),
             "product_visible", Set.of("visibleRatio", "visibleMs"));
 
     /** 이 이상 과거면 브라우저 시계를 믿지 않는다 (노션 E-1 이상치 처리) */

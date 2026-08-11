@@ -59,6 +59,7 @@ class OrderServiceTest {
 
     @Mock OrderRepository orderRepository;
     @Mock OrderItemRepository orderItemRepository;
+    @Mock OrderEventRecorder orderEventRecorder;
     @Mock CartService cartService;
     @Mock ProductRepository productRepository;
     @Mock ProductOptionRepository productOptionRepository;
@@ -150,6 +151,27 @@ class OrderServiceTest {
                 Map.of(new com.jarvis.product.ProductStockService.StockKey(10L, null), 2));
     }
 
+    // 노션 E-1·O-1 2026-08-11 — 결제 성공 시 서버가 purchase_complete를 적재한다(FE 발사 폐기)
+    @Test
+    @DisplayName("O-1 결제 성공 — purchase_complete 서버 적재 (orderId·amount·대표 상품·X-Session-Key)")
+    void createPaidRecordsPurchaseComplete() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(product));
+        when(productOptionRepository.findAllByProductIdOrderByIdAsc(10L)).thenReturn(List.of());
+        when(paymentService.pay("MOCK_CARD", 24000)).thenReturn(PaymentResult.approved());
+        when(productStockService.deduct(anyMap())).thenReturn(true);
+
+        orderService.create(1L, directRequest("MOCK_CARD", 2), "fe-session-key");
+
+        ArgumentCaptor<OrderEventRecorder.PurchaseEvent> eventCaptor =
+                ArgumentCaptor.forClass(OrderEventRecorder.PurchaseEvent.class);
+        verify(orderEventRecorder).record(eventCaptor.capture());
+        OrderEventRecorder.PurchaseEvent event = eventCaptor.getValue();
+        assertThat(event.memberId()).isEqualTo(1L);
+        assertThat(event.sessionKey()).isEqualTo("fe-session-key");
+        assertThat(event.amount()).isEqualTo(24000);
+        assertThat(event.representativeProductId()).isEqualTo(10L);
+    }
+
     @Test
     @DisplayName("O-1 MOCK_FAIL — PAYMENT_FAILED 기록, 재고·장바구니 미접촉, 아이템은 PENDING 잔존")
     void createPaymentFailed() {
@@ -162,6 +184,8 @@ class OrderServiceTest {
 
         // 카드 거절은 재결제(O-2)로 회복 가능 — 재고 부족과 갈라 보이려면 응답에 사유가 실려야 한다
         assertThat(response.failureReason()).isEqualTo("MOCK_DECLINED");
+        // 결제 실패는 purchase_complete 적재 대상이 아니다 (노션 E-1 2026-08-11)
+        verify(orderEventRecorder, never()).record(any());
         verify(statusChanger).paymentFailed(any(Order.class), eq("MOCK_DECLINED"));
         verify(statusChanger, never()).paymentSucceeded(any(), anyList(), any());
         verify(productStockService, never()).deduct(anyMap());

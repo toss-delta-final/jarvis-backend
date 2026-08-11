@@ -145,7 +145,7 @@
 |---|---|---|---|---|
 | E-1 | POST | /api/events | 🔓(인증 선택) | FE 행동 이벤트 배치 수집. body: `{"events":[{ "id":"<uuid>", "sessionKey":"...", "eventType":"...", "productId":null, "schemaVersion":2, "properties":{...}, "occurredAt":"2026-07-28T10:00:02.004Z", "recommendation":{ "recommendationRequestId":"…", "listId":"…" }? }]}` — FE가 버퍼(10건 or 5초)로 묶어 전송. **`id`는 필수**(중복 차단 키가 비면 UNIQUE가 무력화 — 02 D38), **`occurredAt`은 UTC ISO-8601(`Z`)·offset 포함 필수 형식**(타임존 없으면 400 — 정렬이 깨진다). 응답 **202 즉시, 본문 없음**(노션 기준 — 2026-07-18 Round 3). 신원은 서버 주입(member_id=JWT, guest_id=쿠키) — **익명인데 쿠키 없으면 여기서 게스트 발급**(노션 07-20 변경, 주체 없는 행 방지 — I-13 왜곡 원인 제거). **`recommendation`은 2개뿐**이며 지면·순위는 서버가 `listId`로 목록을 조회해 도출한다(FE 값 불신 — E-1 ③.5) |
 
-- 서버 처리 4단계: ① `member_id`는 JWT에서, `guest_id`는 쿠키에서 주입(**body의 신원 주장은 무시**) ② 아래 8종 화이트리스트 외 eventType은 폐기+경고 로그 ③ `session_start`에 ipHash 주입 ④ 배치 INSERT(`created_at`=서버 수신 시각), `client_event_id`(body의 `id`) UNIQUE로 중복 차단.
+- 서버 처리 4단계: ① `member_id`는 JWT에서, `guest_id`는 쿠키에서 주입(**body의 신원 주장은 무시**) ② FE 10종 화이트리스트(2026-08-11 — purchase_complete 서버 이관으로 11→10종) 외 eventType은 폐기+경고 로그, 서버 전용 4종(recommendation_generated·add_to_cart·remove_from_cart·purchase_complete)은 HTTP 유입 시 드롭 ③ `session_start`에 ipHash 주입 ④ 배치 INSERT(`created_at`=서버 수신 시각), `client_event_id`(body의 `id`) UNIQUE로 중복 차단.
 - 실패 건은 세지 않는다 — 담기 실패·결제 실패 시 FE가 이벤트를 보내지 않음. `properties`에 개인정보 금지.
 
 | eventType (8종) | 트리거 시점 |
@@ -154,9 +154,9 @@
 | page_view | 페이지 진입 |
 | search | 검색 실행 |
 | product_view | 상품 상세 진입 |
-| add_to_cart | 담기 **성공 콜백** |
+| add_to_cart | **서버 적재**(담기 성공 afterCommit — 2026-08-06 이관, FE 발사 폐기) |
 | checkout_start | 주문서 화면 mount(주문서 1회 = 1건) — `properties.productIds` 배열 |
-| purchase_complete | 주문 완료 페이지 — `properties.orderId`·`amount` |
+| purchase_complete | **서버 적재**(결제 PAID afterCommit — 2026-08-11 이관, 구 "주문 완료 페이지" FE 발사 폐기. `X-Session-Key`는 O-1·O-2 헤더로) — `properties.orderId`·`amount` |
 | login | 로그인 성공 |
 
 ## 9. admin — ⚠️ 전부 고도화 (MVP 아님)
