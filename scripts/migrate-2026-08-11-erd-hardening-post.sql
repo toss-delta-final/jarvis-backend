@@ -10,9 +10,11 @@
 --   ② created_at NOT NULL은 앱이 그 값을 채우기 시작한 뒤에야 조일 수 있다(2026-07-31 건과 같은 이유).
 --   구 앱에 이 스키마를 물리면 드문 경합에서 그 요청만 500이 되고, 추천 목록 저장이 실패한다.
 --
--- ⚠️ §0을 먼저 돌린다. 세 SELECT가 모두 0이 아니면 **여기서 멈추고 사람이 판단한다** —
+-- ⚠️ §0을 먼저 돌린다. 앞의 **두 SELECT(①②)가 0이 아니면 여기서 멈추고 사람이 판단한다** —
 --   그대로 진행하면 §2의 ALTER가 실패하며 중간 상태로 남는다. 재고 행 중복과 옵션 소속 위반은
 --   자동 병합하지 않는다: 어느 수량이 맞는지, 어느 옵션이 맞는지 DB가 알 수 없고 둘 다 돈에 닿는다.
+--   **③(created_at 잔여)은 0이 아니어도 정상이다** — 구 앱이 -pre 이후 배포 전까지 넣은 행이고,
+--   §3의 백필이 채운다. 판단할 것이 없다.
 --
 -- 재실행: §1 병합은 HAVING COUNT(*) > 1이라 두 번째부터 0행. DDL은 IF EXISTS/IF NOT EXISTS로
 --   감쌌으나 ADD CONSTRAINT엔 그 문법이 없어 재실행 시 "Duplicate key name"으로 멈춘다 —
@@ -43,8 +45,12 @@ SELECT
     (SELECT COUNT(*) FROM order_item i JOIN product_option o ON o.id = i.option_id
       WHERE o.product_id <> i.product_id) AS order_item_mismatch;
 
--- ③ created_at 백필 잔여 (-pre가 채웠어야 한다)
-SELECT COUNT(*) AS reco_items_without_created_at
+-- ③ created_at 백필 잔여 — ⚠️ 이 값만은 0이 아니어도 정상이다(위 두 개와 성격이 다르다).
+--    -pre의 백필 이후 새 앱이 뜨기 전까지 구 앱이 넣은 행은 이 컬럼이 비어 있다.
+--    그래서 §3이 백필을 한 번 더 돌린다 — 사람이 판단할 것이 없다. FK가 부모를 보장하고
+--    부모의 created_at은 NOT NULL이라, 남는 행 없이 전부 채워진다.
+--    (2026-08-11 dev 적용에서 24행이 이 경우였다 — 창이 CD 소요시간만큼 열려 있었다.)
+SELECT COUNT(*) AS reco_items_without_created_at_before_backfill
   FROM recommendation_list_item WHERE created_at IS NULL;
 
 -- ------------------------------------------------------------
@@ -150,9 +156,25 @@ ALTER TABLE order_item
         REFERENCES product_option (id, product_id) ON DELETE RESTRICT;
 
 -- ------------------------------------------------------------
--- 3) created_at NOT NULL 마무리 (D45) — 남은 NULL이 있으면 여기서 실패한다(조용히 넘어가지 않는 게 맞다)
+-- 3) created_at 백필 재실행 → NOT NULL 마무리 (D45)
+--
+--    ⚠️ 백필이 -pre와 여기 두 번 있는 건 중복이 아니다. -pre가 채운 뒤 새 앱이 뜨기까지
+--    구 앱이 계속 목록을 저장하는데, 그 행들은 이 컬럼을 채우지 않는다(그러라고 -pre에서
+--    NULL 허용으로 뒀다). 창의 길이는 CD 소요시간이고, dev에서는 24행이 그 사이 들어왔다.
+--    여기서 한 번 더 돌려야 그 창의 행들이 채워진다.
+--
+--    ⚠️ 이 스크립트는 **앱 배포가 끝난 뒤**에 돌려야 한다(파일 머리말). 구 앱이 아직 돌고 있으면
+--    백필과 NOT NULL 사이에 또 NULL이 들어와 ALTER가 실패하고, 성공하더라도 그 뒤 구 앱의
+--    목록 저장이 전부 실패한다.
 -- ------------------------------------------------------------
 
+UPDATE recommendation_list_item i
+  JOIN recommendation_list l ON l.list_id = i.list_id
+   SET i.created_at = l.created_at
+ WHERE i.created_at IS NULL;
+
+-- 남은 NULL이 있으면 여기서 실패한다(조용히 넘어가지 않는 게 맞다).
+-- 실패한다면 부모 없는 행이 있다는 뜻이므로 fk_reco_item_list부터 확인한다.
 ALTER TABLE recommendation_list_item
     MODIFY COLUMN created_at DATETIME(6) NOT NULL;
 
