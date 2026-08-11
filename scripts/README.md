@@ -27,6 +27,8 @@
 | `migrate-2026-07-31-behavior-events-not-null.sql` | `occurred_at`·`client_event_id` 백필 후 `NOT NULL` (02 D38·D40) | 앱 배포 **후** — 앱이 `occurred_at`을 채운 뒤에 조인다 |
 | `migrate-2026-08-07-recommendation-attribution.sql` | `cart_item`·`order_item`에 추천 귀속 2컬럼씩 + 인덱스 (02 D43) | 앱 배포 **전** — `ddl-auto: validate`라 컬럼이 없으면 기동 자체가 실패한다 |
 | `migrate-2026-08-10-review-latest-index.sql` | `review`에 `idx_review_latest(product_id, status, created_at)` 추가 — P-3 목록 정렬 filesort 제거 (02 D9 보강②) | **순서 무관.** 인덱스만 바뀌므로 `ddl-auto: validate`가 보지 않는다 — 앱 재배포 없이 DB에만 적용해도 된다 |
+| `migrate-2026-08-11-erd-hardening-pre.sql` | 로그 3종 `ENUM`→`VARCHAR`, `recommendation_list_item.created_at` 신설(NULL)·백필, 인덱스 8개 제거·2개 추가 (02 D45·D46) | 앱 배포 **전** — 새 앱이 `created_at`을 찾으므로 컬럼이 없으면 기동 실패 |
+| `migrate-2026-08-11-erd-hardening-post.sql` | 옵션 UNIQUE의 NULL 구멍을 가상 컬럼(`option_key`)으로 차단 + 옵션↔상품 소속 복합 FK, `created_at` NOT NULL 전환 (02 D44·D45) | 앱 배포 **후** — ① 경합이 제약 위반으로 드러나므로 이를 잡는 코드가 먼저 떠 있어야 하고 ② `created_at`은 앱이 채우기 시작한 뒤에 조인다 |
 
 > 위 표는 **적용 시점에 주의가 필요한 것만** 싣는다. 실제 적용은 [DEPLOY.md §4-2](../DEPLOY.md)의 루프가
 > `migrate-*.sql` **전부**를 날짜순으로 흘리므로, 표에 없는 파일도 빠짐없이 적용된다.
