@@ -19,8 +19,9 @@ public interface CartItemRepository extends JpaRepository<CartItem, Long> {
 
     /**
      * optionId NULL(무옵션)을 IS NULL로 매칭 — 파생 쿼리는 null 파라미터를 = NULL로 만들어 불일치.
-     * List 반환 + id 오름차순: 무옵션 UNIQUE가 MariaDB에서 NULL에 안 걸려(schema.sql cart_item 주석) 동시 담기 경합으로
-     * 중복 행이 생겨도 단건 기대(Optional)로 인한 영구 500을 피하고, 서비스가 첫 행으로 병합·자가치유한다.
+     * List 반환 + id 오름차순: 단건 기대(Optional)면 중복 행이 있을 때 그 회원의 장바구니가 영구 500이 된다.
+     * 중복 자체는 2026-08-11부터 DB가 막지만(02 D44 — uk가 가상 컬럼 option_key를 쓴다), 그 이전에
+     * 생긴 행이 남아 있을 수 있어 서비스가 첫 행으로 병합·자가치유하는 구조를 유지한다.
      */
     @Query("""
             SELECT c FROM CartItem c

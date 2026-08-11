@@ -255,7 +255,11 @@ public class CartService {
 
     /**
      * 동일 상품+옵션 라인 정규화 — 첫 행(가장 오래된 id)만 남기고 나머지는 수량 합산 후 삭제(자가치유).
-     * 무옵션(option_id NULL) 상품의 동시 담기 경합으로 중복 행이 생겨도 다음 담기 때 한 행으로 수렴한다.
+     *
+     * <p>[2026-08-11 · 02 D44] 앞으로 중복은 DB가 막는다 — {@code uk_cart_*}가 {@code option_id}가 아니라
+     * 가상 컬럼 {@code option_key}(NULL→0)를 축으로 잡아 무옵션 상품에도 걸린다. 이 메서드는
+     * <b>그 마이그레이션 이전에 생긴 중복 행</b>을 위해 남는다. 새로 경합이 나면 잠금 조회가 직렬화하고,
+     * 뚫린 경우는 제약 위반 → 409(GlobalExceptionHandler)다.
      */
     private Optional<CartItem> consolidate(List<CartItem> lines) {
         if (lines.isEmpty()) {

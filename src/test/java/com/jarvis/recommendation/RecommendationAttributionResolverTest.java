@@ -39,9 +39,9 @@ class RecommendationAttributionResolverTest {
     private RecommendationAttributionResolver.Snapshot snapshotWithList() {
         when(listRepository.findByListIdIn(Set.of(LIST_ID))).thenReturn(List.of(list()));
         when(itemRepository.findByListIdIn(Set.of(LIST_ID))).thenReturn(List.of(
-                RecommendationListItem.of(LIST_ID, 0, 101L),
-                RecommendationListItem.of(LIST_ID, 1, 205L),
-                RecommendationListItem.of(LIST_ID, 2, 552L)));
+                RecommendationListItem.of(LIST_ID, 0, 101L, LocalDateTime.now()),
+                RecommendationListItem.of(LIST_ID, 1, 205L, LocalDateTime.now()),
+                RecommendationListItem.of(LIST_ID, 2, 552L, LocalDateTime.now())));
         return resolver.snapshot(List.of(LIST_ID, LIST_ID)); // 중복 listId는 한 번만 조회
     }
 

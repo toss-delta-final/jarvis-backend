@@ -116,7 +116,7 @@ public class RecommendationListService {
                     identity, entry.label(), request.totalBudget(), entry.productIds().size(), now));
             for (int position = 0; position < entry.productIds().size(); position++) {
                 items.add(RecommendationListItem.of(entry.listId(), position,
-                        entry.productIds().get(position)));
+                        entry.productIds().get(position), now));
             }
         }
         try {

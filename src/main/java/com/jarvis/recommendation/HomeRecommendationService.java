@@ -189,7 +189,7 @@ public class HomeRecommendationService {
         try {
             List<RecommendationListItem> items = IntStream.range(0, cards.size())
                     .mapToObj(position -> RecommendationListItem.of(list.getListId(), position,
-                            cards.get(position).productId()))
+                            cards.get(position).productId(), list.getCreatedAt()))
                     .toList();
             recommendationListStore.saveAll(List.of(list), items);
             recommendationEventRecorder.recordHomeGenerated(list, fallbackReason);

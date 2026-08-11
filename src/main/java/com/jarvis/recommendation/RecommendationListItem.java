@@ -7,6 +7,7 @@ import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import java.io.Serializable;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -37,14 +38,20 @@ public class RecommendationListItem implements Persistable<RecommendationListIte
     @Column(name = "product_id", nullable = false)
     private Long productId;
 
+    /** 부모 목록의 값을 그대로 받는다 — 둘은 같은 트랜잭션에서 태어나므로 시각이 갈릴 이유가 없다 (02 D45) */
+    @Column(name = "created_at", nullable = false, columnDefinition = "datetime(6)")
+    private LocalDateTime createdAt;
+
     @Transient
     private boolean isNew = false;
 
-    public static RecommendationListItem of(String listId, int position, Long productId) {
+    public static RecommendationListItem of(String listId, int position, Long productId,
+                                            LocalDateTime createdAt) {
         RecommendationListItem item = new RecommendationListItem();
         item.listId = listId;
         item.position = position;
         item.productId = productId;
+        item.createdAt = createdAt;
         item.isNew = true;
         return item;
     }

@@ -8,6 +8,9 @@
 --       created_at 전 테이블, updated_at은 변경이 있는 테이블만.
 --       FK ON DELETE는 전부 RESTRICT (운영 데이터 보호).
 -- FK가 못 막는 교차 정합(D26)은 서비스 레이어 검증 — 각 테이블 주석 참조.
+-- MariaDB UNIQUE는 NULL을 서로 다르게 보므로 nullable 컬럼은 유니크가 걸리지 않는다.
+--   VIRTUAL 생성 컬럼(NULL→센티널)을 유니크 축으로 쓰는 관용구로 막는다 — address.default_flag,
+--   product_stock/cart_item.option_key (D44). 실 컬럼과 FK는 건드리지 않는다.
 -- MariaDB 주의: JSON 타입은 LONGTEXT 별칭(+ 자동 CHECK(JSON_VALID)) — 네이티브 저장 아님.
 --   Hibernate는 MariaDBDialect + @JdbcTypeCode(SqlTypes.JSON)로 매핑(02 §3 매핑 규약).
 -- ============================================================
@@ -128,6 +131,8 @@ CREATE TABLE product_option (
     updated_at   DATETIME     NULL,
     PRIMARY KEY (id),
     KEY idx_product_option_product (product_id),
+    -- 조회용이 아니라 복합 FK가 참조할 대상 — 자식이 (option_id, product_id)로 소속까지 걸 수 있게 한다 (D44)
+    UNIQUE KEY uk_product_option_id_product (id, product_id),
     CONSTRAINT fk_product_option_product FOREIGN KEY (product_id)
         REFERENCES product (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -137,22 +142,27 @@ CREATE TABLE product_stock (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
     product_id  BIGINT   NOT NULL,
     option_id   BIGINT   NULL,                              -- NULL = 옵션 없는 상품의 유일한 재고 행
+    -- UNIQUE 전용 파생 컬럼 (D44). 실 컬럼은 NULL 그대로 두고 인덱스에만 센티널을 써서 FK를 온전히 지킨다
+    option_key  BIGINT   AS (IFNULL(option_id, 0)) VIRTUAL,
     quantity    INT      NOT NULL DEFAULT 0,
     created_at  DATETIME NOT NULL,
     updated_at  DATETIME NULL,
     PRIMARY KEY (id),
-    -- 재고가 사는 곳이 한 군데임을 DB가 보장한다. MariaDB는 NULL을 서로 다르게 보므로
-    -- option_id IS NULL 행의 중복은 이 제약으로 막히지 않는다 — 서비스가 막는다
-    UNIQUE KEY uk_product_stock (product_id, option_id),
-    KEY idx_product_stock_option (option_id),               -- 장바구니·주문의 옵션 단위 조회·차감 경로
+    -- 재고가 사는 곳이 한 군데임을 DB가 보장한다. option_id가 아니라 option_key로 잡아
+    -- 무옵션 행(NULL)까지 막는다 — MariaDB UNIQUE는 NULL을 서로 다르게 본다 (D44)
+    UNIQUE KEY uk_product_stock (product_id, option_key),
+    -- 장바구니·주문의 옵션 단위 조회·차감 경로 + 복합 FK의 받침 인덱스 (D44)
+    KEY idx_product_stock_option (option_id, product_id),
     -- "살 수 있는 옵션이 있나"(I-1·P-4의 EXISTS)를 인덱스만으로 끝낸다. uk는 quantity가 없어
     -- 행마다 테이블을 되짚는다 — review 커버링 인덱스와 같은 구조의 문제다
     KEY idx_product_stock_purchasable (product_id, quantity),
     CONSTRAINT chk_product_stock_quantity CHECK (quantity >= 0),
     CONSTRAINT fk_product_stock_product FOREIGN KEY (product_id)
         REFERENCES product (id) ON DELETE RESTRICT,
-    CONSTRAINT fk_product_stock_option FOREIGN KEY (option_id)
-        REFERENCES product_option (id) ON DELETE RESTRICT
+    -- 복합 FK — "그 옵션이 그 상품 소속"까지 DB가 본다. InnoDB는 MATCH SIMPLE이라
+    -- option_id가 NULL이면 검사를 건너뛰므로 무옵션 행은 종전대로 통과한다 (D44)
+    CONSTRAINT fk_product_stock_option FOREIGN KEY (option_id, product_id)
+        REFERENCES product_option (id, product_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- 재고 (D33 개정 — 2026-08-09, 구 product.stock_quantity 폐기). 옵션마다 한 행, 옵션 없는 상품은 option_id NULL 한 행.
 -- 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행 (D32).
@@ -182,7 +192,8 @@ CREATE TABLE cart_item (
     member_id   BIGINT   NULL,                             -- member/guest 중 정확히 하나 NOT NULL — XOR 서비스 검증 (D30)
     guest_id    CHAR(36) NULL,                             -- 게스트 장바구니 (D30). 로그인 시 병합 승계
     product_id  BIGINT   NOT NULL,
-    option_id   BIGINT   NULL,                             -- 옵션 없는 상품은 NULL. 해당 상품 소속 옵션인지 서비스 검증 (D26①)
+    option_id   BIGINT   NULL,                             -- 옵션 없는 상품은 NULL. 소속은 복합 FK가 본다 (D44) + 서비스 검증 유지 (D26①)
+    option_key  BIGINT   AS (IFNULL(option_id, 0)) VIRTUAL, -- UNIQUE 전용 파생 컬럼 (D44)
     quantity    INT      NOT NULL,
     recommendation_request_id CHAR(36) NULL,                 -- ↓ 추천 귀속 2종: 추천 카드에서 담았을 때만 채워진다 (D38, C-2·I-2)
     list_id     VARCHAR(64) NULL,                            --   FE·FastAPI가 보낸 값을 믿지 않고 서버가 3규칙(실재·소유자·상품 포함)으로 검증한 뒤 저장.
@@ -190,15 +201,20 @@ CREATE TABLE cart_item (
     created_at  DATETIME NOT NULL,
     updated_at  DATETIME NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_cart_member (member_id, product_id, option_id),
-    UNIQUE KEY uk_cart_guest (guest_id, product_id, option_id),
-    KEY idx_cart_list (list_id),                             -- 추천 목록별 담기 전환 집계. FK는 없다 — behavior_events와 같은 이유(목록 정리를 장바구니가 막으면 안 된다)
-    -- 주의: MariaDB UNIQUE는 NULL 중복 허용 → option_id=NULL엔 제약 미적용, 서비스의 조회-후-수량증가 upsert가 실질 방어선
+    -- option_key로 잡아 무옵션 상품의 재담기까지 DB가 막는다 (D44 — 구 option_id 버전은 NULL에 안 걸렸다).
+    -- 1차 방어선은 담기의 PESSIMISTIC_WRITE 잠금 조회고 이건 백스톱이다 — 뚫고 진 요청은 409(D44)
+    UNIQUE KEY uk_cart_member (member_id, product_id, option_key),
+    UNIQUE KEY uk_cart_guest (guest_id, product_id, option_key),
+    KEY idx_cart_option (option_id, product_id),             -- 복합 FK 받침 (D44)
+    -- idx_cart_list(list_id) 제거 (D46, 2026-08-11) — 담기 전환 집계는 behavior_events·추천 명단으로 하고
+    --   이 컬럼을 읽는 쿼리가 없다. 컬럼은 C-2·I-2 계약이라 남는다
     CONSTRAINT chk_cart_quantity CHECK (quantity > 0),
-    CONSTRAINT fk_cart_member  FOREIGN KEY (member_id)  REFERENCES member (id)         ON DELETE RESTRICT,
-    CONSTRAINT fk_cart_guest   FOREIGN KEY (guest_id)   REFERENCES guest (id)          ON DELETE RESTRICT,
-    CONSTRAINT fk_cart_product FOREIGN KEY (product_id) REFERENCES product (id)        ON DELETE RESTRICT,
-    CONSTRAINT fk_cart_option  FOREIGN KEY (option_id)  REFERENCES product_option (id) ON DELETE RESTRICT
+    CONSTRAINT fk_cart_member  FOREIGN KEY (member_id)  REFERENCES member (id)  ON DELETE RESTRICT,
+    CONSTRAINT fk_cart_guest   FOREIGN KEY (guest_id)   REFERENCES guest (id)   ON DELETE RESTRICT,
+    CONSTRAINT fk_cart_product FOREIGN KEY (product_id) REFERENCES product (id) ON DELETE RESTRICT,
+    -- 복합 FK — 옵션 소속까지 DB가 본다. option_id NULL이면 MATCH SIMPLE로 검사 생략 (D44)
+    CONSTRAINT fk_cart_option  FOREIGN KEY (option_id, product_id)
+        REFERENCES product_option (id, product_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- 가격 컬럼 없음(현재가 표시 — 스냅샷은 주문 시점에만). cart 헤더 테이블 없음(주체당 암묵 1개).
 
@@ -272,10 +288,15 @@ CREATE TABLE order_item (
     PRIMARY KEY (id),
     KEY idx_order_item_order (order_id),
     KEY idx_order_item_status (status, status_changed_at), -- 배송 전이 스케줄러 스캔용
-    KEY idx_order_item_list (list_id),                     -- 추천 목록별 구매 전환·매출 집계. FK 없음(cart_item과 동일 이유)
+    KEY idx_order_item_option (option_id, product_id),     -- 복합 FK 받침 (D44)
+    -- idx_order_item_list(list_id) 제거 (D46, 2026-08-11) — AI 귀속 v1이 쓰던 인덱스다.
+    --   v2(2026-08-10)가 판정 근거를 추천 명단으로 옮기면서 이 컬럼을 읽는 쿼리가 사라졌다.
+    --   컬럼은 O-1 계약(주문에 박힌 귀속 스냅샷)이라 남는다
     CONSTRAINT fk_order_item_order   FOREIGN KEY (order_id)   REFERENCES orders (id)  ON DELETE RESTRICT,
     CONSTRAINT fk_order_item_product FOREIGN KEY (product_id) REFERENCES product (id) ON DELETE RESTRICT,
-    CONSTRAINT fk_order_item_option  FOREIGN KEY (option_id)  REFERENCES product_option (id) ON DELETE RESTRICT
+    -- 복합 FK — 옵션 소속까지 DB가 본다 (D44). 취소·반품 복원이 되돌릴 재고 행을 이 참조로 찾는다
+    CONSTRAINT fk_order_item_option  FOREIGN KEY (option_id, product_id)
+        REFERENCES product_option (id, product_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE claim (
@@ -291,6 +312,7 @@ CREATE TABLE claim (
     updated_at     DATETIME     NULL,
     PRIMARY KEY (id),
     KEY idx_claim_order_item (order_item_id),
+    KEY idx_claim_status (status, created_at),              -- 자동 승인 스케줄러 스캔용 (D46, 2026-08-11)
     CONSTRAINT fk_claim_order_item FOREIGN KEY (order_item_id) REFERENCES order_item (id) ON DELETE RESTRICT,
     CONSTRAINT fk_claim_processed_by FOREIGN KEY (processed_by) REFERENCES member (id)    ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -390,10 +412,12 @@ CREATE TABLE behavior_events (
     KEY idx_behavior_guest  (guest_id, created_at),
     KEY idx_behavior_type   (event_type, created_at),
     KEY idx_behavior_prod   (product_id, created_at),
-    KEY idx_behavior_sess   (session_key),
     KEY idx_behavior_time   (created_at),
     KEY idx_behavior_list   (list_id, event_type),         -- 추천 목록별 노출·클릭 집계(CTR) (D38)
-    KEY idx_behavior_occur  (occurred_at),                  -- event-time 기준 정렬·집계 (D38)
+    -- idx_behavior_sess(session_key)·idx_behavior_occur(occurred_at) 제거 (D46, 2026-08-11).
+    --   두 컬럼 다 쿼리에 자주 나오지만 COUNT(DISTINCT)·창함수 PARTITION·정렬 재료로만 쓰여
+    --   "그 컬럼으로 찾기 시작하는" 접근 경로가 아니었다. 쓰기 최다 테이블이라 갱신 비용만 냈다.
+    --   idx_behavior_guest는 쿼리가 안 쓰지만 아래 FK가 인덱스를 요구해 남는다
     CONSTRAINT fk_behavior_guest FOREIGN KEY (guest_id) REFERENCES guest (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- 적재는 FE의 POST /api/events (배치, 인증 선택) + recommendation_generated만 서버 내부 insert (D31·D38)
@@ -413,12 +437,16 @@ CREATE TABLE order_status_logs (
     order_item_id BIGINT       NULL,                       -- 아이템 상태 전이면 필수, 주문 상태 전이면 NULL (D32 개정 2026-08-06)
     from_status   VARCHAR(20)  NULL,                       -- 최초 생성 시 NULL
     to_status     VARCHAR(20)  NOT NULL,                   -- 주문: PENDING/PAID/PAYMENT_FAILED/CANCELLED · 아이템 이행: SHIPPING/DELIVERED/CANCELLED/RETURNED
-    actor_type    ENUM('USER','SELLER','ADMIN','SYSTEM') NOT NULL,  -- 발송(ORDERED→SHIPPING)=SELLER, 이후 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제=SYSTEM
+    actor_type    VARCHAR(20)  NOT NULL,                   -- USER/SELLER/ADMIN/SYSTEM — 어휘는 Java enum이 강제 (D45, 구 DB ENUM).
+                                                           -- 발송(ORDERED→SHIPPING)=SELLER, 이후 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제=SYSTEM
     reason        VARCHAR(200) NULL,                       -- 결제 실패 코드, 취소·반품 사유(claim.reason), 판매자 발송 사유(I-30)
     created_at    DATETIME(6)  NOT NULL,
     PRIMARY KEY (id),
     KEY idx_oslog_order  (order_id, created_at),
-    KEY idx_oslog_status (to_status, created_at)
+    KEY idx_oslog_status (to_status, created_at),
+    -- 평균 배송시간 자기조인(2026-08-06 짝짓기 키가 order_id→order_item_id로 바뀌었다)과
+    -- I-14 계열 6개 쿼리의 자사 스코프 조건 (D46, 2026-08-11)
+    KEY idx_oslog_item   (order_item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- ORDERED(PAID와 같은 트랜잭션)·*_REQUESTED(claim이 정본)·CONFIRMED는 미기록. 교환 어휘 없음 (D34)
 -- 해상도는 "무엇의 상태를 바꿨나"로 가른다 — 아이템 상태 전이는 아이템마다 1행(order_item_id 필수),
@@ -429,7 +457,7 @@ CREATE TABLE product_change_logs (
     product_id   BIGINT      NOT NULL,                     -- FK 미설정 (append-only 로그)
     option_id    BIGINT      NULL,                         -- STOCK 로그에서 어느 옵션인지 (D33 개정, 2026-08-09).
                                                            --   PRICE·STATUS는 상품 단위라 NULL. FK 미설정 — 위와 같은 이유
-    change_type  ENUM('PRICE','STOCK','STATUS') NOT NULL,
+    change_type  VARCHAR(20) NOT NULL,                     -- PRICE/STOCK/STATUS — 어휘는 Java enum이 강제 (D45, 구 DB ENUM)
     old_value    VARCHAR(50) NULL,
     new_value    VARCHAR(50) NULL,                         -- 품절 신호 = STOCK new_value 0 (SOLD_OUT 상태 미도입)
     created_at   DATETIME(6) NOT NULL,
@@ -441,13 +469,14 @@ CREATE TABLE product_change_logs (
 CREATE TABLE account_event_logs (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     member_id   BIGINT      NULL,                          -- 없는 계정 로그인 시도는 NULL + IP (무차별 대입 탐지 재료)
-    event_type  ENUM('SIGNUP','LOGIN_SUCCESS','LOGIN_FAIL','LOGOUT','WITHDRAW') NOT NULL,
+    event_type  VARCHAR(20) NOT NULL,                      -- SIGNUP/LOGIN_SUCCESS/LOGIN_FAIL/LOGOUT/WITHDRAW — 어휘는 Java enum이 강제 (D45, 구 DB ENUM)
     ip_address  VARCHAR(45) NULL,                          -- IPv6 수용
     created_at  DATETIME(6) NOT NULL,
     PRIMARY KEY (id),
     KEY idx_aclog_member (member_id, created_at),
-    KEY idx_aclog_ip     (ip_address, created_at),
     KEY idx_aclog_type   (event_type, created_at)
+    -- idx_aclog_ip(ip_address, created_at) 제거 (D46, 2026-08-11) —
+    --   I-8은 IP로 거르지 않고 GROUP BY로 묶기만 해서 인덱스를 타지 않았다
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- Spring Security AuthenticationSuccess/FailureHandler에서 적재. "마지막 로그인" 단일 출처 = LOGIN_SUCCESS (D32)
 
@@ -476,10 +505,9 @@ CREATE TABLE recommendation_list (
     item_count                INT         NOT NULL,        -- recommendation_generated의 properties.itemCount 원천
     created_at                DATETIME(6) NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_reco_list (list_id),                     -- 멱등 키. listId가 128bit 무작위라 이것만으로 충분
-    KEY idx_reco_request (recommendation_request_id),       -- 한 추천 실행의 목록 전체 조회
-    KEY idx_reco_owner   (member_id, created_at),
-    KEY idx_reco_created (created_at)
+    UNIQUE KEY uk_reco_list (list_id)                      -- 멱등 키. listId가 128bit 무작위라 이것만으로 충분
+    -- idx_reco_request·idx_reco_owner·idx_reco_created 제거 (D46, 2026-08-11) —
+    --   조회가 전부 list_id 경유이고, 소유자 검증도 목록을 가져온 뒤 서비스가 비교한다
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- member_id·guest_id가 NULL 허용인 건 정상값이다 — 세션이 이미 만료된 뒤 콜백이 오면 신원을 구할 수 없고,
 --   그때도 200으로 저장한다(익명 저장). 단 소유자가 없으므로 CH-5에서 조회되지 않는다(fail-closed).
@@ -489,6 +517,7 @@ CREATE TABLE recommendation_list_item (
     list_id     VARCHAR(64) NOT NULL,
     position    INT         NOT NULL,                      -- 0-based. 리랭킹 순서 = 렌더 순서 = 이벤트의 순위
     product_id  BIGINT      NOT NULL,                      -- FK 미설정: 상품이 지워져도 "그때 뭘 추천했는지"는 남아야 한다
+    created_at  DATETIME(6) NOT NULL,                      -- 규약("created_at 전 테이블")에서 이 테이블만 빠져 있었다 (D45). 값은 늘 부모 목록과 같다
     PRIMARY KEY (list_id, position),
     KEY idx_reco_item_product (product_id),
     CONSTRAINT fk_reco_item_list FOREIGN KEY (list_id)

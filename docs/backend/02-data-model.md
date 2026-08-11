@@ -374,6 +374,39 @@ FK는 "참조 행이 존재하는가"만 보장하고 "**올바른** 행을 참�
 - **FK는 걸지 않는다**: `behavior_events`가 같은 컬럼을 FK 없이 두고 인덱스만 가진 것과 같은 이유 — FK를 걸면 만료된 추천 목록을 정리할 때 장바구니·주문 이력이 삭제를 막는다. 인덱스는 `idx_cart_list`·`idx_order_item_list` 각 1개.
 - **트레이드오프**: 기존 행 백필이 없어 이 시점 이전 데이터는 NULL이 "추천 경유 아님"과 "출처 미상"을 겸한다. 신원 없이 저장된 목록(세션 만료 뒤 도착한 I-21 콜백)은 규칙 ②를 통과할 수 없어 귀속이 폐기된다 — CH-5도 그 목록은 조회시키지 않으므로 일관되지만, 그만큼 귀속률이 낮게 나온다. 마이그레이션: `scripts/migrate-2026-08-07-recommendation-attribution.sql`.
 
+### D44. 한 행 안에서 닫히는 제약은 DB가 막는다 — 가상 컬럼 UNIQUE + 복합 FK (2026-08-11, D26 ① 이중화)
+
+- **문제**: ERD 전수 검토에서 "DB가 막을 수 있는데 서비스에만 맡긴 제약" 두 갈래가 나왔다. ① **UNIQUE의 NULL 구멍** — MariaDB UNIQUE는 NULL을 서로 다르게 보므로 `cart_item`(무옵션 상품 재담기)·`product_stock`(무옵션 재고 행)에는 제약이 실제로 걸리지 않는다. ② **옵션↔상품 소속**(D26 ①) — `option_id`가 정해지면 `product_id`는 그로부터 결정되는데(함수 종속), 두 컬럼을 나란히 저장하고 일치 여부는 서비스만 본다.
+- **선택**: 둘 다 `address`가 이미 쓰던 관용구로 DB에 내린다. ① `option_key = IFNULL(option_id, 0)` **VIRTUAL 생성 컬럼**을 만들어 UNIQUE의 마지막 축으로 쓴다(`uk_address_default`의 `default_flag`와 같은 수법). ② `product_option`에 `UNIQUE(id, product_id)`를 만들고, `product_stock`·`cart_item`·`order_item`의 옵션 FK를 **복합 FK `(option_id, product_id)`** 로 교체한다.
+- **구 판단을 뒤집는 지점**: cart_item 정의에 *"스키마로 막으려면 option_id NOT NULL + 센티널(0)이 필요한데 FK 무결성을 깨는 비용이 더 크다"* 고 적혀 있었다. 그 판단은 **실 컬럼을 센티널로 바꾼다는 전제**에서 옳았다. 가상 컬럼은 실 컬럼과 FK를 그대로 둔 채 **인덱스에만** 센티널을 쓰므로 그 비용이 발생하지 않는다 — 전제가 달라져 결론이 바뀐 것이지, 종전 판단이 틀렸던 게 아니다.
+- **복합 FK와 NULL**: InnoDB는 MATCH SIMPLE이라 **FK 컬럼 중 하나라도 NULL이면 검사를 건너뛴다.** 무옵션 행(`option_id IS NULL`)은 종전과 똑같이 통과하므로 이 제약은 "옵션을 지목한 행"에만 적용된다.
+- **D26 ①은 폐기가 아니라 이중화**: 서비스 검증(400 `CART_OPTION_INVALID`)을 그대로 둔다. 사용자에겐 의미 있는 400이 제약 위반 500보다 낫고, DB는 코드 경로가 늘어날 때를 대비한 **마지막 방어선**이다. 같은 이유로 D26의 나머지 3건(leaf 카테고리·review 유도 컬럼·주문 합계)은 여전히 서비스 전용 — 그 셋은 한 행 안에서 닫히지 않는다.
+- **서비스 영향은 거의 없다**: 담기의 1차 방어선은 여전히 `PESSIMISTIC_WRITE` 잠금 조회이고(`findMemberLinesForUpdate` — 이게 경합을 직렬화한다), 새 UNIQUE는 그 뒤의 백스톱이다. 잠금을 뚫고 경합에 진 요청은 **이 repo가 이미 쓰는 관례대로 409**로 나간다 — `GlobalExceptionHandler`가 `DataIntegrityViolationException`을 `RESOURCE_CONFLICT`로 매핑한다(가입 이메일·찜·리뷰 신고의 check-then-act와 같은 자리). 그래서 담기 경로에 재시도 하네스를 새로 넣지 않는다. 종전의 "중복 행이 생기고 다음 담기 때 자가치유"보다 **눈에 보이는 잘못된 상태가 남지 않는 쪽**이 낫다.
+- `CartService.consolidate`의 자가치유는 남긴다 — 앞으로 중복은 DB가 막지만, **마이그레이션 이전에 이미 생긴 행**이 남아 있을 수 있다.
+- **트레이드오프**: 복합 FK를 받치려면 `(option_id, product_id)` 인덱스가 필요해 기존 단일 컬럼 FK 인덱스를 대체한다 — **개수는 그대로, 폭만 넓어진다.** 제약을 걸기 전에 기존 위반 행 정리가 선행돼야 한다(마이그레이션 1단계에서 cart_item 중복 라인을 수량 합산·최소 id 보존으로 병합 — 서비스 자가치유와 같은 규칙).
+
+### D45. 로그 테이블의 어휘 컬럼은 VARCHAR로 통일한다 — ENUM 폐기 (2026-08-11)
+
+- **문제**: 같은 "BE 직접 적재 로그"인데 `behavior_events.event_type`만 VARCHAR고 로그 3종(`order_status_logs.actor_type`·`product_change_logs.change_type`·`account_event_logs.event_type`)은 ENUM이었다. 어휘가 하나 늘 때 한쪽은 코드 배포로 끝나고 다른 쪽은 ALTER TABLE이 필요하다.
+- **선택**: 셋 다 `VARCHAR(20)`. **값 어휘는 Java enum이 계속 강제**한다 — 커머스 DB에 쓰는 주체가 Spring뿐이므로(03 D7) DB의 ENUM은 같은 규칙을 두 번째로 적을 뿐 새 보장을 주지 않는다. D44가 제약을 DB로 내린 것과 반대 방향으로 보이지만 기준은 하나다: **DB만 할 수 있는 보장은 DB에 두고, 애플리케이션이 이미 완결한 보장은 중복하지 않는다.** 유일 소비자가 없는 ENUM은 후자다.
+- 함께 정리: `recommendation_list_item`에 `created_at DATETIME(6)`을 추가한다 — "created_at은 전 테이블"이라는 이 문서의 규약에서 이 테이블만 빠져 있었다. 값은 부모 목록의 `created_at`으로 백필한다(목록과 항목은 같은 트랜잭션에서 태어난다).
+- **트레이드오프**: ENUM→VARCHAR는 MariaDB에서 테이블 재구축을 유발한다. 로그 3종은 `behavior_events`보다 훨씬 작아 감수 가능하지만, 재구축이 부담될 규모가 되면 이 정리는 하지 않는 편이 낫다. 저장 크기도 ENUM(1~2B)보다 VARCHAR가 크다 — 어휘가 짧아 실측 차이는 행당 수 바이트다.
+- `recommendation_list`의 surrogate `id`는 **유지**한다. 자식 FK·조회 키·멱등 키가 전부 `list_id`라 쓰이지 않는 식별자지만, "PK는 BIGINT id"라는 이 repo의 관례를 이 테이블만 깨는 이득이 없다.
+
+### D46. 인덱스는 실제 접근 경로에만 둔다 — 8개 제거·2개 추가 (2026-08-11, D38 트레이드오프 정산)
+
+- **문제**: D38이 *"실측 후 `(list_id, event_type)`만 남기고 조정할 수 있다"* 고 남겨둔 숙제. 리포지토리 23개의 쿼리 전수(`@Query` 93건 + 파생 메서드)를 인덱스와 대조했다.
+- **판정 기준은 "그 컬럼으로 *찾기 시작하는가*"**: GROUP BY·`COUNT(DISTINCT)`·정렬 재료로 값을 읽는 것은 인덱스 접근 경로가 아니다. `account_event_logs.ip_address`(I-8은 IP로 **묶기만** 한다)와 `behavior_events.session_key`(`COUNT(DISTINCT)`·`NOT LIKE`·창함수 PARTITION)가 정확히 이 경우라, 컬럼은 매 쿼리에 등장하지만 인덱스는 놀고 있었다.
+- **제거 8개**: `behavior_events` `(session_key)`·`(occurred_at)` / `cart_item (list_id)` / `order_item (list_id)` / `recommendation_list` `(recommendation_request_id)`·`(member_id, created_at)`·`(created_at)` / `account_event_logs (ip_address, created_at)`.
+  - `cart_item`·`order_item`의 `list_id` 인덱스(D43)는 **AI 귀속 v1이 쓰던 것**이다. 2026-08-10 v2 개정이 판정 근거를 이벤트의 `list_id`에서 추천 명단으로 옮기면서 `oi.list_id`를 읽는 쿼리가 사라졌다. 컬럼은 남긴다 — 주문에 박힌 귀속 스냅샷 자체는 O-1의 계약이다.
+  - `recommendation_list`는 조회가 전부 `uk_reco_list`(listId) 경유다. 소유자 검증도 목록을 가져온 뒤 서비스가 비교한다.
+  - `(occurred_at)`은 코드가 아니라 **"event-time 분석" 의도**로 달렸다(D38). 그 쿼리가 아직 없으므로 뺀다 — 필요해지면 그때 다시 단다.
+- **추가 2개**: `claim (status, created_at)` — 자동 승인 스케줄러가 주기적으로 도는 `status + created_at` 스캔에 인덱스가 없었다. `order_status_logs (order_item_id)` — 평균 배송시간 자기조인(2026-08-06 개정으로 짝짓기 키가 `order_id`→`order_item_id`가 됐다)과 I-14 계열 6개 쿼리가 이 컬럼을 쓴다.
+- **남기는 것**: `idx_behavior_guest`는 쿼리가 쓰지 않지만 `fk_behavior_guest`가 인덱스를 요구한다. `(product_id, created_at)`·`(event_type, created_at)`·`(created_at)`·`(list_id, event_type)`은 판매자 분석(I-7·I-13·S-1)과 P-4의 주력이다.
+- **효과**: `behavior_events`는 쓰기가 가장 많은 테이블인데 인덱스가 9개(UNIQUE 포함)였다 — 이벤트 1건 INSERT마다 **아무도 안 읽는 인덱스 2개**를 갱신하고 있었다.
+- **범위 확인**: 커머스 DB에 붙는 주체는 Spring뿐이므로(03 D7) 백엔드에 소비자가 없으면 소비자가 없다. 형제 repo 2곳(`jarvis-frontend`·`jarvis-ai`) grep에서 인덱스명 참조 0건. `scripts/`의 일회성 분석 SQL 2건이 `list_id`·`occurred_at`을 읽지만, 인덱스가 없으면 느려질 뿐 결과가 달라지지 않는다. **LLM팀이 복원 덤프로 성능 실측을 하므로**(jarvis-ai `MEASURE-REVIEW-INDEX-395`) 제거는 정합 요구사항으로 통보한다.
+- **인덱스로 못 돕는 구조적 풀스캔(기록용)**: I-16·I-38의 게스트 승계 쿼리는 `COALESCE(member_id, converted_member_id) IN (...)`으로 거른다 — 함수를 씌운 조건이라 **어떤 인덱스도 탈 수 없다.** 로그를 백필하지 않고 승계를 잇겠다는 설계(GUEST-LIFECYCLE)의 의도된 대가이며, 인덱스로 해결할 문제가 아니다.
+
 > **피그마 검토로 "디자인 수정" 확정된 항목 (스키마 무변경, 2026-07-09)**: 옵션 2축(컬러×사이즈) UI → 단일 옵션 선택으로 수정(D2 유지) · 이미지 썸네일 갤러리 → 단일 이미지(D14 유지) · 리뷰 "도움이 됐어요" 제거 · 배송비 표기 제거(배송비 미모델링 — 전 주문 무료, D36으로 명문화) · 모의 결제 "테스트: 결제 실패" 트리거 UI 추가 예정(01 D7). 문의 챗봇·판매자 페이지 등 미디자인 화면은 디자인 백로그.
 
 ---
@@ -573,20 +606,20 @@ erDiagram
         bigint order_item_id "아이템 전이면 필수, 주문 전이면 NULL(D32)"
         varchar from_status "최초 생성 시 NULL"
         varchar to_status "우리 상태 어휘(D32)"
-        enum actor_type "USER/SELLER/ADMIN/SYSTEM"
+        varchar actor_type "USER/SELLER/ADMIN/SYSTEM (D45)"
         varchar reason
     }
     product_change_logs {
         bigint id PK
         bigint product_id "FK 미설정(D32)"
-        enum change_type "PRICE/STOCK/STATUS"
+        varchar change_type "PRICE/STOCK/STATUS (D45)"
         varchar old_value
         varchar new_value "품절 신호=STOCK 0"
     }
     account_event_logs {
         bigint id PK
         bigint member_id "FK 미설정 — 실패 시 NULL"
-        enum event_type "SIGNUP/LOGIN_SUCCESS/LOGIN_FAIL/LOGOUT/WITHDRAW"
+        varchar event_type "SIGNUP/LOGIN_SUCCESS/LOGIN_FAIL/LOGOUT/WITHDRAW (D45)"
         varchar ip_address
     }
 
@@ -700,15 +733,17 @@ JPA 매핑 규약: Hibernate `MariaDBDialect` + MariaDB Connector/J(`jdbc:mariad
 | extra_price | INT | NOT NULL DEFAULT 0 | 옵션 추가금 |
 
 "보여줄 선택지"만 담는다 — 재고는 `product_stock`이고, 옵션 없는 상품에 "기본" 행을 만들지 않는다 (D33 개정).
+`UNIQUE(id, product_id)`는 조회용이 아니라 **복합 FK가 참조할 대상**이다 — 이게 있어야 자식 테이블이 `(option_id, product_id)`로 "그 옵션이 그 상품 소속"까지 FK로 걸 수 있다 (D44).
 
 ### product_stock
 | 컬럼 | 타입 | 제약 | 비고 |
 |---|---|---|---|
 | product_id | BIGINT | FK(product) RESTRICT, NOT NULL | |
-| option_id | BIGINT | FK(product_option) RESTRICT, NULL | **NULL = 옵션 없는 상품의 유일한 재고 행** |
-| quantity | INT | NOT NULL DEFAULT 0, CHECK ≥ 0, UNIQUE(product_id, option_id) | 재고 (D33 개정 — 구 `product.stock_quantity`). 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행(D32). 취소/반품 확정 시 같은 트랜잭션에서 복원, 0에서 풀리면 재입고 STOCK 로그 1행 |
+| option_id | BIGINT | 복합 FK(product_option) RESTRICT, NULL | **NULL = 옵션 없는 상품의 유일한 재고 행**. FK는 `(option_id, product_id)` 복합 — 소속까지 DB가 본다 (D44) |
+| option_key | BIGINT | VIRTUAL = `IFNULL(option_id, 0)` | UNIQUE 전용 파생 컬럼. 실 컬럼이 아니라 **인덱스에만** 센티널을 쓰므로 FK가 온전하다 (D44) |
+| quantity | INT | NOT NULL DEFAULT 0, CHECK ≥ 0, UNIQUE(product_id, option_key) | 재고 (D33 개정 — 구 `product.stock_quantity`). 결제 성공(PAID)과 같은 트랜잭션에서 조건부 UPDATE 차감·부족 시 결제 실패, 0 도달 시 STOCK 로그 1행(D32). 취소/반품 확정 시 같은 트랜잭션에서 복원, 0에서 풀리면 재입고 STOCK 로그 1행 |
 
-UNIQUE가 "재고가 사는 곳은 한 군데"를 DB 수준에서 보장한다. 단 **MariaDB는 NULL을 서로 다르게 보므로** `option_id IS NULL` 행의 중복은 이 제약으로 막히지 않는다 — 옵션 없는 상품의 두 번째 행은 서비스가 막는다.
+UNIQUE가 "재고가 사는 곳은 한 군데"를 DB 수준에서 보장한다. **2026-08-11(D44) 이전에는 `option_id`를 그대로 써서 무옵션 행(NULL)에 제약이 걸리지 않았다** — MariaDB가 NULL을 서로 다르게 보기 때문이다. `option_key`로 바꿔 그 구멍을 닫았다.
 
 ### product_detail_image
 | 컬럼 | 타입 | 제약 | 비고 |
@@ -727,12 +762,15 @@ JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경�
 | member_id | BIGINT | FK(member), NULL | 로그인 사용자. 게스트면 NULL — member/guest 중 정확히 하나(서비스 검증, D30) |
 | guest_id | CHAR(36) | FK(guest), NULL | 게스트 장바구니 (D30) |
 | product_id | BIGINT | FK(product), NOT NULL | |
-| option_id | BIGINT | FK(product_option), NULL | 옵션 없는 상품은 NULL |
+| option_id | BIGINT | 복합 FK(product_option), NULL | 옵션 없는 상품은 NULL. FK는 `(option_id, product_id)` 복합 (D44) |
+| option_key | BIGINT | VIRTUAL = `IFNULL(option_id, 0)` | UNIQUE 전용 파생 컬럼 (D44) |
 | quantity | INT | NOT NULL, CHECK > 0 | |
+| recommendation_request_id | CHAR(36) | NULL | ↓ 추천 귀속 2종 — 추천 카드에서 담았을 때만 (D43, C-2·I-2) |
+| list_id | VARCHAR(64) | NULL | 서버가 3규칙(실재·소유자·상품 포함)으로 검증한 뒤 저장. 주문 시 `order_item`으로 복사 (O-1) |
 
-- UNIQUE(member_id, product_id, option_id) + UNIQUE(guest_id, product_id, option_id) — 같은 상품+옵션 재담기는 수량 증가로 처리.
-- option_id는 반드시 해당 product의 옵션이어야 함 — FK로는 강제 불가, 서비스 검증(D26 ①).
-- **MariaDB 주의**: UNIQUE 인덱스는 NULL을 중복 허용하므로 option_id=NULL(무옵션 상품)엔 이 제약이 걸리지 않는다 → 서비스 레이어의 "조회 후 수량 증가" upsert가 실질 방어선. 동시 요청으로 중복 행이 생겨도 기능상 무해(목록에 2행 표시)라 감수 — 스키마로 막으려면 option_id NOT NULL + 센티널(0)이 필요한데 FK 무결성을 깨는 비용이 더 큼.
+- UNIQUE(member_id, product_id, **option_key**) + UNIQUE(guest_id, product_id, **option_key**) — 같은 상품+옵션 재담기는 수량 증가로 처리.
+- option_id는 반드시 해당 product의 옵션이어야 함 — **복합 FK로 DB가 강제**(D44), 서비스 검증도 유지(D26 ① 이중화).
+- **구 설계 메모(2026-08-11 D44로 해소)**: 종전 UNIQUE는 `option_id`를 그대로 써서 무옵션 상품(NULL)에 걸리지 않았고, "조회 후 수량 증가" upsert가 실질 방어선이었다. 당시엔 스키마로 막으려면 `option_id NOT NULL` + 센티널이 필요해 FK 무결성을 깨는 비용이 더 크다고 봤는데, **가상 컬럼은 실 컬럼과 FK를 건드리지 않아** 그 비용이 없다. 대신 동시 담기 경합이 이제 제약 위반으로 드러나므로 담기 경로가 이를 잡아 병합 재시도한다.
 - 가격은 저장하지 않는다(장바구니는 현재가 표시 — 스냅샷은 주문 시점에만).
 - **cart 헤더 테이블은 두지 않는다** — 장바구니는 주체(회원/게스트)당 암묵 1개고 자체 속성이 없어, 헤더를 만들면 컬럼이 소유자 id뿐인 1:1 테이블(조인 비용만 추가)이 된다. "장바구니 = 그 주체의 cart_item 집합". 다중/공유 장바구니가 생기면 cart 헤더 + cart_id 컬럼 추가로 확장.
 - 게스트 장바구니는 guest_id로 지원(D30) — 로그인 유도는 담기가 아니라 **결제 시점**, 가입/로그인 시 병합 승계.
@@ -764,7 +802,7 @@ JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경�
 |---|---|---|---|
 | order_id | BIGINT | FK(orders), NOT NULL | |
 | product_id | BIGINT | FK(product), NOT NULL | 상세 링크용 |
-| option_id | BIGINT | FK(product_option) RESTRICT, NULL | **스냅샷이 아니라 참조** (D33 개정). 재고가 옵션별이라 취소·반품 복원이 어느 행으로 되돌릴지 알아야 하는데, 아래 `option_name`은 스냅샷이라 현재 옵션과 매칭이 보장되지 않는다 |
+| option_id | BIGINT | 복합 FK(product_option) RESTRICT, NULL | **스냅샷이 아니라 참조** (D33 개정). 재고가 옵션별이라 취소·반품 복원이 어느 행으로 되돌릴지 알아야 하는데, 아래 `option_name`은 스냅샷이라 현재 옵션과 매칭이 보장되지 않는다. FK는 `(option_id, product_id)` 복합 (D44) |
 | product_name | VARCHAR(200) | NOT NULL | 스냅샷 |
 | option_name | VARCHAR(100) | NULL | 스냅샷 |
 | price | INT | NOT NULL | 스냅샷: product.price + extra_price |
@@ -772,8 +810,10 @@ JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경�
 | quantity | INT | NOT NULL | |
 | status | VARCHAR(30) | NOT NULL | 01 문서의 9개 상태 (D34 — 교환 2종 제거로 11→9. 결제 전 `PENDING` — 01 D9, 구매확정 `CONFIRMED` — 01 D8) |
 | status_changed_at | DATETIME | NOT NULL | 스케줄러 전이 기준 시각 |
+| recommendation_request_id | CHAR(36) | NULL | ↓ 추천 귀속 2종 — 상품명·가격과 같은 성격의 **스냅샷**이다 (D43, O-1) |
+| list_id | VARCHAR(64) | NULL | 장바구니 경유는 `cart_item`에서 복사(담기 때 검증 완료), 바로 구매는 요청값을 검증 후 저장 |
 
-- 인덱스: `(status, status_changed_at)` — 배송 전이 스케줄러 스캔용.
+- 인덱스: `(order_id)`, `(status, status_changed_at)` — 후자는 배송 전이 스케줄러 스캔용. `(list_id)`는 2026-08-11 제거(D46) — AI 귀속 v2가 판정 근거를 추천 명단으로 옮기면서 읽는 쿼리가 사라졌다. 컬럼은 O-1 계약이라 남는다.
 
 ### claim
 | 컬럼 | 타입 | 제약 | 비고 |
@@ -785,6 +825,8 @@ JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경�
 | reject_reason | VARCHAR(500) | NULL | 거절 시 필수 (고도화) |
 | processed_by | BIGINT | FK(member), NULL | 처리 관리자 — MVP 자동 승인은 NULL (01 D10) |
 | processed_at | DATETIME | NULL | |
+
+- 인덱스: `(order_item_id)`, `(status, created_at)` — 후자는 자동 승인 스케줄러(신청 후 `claim-approve-minutes` 경과분 스캔)용, 2026-08-11 추가(D46).
 
 ### review
 | 컬럼 | 타입 | 제약 | 비고 |
@@ -834,7 +876,7 @@ JPA 연관관계는 매핑하지 않는다 — 상품을 여러 건 읽는 경�
 | created_at | DATETIME(6) | NOT NULL | 서버 수신 시각 — 증분 분석 커서 |
 
 - 적재는 FE가 수집 API **`POST /api/events`(배치, 인증 선택)**로 전송 — 서버 내부 publishEvent 적재(03 D6 방식)는 폐기(D31). **단 `recommendation_generated`만 서버가 직접 insert**(D38 — E-1은 인증이 없어 FastAPI가 쏘면 브라우저 위조와 구별되지 않는다). **성공 후 발사**: add_to_cart=담기 API 성공 콜백, purchase_complete=주문 완료 페이지.
-- 인덱스: `(member_id, created_at)` / `(guest_id, created_at)` / `(event_type, created_at)` / `(product_id, created_at)` / `(session_key)` / `(created_at)` / `(list_id, event_type)` / `(occurred_at)` — 분석 축(주체·타입·상품·세션·시간·추천목록·발생시각)별 커버.
+- 인덱스: `(member_id, created_at)` / `(guest_id, created_at)` / `(event_type, created_at)` / `(product_id, created_at)` / `(created_at)` / `(list_id, event_type)` — 분석 축(주체·타입·상품·시간·추천목록)별 커버. **`(session_key)`·`(occurred_at)`은 2026-08-11 제거**(D46) — 두 컬럼 모두 쿼리에 자주 등장하지만 `COUNT(DISTINCT)`·창함수 PARTITION·정렬 재료로만 쓰여 인덱스를 타는 접근 경로가 아니었다. `(guest_id, created_at)`은 쿼리가 아니라 `fk_behavior_guest`가 요구해 남는다.
 - **`occurred_at`이 왜 따로 필요한가**: `created_at`만 있으면 브라우저 이벤트가 **SDK 버퍼(10건 or 5초)만큼 밀려서** 서버가 즉시 남기는 로그(order_status_logs 등)와 나란히 놓았을 때 순서가 뒤집혀 보인다. 노출→클릭 간격 같은 초 단위 분석도 불가능하다. 브라우저 시계는 못 믿으므로 `created_at`보다 미래거나 3일 이상 과거면 `created_at`으로 대체하고 `properties._timeShifted`를 남긴다 (D38).
 - 이 테이블은 **완전한 append-only**다 — UPDATE/DELETE가 없다. 구 D5의 단일 예외(승계 시 `member_id` 백필 UPDATE)는 2026-07-31 폐기됐고, 게스트 시절 행은 `guest_id`를 그대로 둔 채 `guest.converted_member_id`로 회원과 잇는다(GUEST-LIFECYCLE).
 - client_event_id 중복은 INSERT 전 검증 후 무시 — `INSERT IGNORE`로 퉁치면 중복 외의 오류까지 삼키므로 주의(D35).
@@ -857,7 +899,9 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 | item_count | INT | NOT NULL | `recommendation_generated`의 `properties.itemCount` 원천 |
 | created_at | DATETIME(6) | NOT NULL | 귀속 유효기간(24시간) 판정 기준 |
 
-`recommendation_list_item`은 `(list_id, position)` PK + `product_id`(FK 미설정)만 갖는다. **목록당 9개 상한**(노션 I-21) — 니즈별 추천이면 목록 하나가 한 니즈의 후보 9개다(감자 9·시래기 9·뼈 9).
+`recommendation_list_item`은 `(list_id, position)` PK + `product_id`(FK 미설정) + `created_at DATETIME(6)`을 갖는다. **목록당 9개 상한**(노션 I-21) — 니즈별 추천이면 목록 하나가 한 니즈의 후보 9개다(감자 9·시래기 9·뼈 9). `created_at`은 2026-08-11 추가(D45) — "created_at은 전 테이블" 규약에서 이 테이블만 빠져 있었고, 값은 늘 부모 목록과 같다(같은 트랜잭션에서 태어난다).
+
+- `recommendation_list`의 인덱스는 `uk_reco_list(list_id)` 하나다. `(recommendation_request_id)`·`(member_id, created_at)`·`(created_at)`은 2026-08-11 제거(D46) — 조회가 전부 `list_id` 경유이고 소유자 검증도 목록을 가져온 뒤 서비스가 비교한다.
 
 - **`member_id`·`guest_id`의 NULL은 정상값**이다 — 세션이 이미 만료된 뒤 콜백이 오면 신원을 구할 수 없고, 그때도 200으로 저장한다(익명 저장). 단 소유자가 없으므로 CH-5에서 조회되지 않는다(fail-closed).
 - **`reasons` 텍스트는 저장하지 않는다** — 표시 전용이고 평가용 원본은 FastAPI가 보관한다(메타 ~260B vs reasons 포함 ~4KB). CH-5는 Redis에서 읽고, Redis가 만료되면 CH-5 자체가 404라 문제되지 않는다.
@@ -870,11 +914,11 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 | order_item_id | BIGINT | NULL, FK 미설정 | **아이템 상태 전이면 필수, 주문 상태 전이면 NULL**(2026-08-06 신설) |
 | from_status | VARCHAR(20) | NULL | 최초 생성 시 NULL |
 | to_status | VARCHAR(20) | NOT NULL | 주문 수준 `PENDING`/`PAID`/`PAYMENT_FAILED`/`CANCELLED` · 아이템 이행 수준 `SHIPPING`/`DELIVERED`/`CANCELLED`/`RETURNED` — 우리 상태명 그대로 |
-| actor_type | ENUM('USER','SELLER','ADMIN','SYSTEM') | NOT NULL | 발송(`ORDERED→SHIPPING`)=**SELLER**(I-30), 이후 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제 성공/실패=SYSTEM |
+| actor_type | VARCHAR(20) | NOT NULL | `USER`/`SELLER`/`ADMIN`/`SYSTEM` — 어휘는 Java enum이 강제(D45, 구 DB ENUM). 발송(`ORDERED→SHIPPING`)=**SELLER**(I-30), 이후 배송 전이=SYSTEM, 취소·반품 완료=USER(신청 주체), 결제 성공/실패=SYSTEM |
 | reason | VARCHAR(200) | NULL | 결제 실패 코드, 취소·반품 사유(claim.reason 텍스트), 판매자 발송 사유(I-30 — 선택) |
 | created_at | DATETIME(6) | NOT NULL | |
 
-- 인덱스: `(order_id, created_at)`, `(to_status, created_at)`.
+- 인덱스: `(order_id, created_at)`, `(to_status, created_at)`, `(order_item_id)` — 마지막은 2026-08-11 추가(D46). 평균 배송시간이 `order_item_id` 자기조인이고(2026-08-06 짝짓기 키 개정) I-14 계열 6개 쿼리가 이 컬럼으로 자사 스코프를 건다.
 - `ORDERED`(PAID와 같은 트랜잭션)·`*_REQUESTED`(claim이 정본)·`CONFIRMED`는 미기록. 교환 어휘 없음(D34). **해상도는 "무엇의 상태를 바꿨나"로 가른다 — 아이템 전이는 아이템마다 1행**(구 "배치 동일 전이는 주문 단위 1행" 폐기, 2026-08-06). **상세 기록 지점 규칙은 01 문서 소관** — 여기는 정의+요약만(D32).
 
 ### product_change_logs (BE 직접 적재 — D32)
@@ -882,7 +926,7 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 |---|---|---|---|
 | product_id | BIGINT | NOT NULL, FK 미설정 | append-only 로그 |
 | option_id | BIGINT | NULL, FK 미설정 | STOCK 로그에서 **어느 옵션인지** (D33 개정). 없으면 "재고 100 → 50"이 어느 옵션 얘긴지 판매자가 알 수 없다. PRICE·STATUS는 상품 단위라 NULL |
-| change_type | ENUM('PRICE','STOCK','STATUS') | NOT NULL | |
+| change_type | VARCHAR(20) | NOT NULL | `PRICE`/`STOCK`/`STATUS` — 어휘는 Java enum이 강제 (D45, 구 DB ENUM) |
 | old_value / new_value | VARCHAR(50) | NULL | 품절 신호 = STOCK `new_value=0` (SOLD_OUT 상태 미도입) |
 | created_at | DATETIME(6) | NOT NULL | |
 
@@ -893,11 +937,11 @@ I-21(채팅)과 I-22(홈)가 **같은 테이블**을 쓴다. 어디서 왔는지
 | 컬럼 | 타입 | 제약 | 비고 |
 |---|---|---|---|
 | member_id | BIGINT | NULL, FK 미설정 | 없는 계정 로그인 시도는 NULL + IP — 무차별 대입 탐지 재료 |
-| event_type | ENUM('SIGNUP','LOGIN_SUCCESS','LOGIN_FAIL','LOGOUT','WITHDRAW') | NOT NULL | |
+| event_type | VARCHAR(20) | NOT NULL | `SIGNUP`/`LOGIN_SUCCESS`/`LOGIN_FAIL`/`LOGOUT`/`WITHDRAW` — 어휘는 Java enum이 강제 (D45, 구 DB ENUM) |
 | ip_address | VARCHAR(45) | NULL | IPv6 수용 |
 | created_at | DATETIME(6) | NOT NULL | |
 
-- 인덱스: `(member_id, created_at)`, `(ip_address, created_at)`, `(event_type, created_at)`.
+- 인덱스: `(member_id, created_at)`, `(event_type, created_at)`. **`(ip_address, created_at)`은 2026-08-11 제거**(D46) — I-8은 IP로 거르지 않고 `GROUP BY`로 묶기만 해서 인덱스를 타지 않았다.
 - 적재 지점: AuthService의 로그인 성공/실패 지점에서 직접 INSERT — A-2가 formLogin이 아닌 컨트롤러 방식이라 Security Success/FailureHandler가 자동 발화하지 않음(03 §3-1, 2026-07-17 구체화. 원안 "Security 핸들러에 심음"은 이 지점을 뜻함). FE의 `login` 행동 이벤트(D31)와 목적이 다름(행동 vs 보안) — **"마지막 로그인"의 단일 출처 = account_event_logs.LOGIN_SUCCESS**.
 
 ## 4. behavior_events 이벤트 타입 (퍼널 정의)

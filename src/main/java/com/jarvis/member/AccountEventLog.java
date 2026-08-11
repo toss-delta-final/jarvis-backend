@@ -35,8 +35,7 @@ public class AccountEventLog {
     private Long memberId; // 없는 계정 로그인 시도는 NULL + IP (무차별 대입 탐지 재료)
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "event_type", nullable = false,
-            columnDefinition = "ENUM('SIGNUP','LOGIN_SUCCESS','LOGIN_FAIL','LOGOUT','WITHDRAW')")
+    @Column(name = "event_type", nullable = false)
     private AccountEventType eventType;
 
     @Column(name = "ip_address", length = 45)
