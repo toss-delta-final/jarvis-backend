@@ -69,7 +69,7 @@ FastAPI       : JWKS로 signature·exp·iss·aud·scope 검증 → 스트리밍
 ```
 
 - **`threadId` 필수** — 없으면 400 `BAD_REQUEST`. MVP에선 `sessionId`와 같은 값을 싣고(session=대화), post-MVP에서 한 접속 아래 방(대화창)을 분리하며 방마다 고유 값으로 분화한다(계약은 지금부터 이 필드를 유지). 동시 스트림 409 기준도 MVP=`sessionId` / post-MVP=`threadId`(방).
-- **`channel`은 body 필드가 아니다** — 대화 종류(SHOPPING/CS/SELLER)는 **세션 발급 시점**에 확정된다. SHOPPING/CS는 CH-1(`POST /api/chat/sessions`, body `channel`)에서, SELLER는 S-4(`POST /api/chat/seller/sessions` — 입구 자체가 SELLER 전용)에서 정해져 티켓 claim·세션에 실리고, SELLER 스트림은 `/seller/chat` 별도 엔드포인트로 간다(일반 CH-1의 `channel:"SELLER"`는 400).
+- **`channel`은 body 필드가 아니다** — 대화 종류(SHOPPING/SELLER — CS는 2026-08-11 폐기)는 **세션 발급 시점**에 확정된다. SHOPPING은 CH-1(`POST /api/chat/sessions`, body `channel`)에서, SELLER는 S-4(`POST /api/chat/seller/sessions` — 입구 자체가 SELLER 전용)에서 정해져 티켓 claim·세션에 실리고, SELLER 스트림은 `/seller/chat` 별도 엔드포인트로 간다(일반 CH-1의 `channel:"SELLER"`는 400).
 - **신원(userId/guestId)은 body에 없다 — 티켓 claim(`sub`/`sub_type`)에서** 취한다(§1-0). 게스트면 `sub_type:guest`, 개인화 없이 응답.
 - 멀티턴 맥락은 sessionId 기준으로 **FastAPI가 인메모리/자체 스토어에 유지** (BE는 메시지를 저장하지 않음). 세션 종료 시 Spring이 **I-20 `POST {LLM_BASE_URL}/events/session-end`** 로 정리 통지(§2-1) — 트리거: **로그아웃 하나뿐**(노션 I-20 정본 2026-07-30 — 새 대화는 CH-1을 부르지 않게 되어 사유 소멸, 가입·로그인 게스트 승계는 게스트라 원래 미발화). 유휴·탭 종료는 통지 없이 TTL 소멸(FastAPI 자체 TTL 백스톱 §3 — enum의 IDLE_TIMEOUT·TAB_CLOSE는 예약). *(구 `DELETE {LLM_BASE_URL}/sessions/{id}` 안(OPEN이었음)을 대체 — 2026-07-17 확정. sessionId 형식도 UUID로 합의 완료)*
 - 카테고리 진입(메인에서 카테고리 클릭)은 별도 필드 없이 message로 전달: FE가 `"[카테고리] 주방용품 보여줘"` 형태로 첫 메시지 구성. **(OPEN: 전용 필드로 분리할지)**
@@ -329,7 +329,7 @@ FastAPI의 **회원 프로필 버퍼(승격 전 발화)를 지금 프로필로 �
 - **게스트 생략**: 게스트는 프로필 대상이 아니므로 **Spring이 I-20 호출 자체를 생략**한다(`sub_type=guest`면 skip — 로그아웃·가입·로그인 승계의 게스트 세션 정리는 Redis만, FastAPI 맥락은 자체 TTL 소멸). 코드: `ChatSessionService#notifyIfMember`(로그아웃) · `#discardSessionsAsync`(게스트 승계 — 통지 없이 정리).
 - **실발화 트리거(회원)**: **로그아웃(`logout`) 하나뿐**(노션 I-20 정본 2026-07-31 확정). 유휴 종료(`inactivityTimeout`)는 FastAPI 내부 idle flush, 새 대화는 **FastAPI가 `/chat`의 `threadId` 최초 등장으로 감지해 직전 thread 버퍼를 승격**(HTTP 신호 없음 — Spring은 thread를 모르고 티켓에도 싣지 않는다), 탭 종료(`tabClose`)는 계약에서 제외. Spring은 셋 다 통지하지 않으며 FastAPI는 수신을 전제하지 말 것.
 - **승격 단위는 thread**: I-20 수신 시 FastAPI가 승격하는 대상은 그 세션에서 **아직 승격되지 않은 thread 버퍼**다 — 새 대화 전환·idle로 이미 승격된 thread는 재승격하지 않는다. thread 단위 자체 승격은 HTTP를 타지 않아 아래 멱등 키를 소비하지 않는다.
-- **발화 조건의 한계(FastAPI가 알아야 할 것)**: ① 로그아웃 1회가 채널 수만큼 발화한다 — SHOPPING·CS·SELLER는 서로 다른 `sessionId`라 최대 3건, 멱등 키도 각각 별개. ② 채팅 세션 TTL(10분 sliding)이 지난 뒤 로그아웃하면 Spring에 세션이 없어 **통지 자체가 없다**. 즉 프로필 승격의 주 경로는 AI 자체 감지이고 I-20은 보조다.
+- **발화 조건의 한계(FastAPI가 알아야 할 것)**: ① 로그아웃 1회가 채널 수만큼 발화한다 — SHOPPING·SELLER는 서로 다른 `sessionId`라 최대 2건(구 CS 포함 3건 — 2026-08-11 CS 폐기), 멱등 키도 각각 별개. ② 채팅 세션 TTL(10분 sliding)이 지난 뒤 로그아웃하면 Spring에 세션이 없어 **통지 자체가 없다**. 즉 프로필 승격의 주 경로는 AI 자체 감지이고 I-20은 보조다.
 - **멱등**: `dedupKey = "session-end:" + userId + ":" + sessionId`. 신규=`202 {"status":"accepted"}`, 중복=`202 {"status":"duplicate"}`. 재시도·중복 호출 무해.
 - 구 계약 폐기: snake_case `session_id`/`user_id`/`guest_id`, `S-` 접두 정규식, checkpointer 삭제 부수효과, `200 {cleared}` 응답, `403 SESSION_FORBIDDEN`(노션 I-20 「제외된 구계약」).
 - 구 "세션 만료 시 `DELETE {LLM_BASE_URL}/sessions/{id}` 통지(OPEN)" 항목을 대체 — 2026-07-17 확정.

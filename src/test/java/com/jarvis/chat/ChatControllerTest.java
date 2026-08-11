@@ -75,18 +75,18 @@ class ChatControllerTest {
         verify(chatSessionService).issueSession(any(), eq(ChatChannel.SHOPPING));
     }
 
+    // CS 채널은 2026-08-11 제거 — 문의 챗봇(CH-3) 폐기로 용도가 사라졌다(노션 CH-1 개정)
     @Test
-    @DisplayName("CH-1 channel=CS — 200")
-    void createSession_cs_200() throws Exception {
-        stubIssue();
-
+    @DisplayName("CH-1 channel=CS — 400 VALIDATION_ERROR (폐기된 채널)")
+    void createSession_cs_400() throws Exception {
         mockMvc.perform(post("/api/chat/sessions")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"channel\":\"CS\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
 
-        verify(chatSessionService).issueSession(any(), eq(ChatChannel.CS));
+        verify(chatSessionService, never()).issueSession(any(), any());
     }
 
     @Test

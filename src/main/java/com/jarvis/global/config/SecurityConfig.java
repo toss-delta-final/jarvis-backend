@@ -79,7 +79,8 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // 역할 가드
                         .requestMatchers("/api/seller/**", "/api/chat/seller/**").hasRole("SELLER")
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        // /api/admin/** 가드는 2026-08-11 제거 — AD-1~7 전부 폐기(2026-08-07)로 admin
+                        // 컨트롤러가 하나도 없어 죽은 규칙이었다. admin 기능 부활 시 규칙부터 복원할 것
                         .requestMatchers("/api/orders/**", "/api/order-items/**", "/api/claims/**",
                                 "/api/reviews/**", "/api/wishlist/**", "/api/addresses/**",
                                 "/api/members/**", "/api/profile/**").hasRole("USER")

@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
  * CH-1/CH-1b (04 §6) — 세션은 Redis TTL 10분 sliding, 대화 내용은 저장하지 않는다(03 §1).
  * CH-1은 멱등이다(노션 CH-1 2026-07-31 개정 · SPEC-CHAT-SESSION D5) — 같은 신원·채널의 활성 세션이
  * 있으면 축출하지 않고 그대로 반환한다. 방(thread)은 FE가 쥐고 있어 "새 대화"는 서버를 거치지 않으며,
- * owner 인덱스는 채널별로 두어 SHOPPING·CS·SELLER 세션이 서로를 밀어내지 않게 한다.
+ * owner 인덱스는 채널별로 두어 SHOPPING·SELLER 세션이 서로를 밀어내지 않게 한다(CS는 2026-08-11 폐기).
  */
 @Slf4j
 @Service
@@ -276,7 +276,7 @@ public class ChatSessionService {
         return SESSION_KEY_PREFIX + sessionId;
     }
 
-    /** 채널을 키에 넣어 같은 신원의 SHOPPING·CS·SELLER 세션이 공존하게 한다(노션 CH-1 2026-07-31) */
+    /** 채널을 키에 넣어 같은 신원의 SHOPPING·SELLER 세션이 공존하게 한다(노션 CH-1 2026-07-31) */
     private static String ownerKey(ChatIdentity identity, ChatChannel channel) {
         return OWNER_KEY_PREFIX + identity.subType() + ":" + identity.sub() + ":" + channel.name();
     }

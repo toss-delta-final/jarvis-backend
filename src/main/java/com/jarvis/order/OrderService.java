@@ -205,7 +205,7 @@ public class OrderService {
         return InternalOrderStatusResponse.from(orders.getContent(), itemsByOrder(orders.getContent()));
     }
 
-    /** I-19 — CS 챗봇 구매 이력 목록 (05 §I-19) — status는 우리 상태명 단일 필터(아이템 기준) */
+    /** I-19 — 구매자 챗봇 구매 이력 목록 (05 §I-19) — status는 우리 상태명 단일 필터(아이템 기준) */
     public InternalOrderListResponse listForChat(Long memberId, String status) {
         requireMember(memberId);
         OrderItemStatus filter = parseChatStatus(status);

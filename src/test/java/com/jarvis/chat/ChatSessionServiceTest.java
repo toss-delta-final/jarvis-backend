@@ -101,17 +101,19 @@ class ChatSessionServiceTest {
                 eq(response.sessionId()), eq(Duration.ofMinutes(11)));
     }
 
+    // CS 채널 제거(2026-08-11) 후에도 "채널이 다르면 서로를 밀어내지 않는다"는 보증은 유지되어야 한다
     @Test
-    @DisplayName("CH-1 — 채널이 다르면 별개 세션(SHOPPING 세션이 살아 있어도 CS는 새로 발급)")
+    @DisplayName("CH-1/CH-6 — 채널이 다르면 별개 세션(SHOPPING 세션이 살아 있어도 SELLER는 새로 발급)")
     void issueSessionPerChannel() {
-        when(valueOperations.get("chat:owner:member:1:CS")).thenReturn(null);
-        when(valueOperations.setIfAbsent(eq("chat:owner:member:1:CS"), anyString(), any(Duration.class)))
+        when(valueOperations.get("chat:owner:member:1:SELLER")).thenReturn(null);
+        when(valueOperations.setIfAbsent(eq("chat:owner:member:1:SELLER"), anyString(), any(Duration.class)))
                 .thenReturn(true);
+        when(ticketProvider.createSellerTicket(any(), anyString(), eq(3L))).thenReturn("seller-ticket");
 
-        ChatSessionResponse response = service.issueSession(ChatIdentity.member(1L), ChatChannel.CS);
+        ChatSessionResponse response = service.issueSellerSession(ChatIdentity.member(1L), 3L);
 
         verify(valueOperations).set(eq("chat:session:" + response.sessionId()),
-                eq("member|1|CS"), eq(Duration.ofMinutes(10)));
+                eq("member|1|SELLER|3"), eq(Duration.ofMinutes(10)));
         verify(valueOperations, never()).get("chat:owner:member:1:SHOPPING");
     }
 
@@ -171,13 +173,13 @@ class ChatSessionServiceTest {
     @Test
     @DisplayName("CH-1b — 세션 유지, TTL sliding 연장 후 티켓 재발급")
     void reissueTicket() {
-        when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|CS");
+        when(valueOperations.get("chat:session:s1")).thenReturn("guest|g-uuid|SHOPPING");
 
         ChatSessionResponse response = service.reissueTicket(ChatIdentity.guest("g-uuid"), "s1");
 
         assertThat(response.sessionId()).isEqualTo("s1");
         verify(redisTemplate).expire(eq("chat:session:s1"), eq(Duration.ofMinutes(10)));
-        verify(redisTemplate).expire(eq("chat:owner:guest:g-uuid:CS"), eq(Duration.ofMinutes(11)));
+        verify(redisTemplate).expire(eq("chat:owner:guest:g-uuid:SHOPPING"), eq(Duration.ofMinutes(11)));
     }
 
     @Test
@@ -212,7 +214,6 @@ class ChatSessionServiceTest {
     @DisplayName("로그아웃 — 채널별 활성 세션을 모두 삭제 + 각각 I-20 LOGOUT 통지 (05 §2-1)")
     void endSession() {
         when(valueOperations.get("chat:owner:member:1:SHOPPING")).thenReturn("s1");
-        when(valueOperations.get("chat:owner:member:1:CS")).thenReturn(null);
         when(valueOperations.get("chat:owner:member:1:SELLER")).thenReturn("s2");
 
         service.endSession(ChatIdentity.member(1L), SessionEndReason.LOGOUT);
@@ -237,7 +238,6 @@ class ChatSessionServiceTest {
     @DisplayName("게스트 세션 종료 — Redis는 정리하되 I-20은 생략(게스트는 프로필 대상 아님, 노션 I-20 정본)")
     void endSessionGuestSkipsNotify() {
         when(valueOperations.get("chat:owner:guest:g-uuid:SHOPPING")).thenReturn("gs1");
-        when(valueOperations.get("chat:owner:guest:g-uuid:CS")).thenReturn(null);
         when(valueOperations.get("chat:owner:guest:g-uuid:SELLER")).thenReturn(null);
 
         service.endSession(ChatIdentity.guest("g-uuid"), SessionEndReason.LOGOUT);

@@ -8,7 +8,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
-/** I-19 구매 이력 목록 (05 §I-19) — CS 챗봇용. shippingFee는 항상 0(배송비 없음 확정) */
+/** I-19 구매 이력 목록 (05 §I-19) — 구매자 챗봇용(구 "CS 챗봇" 표기 — CH-2 흡수). shippingFee는 항상 0(배송비 없음 확정) */
 public record InternalOrderListResponse(List<Summary> orders) {
 
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
