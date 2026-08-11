@@ -266,6 +266,11 @@ public class SellerAnalyticsService {
                                                  AnalysisPeriod period, boolean stats,
                                                  String groupBy, int limit) {
         requireBrand(brandId);
+        // 지원 그룹핑은 memberId 하나뿐 — 어휘 밖 값은 400 (노션 I-14. 2026-08-11 정합 수정:
+        // 종전엔 조용히 기본 rows 모드로 넘어가 명세의 400 INVALID_GROUP_BY와 어긋났다)
+        if (groupBy != null && !groupBy.isBlank() && !"memberId".equals(groupBy)) {
+            throw new BusinessException(ErrorCode.INVALID_GROUP_BY);
+        }
         LocalDateTime fromDt = period.from().atStartOfDay();
         LocalDateTime toDt = period.to().plusDays(1).atStartOfDay();
         int effectiveLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);

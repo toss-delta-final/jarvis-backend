@@ -465,6 +465,19 @@ class SellerAnalyticsServiceTest {
         };
     }
 
+    // 2026-08-11 정합 수정 — 종전엔 어휘 밖 groupBy를 조용히 기본 rows 모드로 무시해 명세(400)와 어긋났다
+    @Test
+    @DisplayName("I-14 — groupBy가 memberId 밖의 값이면 INVALID_GROUP_BY (조회 전에 걸린다)")
+    void orderEventsRejectsUnknownGroupBy() {
+        when(brandRepository.existsById(BRAND_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.orderEvents(BRAND_ID, null, null, PERIOD, false, "date", 100))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_GROUP_BY);
+        verifyNoInteractions(orderStatusLogRepository);
+    }
+
     @Test
     @DisplayName("I-14 groupBy=memberId — cancelRatio>0.5 또는 maxOrdersPerHour>10이면 suspicious (노션 I-14)")
     void orderEventsMemberGroupingFlagsSuspicious() {
