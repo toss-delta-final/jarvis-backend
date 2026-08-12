@@ -38,7 +38,7 @@ public class BehaviorEventDltListener {
     private final AtomicLong suppressedThisMinute = new AtomicLong();
     private final AtomicLong totalSinceStartup = new AtomicLong();
 
-    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_DLT, groupId = KafkaConfig.DLT_MONITOR_GROUP,
+    @KafkaListener(topics = KafkaConfig.DLT, groupId = KafkaConfig.DLT_MONITOR_GROUP,
             containerFactory = "dltListenerContainerFactory")
     public void onDeadLetter(ConsumerRecord<String, byte[]> record) {
         totalSinceStartup.incrementAndGet();

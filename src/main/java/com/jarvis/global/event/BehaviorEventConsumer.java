@@ -24,7 +24,7 @@ public class BehaviorEventConsumer {
 
     private final BehaviorEventAppender behaviorEventAppender;
 
-    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = KafkaConfig.PERSISTER_GROUP)
+    @KafkaListener(topics = KafkaConfig.TOPIC, groupId = KafkaConfig.PERSISTER_GROUP)
     public void consume(List<BehaviorEventMessage> messages) {
         List<BehaviorEvent> events = messages.stream().map(BehaviorEventMessage::toEntity).toList();
         behaviorEventAppender.append(events);

@@ -13,7 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.jarvis.global.config.KafkaConfig;
+import com.jarvis.global.config.BehaviorStreamProperties;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -23,7 +23,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -32,12 +31,17 @@ import org.springframework.kafka.support.SendResult;
 @ExtendWith(MockitoExtension.class)
 class BehaviorEventPublisherTest {
 
+    /** 접두어 없는 기본 이름 — 이름 자체는 이 테스트의 관심이 아니다 (yml 배선은 BehaviorStreamPropertiesTest) */
+    private static final BehaviorStreamProperties NAMES = new BehaviorStreamProperties("",
+            "behavior-events", "behavior-events-dlt",
+            new BehaviorStreamProperties.Groups("persister", "visitor-tracker", "dlt-monitor"));
+
     @Mock KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate;
     @Mock BehaviorEventAppender behaviorEventAppender;
     @Mock BehaviorStreamHealth streamHealth;
     @Mock ProduceCircuitBreaker circuitBreaker;
 
-    @InjectMocks BehaviorEventPublisher publisher;
+    BehaviorEventPublisher publisher;
 
     @Captor ArgumentCaptor<List<BehaviorEvent>> fallbackCaptor;
     @Captor ArgumentCaptor<BehaviorEventMessage> messageCaptor;
@@ -45,6 +49,8 @@ class BehaviorEventPublisherTest {
     @BeforeEach
     void closedByDefault() {
         lenient().when(circuitBreaker.allowAttempt()).thenReturn(true);
+        publisher = new BehaviorEventPublisher(kafkaTemplate, NAMES, behaviorEventAppender,
+                streamHealth, circuitBreaker);
     }
 
     private static BehaviorEvent event(String clientEventId, String sessionKey) {
@@ -78,7 +84,7 @@ class BehaviorEventPublisherTest {
 
         publisher.publish(List.of(event("id-1", "sess-42")));
 
-        verify(kafkaTemplate).send(eq(KafkaConfig.BEHAVIOR_EVENTS_TOPIC), eq("sess-42"),
+        verify(kafkaTemplate).send(eq(NAMES.topic()), eq("sess-42"),
                 messageCaptor.capture());
         assertThat(messageCaptor.getValue().clientEventId()).isEqualTo("id-1");
     }

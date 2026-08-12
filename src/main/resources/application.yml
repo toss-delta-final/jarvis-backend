@@ -31,6 +31,7 @@ spring:
   jackson:
     time-zone: Asia/Seoul
   # 행동 이벤트 스트림 (08 §0). 운영 브로커는 전용 EC2 사설 IP — 퍼블릭 경로 없음 (08 D6)
+  # 토픽·컨슈머 그룹 **이름**은 여기가 아니라 app.kafka(파일 끝)에 있다 — 환경별 접두어가 붙는다 (08 D10)
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -169,3 +170,21 @@ app:
   llm:
     base-url: ${LLM_BASE_URL:}
     sse-url: ${LLM_SSE_URL:} # FastAPI 공개 base URL — llmSseUrl은 여기에 /chat(구매자)·/seller/chat(판매자)을 붙여 내려감. 미설정 시 빈 값(채팅 degrade)
+  # 행동 이벤트 토픽·컨슈머 그룹 이름 (08 D10).
+  #
+  # ⚠️ **이름의 정본은 여기 한 곳뿐이다.** 리스너 애노테이션도 자바 코드도 이 프로퍼티를 읽는다 —
+  # 애노테이션에 문자열을 따로 적으면 "선언한 이름"과 "실제 쓰는 이름"이 갈릴 수 있고,
+  # DLT가 정확히 그렇게 몇 주간 죽어 있었다(08 D3 연혁: `.DLT` vs `-dlt`).
+  #
+  # prefix가 필요한 이유 — 브로커는 1대뿐이라(D6) dev와 운영이 **같은 브로커**에 붙는다.
+  # 접두어가 없으면 양쪽이 같은 컨슈머 그룹의 멤버가 되어, 카프카가 파티션을 나눠주는 대로
+  # 운영 이벤트 일부를 dev가 가져가 자기 DB에 적재하고 오프셋까지 커밋한다 — 에러도 lag도 없이.
+  # 운영은 빈 값(기존 이름 그대로), dev만 `APP_KAFKA_PREFIX=dev-`를 준다.
+  kafka:
+    prefix: ${APP_KAFKA_PREFIX:}
+    topic: ${app.kafka.prefix}behavior-events
+    dlt: ${app.kafka.topic}-dlt
+    groups:
+      persister: ${app.kafka.prefix}persister
+      visitor-tracker: ${app.kafka.prefix}visitor-tracker
+      dlt-monitor: ${app.kafka.prefix}dlt-monitor

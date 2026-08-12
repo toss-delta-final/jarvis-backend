@@ -27,7 +27,7 @@ public class ActiveVisitorConsumer {
     private final ProductBrandIndex productBrandIndex;
     private final ActiveVisitorStore activeVisitorStore;
 
-    @KafkaListener(topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC, groupId = KafkaConfig.VISITOR_TRACKER_GROUP)
+    @KafkaListener(topics = KafkaConfig.TOPIC, groupId = KafkaConfig.VISITOR_TRACKER_GROUP)
     public void consume(List<BehaviorEventMessage> messages) {
         for (BehaviorEventMessage message : messages) {
             Long brandId = productBrandIndex.brandOf(message.productId());

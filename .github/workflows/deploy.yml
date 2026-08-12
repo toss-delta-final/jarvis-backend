@@ -128,6 +128,9 @@ jobs:
             #    pull 성공 후에 수행 — pull 이 실패했을 때 기존 env 를 건드리지 않기 위함
             #    백업 이유: 실패 원인이 잘못된 시크릿 값일 수 있으므로
             #    이미지만 되돌리면 옛 이미지도 깨진 env 를 물려받아 똑같이 죽음
+            #    APP_KAFKA_PREFIX는 미설정(=빈 값)이 정상이다 — 이 4대가 '접두어 없는 쪽'이고,
+            #    같은 브로커를 공유하는 dev 서버만 dev- 로 갈라진다 (08 D10). 여기에 값을 넣으면
+            #    운영이 새 토픽으로 옮겨가 기존 오프셋·보존 7일 데이터와 끊긴다.
             umask 077
             if [ -f "$ENV_FILE" ]; then
               cp "$ENV_FILE" "$ENV_PREV"
@@ -139,6 +142,7 @@ jobs:
             REDIS_HOST=${{ secrets.REDIS_HOST }}
             REDIS_PORT=6379
             KAFKA_BOOTSTRAP_SERVERS=${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
+            APP_KAFKA_PREFIX=${{ vars.APP_KAFKA_PREFIX }}
             APP_IMAGE_BASE_URL=${{ vars.APP_IMAGE_BASE_URL }}
             APP_CLIENT_IP_FORWARDED_DEPTH=${{ vars.APP_CLIENT_IP_FORWARDED_DEPTH }}
             APP_COOKIE_SECURE=true

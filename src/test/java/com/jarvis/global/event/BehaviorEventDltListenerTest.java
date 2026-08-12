@@ -2,7 +2,6 @@ package com.jarvis.global.event;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 
-import com.jarvis.global.config.KafkaConfig;
 import java.nio.charset.StandardCharsets;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.DisplayName;
@@ -18,7 +17,8 @@ class BehaviorEventDltListenerTest {
     private final BehaviorEventDltListener listener = new BehaviorEventDltListener();
 
     private static ConsumerRecord<String, byte[]> record(byte[] value) {
-        return new ConsumerRecord<>(KafkaConfig.BEHAVIOR_EVENTS_DLT, 0, 0L, null, value);
+        // 이름은 이 테스트의 관심이 아니다 — 레코드가 어느 토픽에서 왔는지는 리스너 동작에 영향이 없다
+        return new ConsumerRecord<>("behavior-events-dlt", 0, 0L, null, value);
     }
 
     @Test

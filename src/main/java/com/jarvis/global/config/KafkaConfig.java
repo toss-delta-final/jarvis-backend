@@ -4,13 +4,16 @@ import com.jarvis.global.event.BehaviorEventMessage;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
@@ -30,37 +33,42 @@ import org.springframework.util.backoff.FixedBackOff;
  *
  * <p>토픽을 여기서 선언하는 이유: 브로커 자동 생성에 맡기면 파티션 수가 브로커 기본값을 따라가
  * 컨슈머 병렬도가 조용히 달라진다. 파티션 수는 그룹의 최대 병렬도라 설계값(3)으로 고정한다.
+ *
+ * <p><b>이름은 여기 없다</b> — 토픽·그룹 이름은 환경별 접두어가 붙으므로 {@code app.kafka}에서
+ * 온다 (08 D10, {@link BehaviorStreamProperties}).
  */
+@Slf4j
 @Configuration
+@EnableConfigurationProperties(BehaviorStreamProperties.class)
 public class KafkaConfig {
 
-    /** 프로듀서·컨슈머가 공유하는 토픽 이름. 앱 내부 계약이라 설정값으로 빼지 않는다. */
-    public static final String BEHAVIOR_EVENTS_TOPIC = "behavior-events";
-
     /**
-     * 재시도까지 실패한 레코드가 가는 곳.
-     *
-     * <p>⚠️ <b>이름을 기본값에 맡기지 않고 못 박는다</b>(2026-08-10). 종전엔 "기본 규칙은 {@code .DLT}"로
-     * 알고 그렇게 선언했는데, 실제 recoverer가 쓴 이름은 {@code -dlt}였다 — 선언한 토픽은 아무도 쓰지 않고
-     * <b>진짜 DLT는 브로커가 1파티션으로 자동 생성</b>해, 2번 파티션의 실패 레코드를 옮기다 그것마저
-     * 실패했다(아래 {@code behaviorEventsDltTopic} 주석이 경고하던 바로 그 상황). 기본값이 무엇이든
-     * 여기 적힌 이름으로 가도록 recoverer에 직접 지정한다.
+     * 리스너 애노테이션이 쓰는 <b>프로퍼티 키</b>. 이름 문자열이 아니라 키를 공유한다 —
+     * 애노테이션에 이름을 따로 적으면 {@code app.kafka}가 정본이라는 규칙이 조용히 깨진다.
      */
-    public static final String BEHAVIOR_EVENTS_DLT = BEHAVIOR_EVENTS_TOPIC + "-dlt";
-
-    /** 컨슈머 그룹 A — 적재. 그룹 이름도 토픽처럼 앱 내부 계약이라 한곳에 모은다 */
-    public static final String PERSISTER_GROUP = "persister";
-    /** 컨슈머 그룹 B — S-1 실시간 방문자 집계 */
-    public static final String VISITOR_TRACKER_GROUP = "visitor-tracker";
-    /** DLT 감시 — 적재에 끝내 실패한 레코드를 관측 가능하게 만드는 것이 유일한 목적 */
-    public static final String DLT_MONITOR_GROUP = "dlt-monitor";
+    public static final String TOPIC = "${app.kafka.topic}";
+    public static final String DLT = "${app.kafka.dlt}";
+    public static final String PERSISTER_GROUP = "${app.kafka.groups.persister}";
+    public static final String VISITOR_TRACKER_GROUP = "${app.kafka.groups.visitor-tracker}";
+    public static final String DLT_MONITOR_GROUP = "${app.kafka.groups.dlt-monitor}";
 
     private static final int PARTITIONS = 3;
 
+    /**
+     * 기동 시 <b>해석된</b> 이름을 남긴다. 접두어는 환경변수에서 오므로 코드만 봐서는 이 인스턴스가
+     * 어느 토픽·그룹에 붙었는지 알 수 없고, 잘못 붙어도 에러가 나지 않는다 — 유일한 증거가 이 줄이다.
+     */
     @Bean
-    public NewTopic behaviorEventsTopic() {
+    public ApplicationRunner behaviorStreamNamesLogger(BehaviorStreamProperties names) {
+        return args -> log.info("행동 이벤트 스트림 (08 D10) — topic={}, dlt={}, groups=[{}, {}, {}]",
+                names.topic(), names.dlt(), names.groups().persister(),
+                names.groups().visitorTracker(), names.groups().dltMonitor());
+    }
+
+    @Bean
+    public NewTopic behaviorEventsTopic(BehaviorStreamProperties names) {
         // 복제본 1 — 단일 브로커(08 D6). 운영 전환 시 3대 + RF3.
-        return TopicBuilder.name(BEHAVIOR_EVENTS_TOPIC)
+        return TopicBuilder.name(names.topic())
                 .partitions(PARTITIONS)
                 .replicas(1)
                 .build();
@@ -71,8 +79,8 @@ public class KafkaConfig {
      * DLT가 1파티션이면 2번 파티션에서 실패한 레코드를 옮기다 그것마저 실패한다.
      */
     @Bean
-    public NewTopic behaviorEventsDltTopic() {
-        return TopicBuilder.name(BEHAVIOR_EVENTS_DLT)
+    public NewTopic behaviorEventsDltTopic(BehaviorStreamProperties names) {
+        return TopicBuilder.name(names.dlt())
                 .partitions(PARTITIONS)
                 .replicas(1)
                 .build();
@@ -126,16 +134,20 @@ public class KafkaConfig {
     @Bean
     public CommonErrorHandler behaviorEventErrorHandler(
             KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate,
-            KafkaTemplate<String, byte[]> dltRawTemplate) {
+            KafkaTemplate<String, byte[]> dltRawTemplate,
+            BehaviorStreamProperties names) {
         // 값 타입에 맞는 직렬화를 쓴다 — 이게 없으면 DLT를 되감아 재처리할 수 없다.
         // 역직렬화 실패로 밀려난 레코드의 값은 **원본 바이트**인데, JSON 직렬화로 실으면
         // base64 문자열로 감싸져 나가 원본과 다른 것이 된다(2026-08-10 실측에서 확인).
         Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
         templates.put(byte[].class, dltRawTemplate);
         templates.put(Object.class, kafkaTemplate);
-        // 목적지도 명시한다 — 이름·파티션 매핑을 기본값에 맡기지 않는다(위 BEHAVIOR_EVENTS_DLT 주석)
+        // ⚠️ 목적지 이름·파티션을 **기본값에 맡기지 않는다**(2026-08-10). 종전엔 "기본 규칙은 .DLT"로
+        // 알고 그렇게 선언했는데 recoverer가 실제로 쓴 이름은 -dlt였다 — 선언한 토픽은 아무도 쓰지 않고
+        // 진짜 DLT는 브로커가 1파티션으로 자동 생성해, 2번 파티션의 실패 레코드를 옮기다 그것마저 실패했다.
+        // 접두어가 붙는 지금은 더더욱 — app.kafka.dlt가 정본이고 여기가 그것을 그대로 쓴다 (08 D10).
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(templates,
-                (record, exception) -> new TopicPartition(BEHAVIOR_EVENTS_DLT, record.partition()));
+                (record, exception) -> new TopicPartition(names.dlt(), record.partition()));
         DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, new FixedBackOff(1_000L, 3L));
         handler.setLogLevel(org.springframework.kafka.KafkaException.Level.ERROR);
         return handler;

@@ -32,8 +32,15 @@ import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
  * <p>브로커는 EmbeddedKafka라 CI에서도 돈다. 적재(DB)는 이 테스트의 관심이 아니라 목으로 끊는다.
  */
 @SpringJUnitConfig
-@EmbeddedKafka(partitions = 3, topics = KafkaConfig.BEHAVIOR_EVENTS_TOPIC)
+@EmbeddedKafka(partitions = 3, topics = BehaviorEventStreamTest.TOPIC)
 @TestPropertySource(properties = {
+        // 이 슬라이스는 application.yml을 읽지 않으므로 이름을 직접 준다. 왕복이 성립한다는 것은
+        // 프로듀서와 컨슈머가 **같은 프로퍼티**를 봤다는 뜻이다 — yml 배선 자체는 BehaviorStreamPropertiesTest가 본다
+        "app.kafka.topic=" + BehaviorEventStreamTest.TOPIC,
+        "app.kafka.dlt=" + BehaviorEventStreamTest.TOPIC + "-dlt",
+        "app.kafka.groups.persister=persister",
+        "app.kafka.groups.visitor-tracker=visitor-tracker",
+        "app.kafka.groups.dlt-monitor=dlt-monitor",
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
         "spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer",
         "spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JsonSerializer",
@@ -47,6 +54,8 @@ import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
         "spring.kafka.listener.type=batch",
 })
 class BehaviorEventStreamTest {
+
+    static final String TOPIC = "behavior-events";
 
     @Configuration
     @EnableKafka

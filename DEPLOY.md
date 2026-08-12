@@ -36,6 +36,27 @@ docker run -p 8080:8080 --env-file deploy.env jarvis-backend:dev
 
 **선택 (기본값 있음):** `APP_COOKIE_SECURE`(기본 `true`), `LLM_BASE_URL`·`LLM_SSE_URL`(FastAPI 공개주소 — 보통 동일 값, 빈 값이면 통지 skip·채팅 degrade. 배포는 GitHub Variable `FASTAPI_BASE_URL`을 두 이름으로 주입).
 
+### 2-1. ⚠️ Kafka — dev 서버는 **접두어를 반드시 준다**
+
+`KAFKA_BOOTSTRAP_SERVERS`(기본 `localhost:9092`)와 `APP_KAFKA_PREFIX`(기본 빈 값) 두 개다.
+
+브로커는 **1대뿐이고**(08 D6) 이 dev 서버는 운영 4대와 **같은 이미지**를 돌린다. 그래서 dev가 운영
+브로커(`172.31.46.48:9092`)를 보게 설정하면서 접두어를 비워두면, dev 컨테이너의 컨슈머가 **운영 컨슈머
+그룹의 정식 멤버가 된다.** 카프카는 한 그룹 안에서 파티션을 나눠주므로 **운영 이벤트의 일부가 dev DB에
+적재되고 오프셋까지 커밋된다** — 운영 DB는 그 이벤트를 영영 못 받는다. **에러도 lag도 남지 않는다.**
+
+| 배포 대상 | `KAFKA_BOOTSTRAP_SERVERS` | `APP_KAFKA_PREFIX` |
+|---|---|---|
+| 운영 4대 (deploy.yml) | `172.31.46.48:9092` | **빈 값** — 기존 토픽·오프셋 유지 |
+| dev 서버 (이 문서) | 운영 브로커를 볼 거면 같은 주소, 아니면 **키 자체를 빼서** 기본값(`localhost:9092`)으로 | **`dev-`** |
+
+- 브로커를 안 붙여도 dev는 정상 동작한다 — produce 실패 시 DB 직접 적재로 폴백한다(08 D7).
+  **운영 브로커를 볼 이유가 없다면 `KAFKA_BOOTSTRAP_SERVERS`를 아예 주지 않는 쪽이 가장 안전하다.**
+- 이중 방어: dev 인스턴스를 `jarvis-backend-sg-v2`에서 빼면 `jarvis-kafka-sg`(그룹 참조 인바운드)를
+  통과하지 못한다. 접두어를 빠뜨려도 합류가 물리적으로 불가능해진다.
+- 확인: `PREFIX=dev- bash scripts/verify-kafka-pipeline.sh` / 운영 그룹에 낯선 멤버가 없는지는
+  `kafka-consumer-groups.sh --describe --group persister --members`.
+
 전체 목록·용도는 [.env.example](.env.example).
 
 ## 3. ⚠️ 시크릿 — repo에 실제 값은 없다. 배포용은 새로 생성
@@ -129,6 +150,7 @@ done
 - [ ] `deploy.env` 작성 — **시크릿은 §3대로 새로 생성**, `INTERNAL_API_TOKEN`은 LLM팀과 합의, `LLM_BASE_URL`은 LLM팀에서 수령
       - `JWT_SECRET`은 **배포 서버 전용 값**으로 생성(로컬 개발값과 달라도 무방 — 각 서버가 자기 키로 서명·검증).
         기본값이 없으므로 미설정 시 기동 실패. **운영 중 교체하면 발급된 AT/RT가 전부 무효화**되어 전원 재로그인.
+- [ ] **`APP_KAFKA_PREFIX=dev-` 설정 (§2-1)** — 운영 브로커를 공유하므로, 비워두면 이 서버가 운영 컨슈머 그룹에 합류해 운영 이벤트를 가져간다. 조용히 일어나므로 배포 후에는 드러나지 않는다
 - [ ] 배포 DB 반영 — 신규 DB면 `docs/backend/schema.sql` + 시드 4종(§4-1), **이미 운영 중이면 `scripts/migrate-*.sql`만**(§4-2, 앱 재기동 전에)
 - [ ] 컨테이너 실행 후 `/actuator/health` = UP 확인
 - [ ] FE팀에 **공개 API URL** 공유 (FE는 프록시 타깃으로 사용)
