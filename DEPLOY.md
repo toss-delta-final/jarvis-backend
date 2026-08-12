@@ -48,14 +48,21 @@ docker run -p 8080:8080 --env-file deploy.env jarvis-backend:dev
 | 배포 대상 | `KAFKA_BOOTSTRAP_SERVERS` | `APP_KAFKA_PREFIX` |
 |---|---|---|
 | 운영 4대 (deploy.yml) | `172.31.46.48:9092` | **빈 값** — 기존 토픽·오프셋 유지 |
-| dev 서버 (이 문서) | 운영 브로커를 볼 거면 같은 주소, 아니면 **키 자체를 빼서** 기본값(`localhost:9092`)으로 | **`dev-`** |
+| dev 서버 (이 문서) | `172.31.46.48:9092` (같은 브로커를 공유한다) | **`dev-`** |
 
-- 브로커를 안 붙여도 dev는 정상 동작한다 — produce 실패 시 DB 직접 적재로 폴백한다(08 D7).
-  **운영 브로커를 볼 이유가 없다면 `KAFKA_BOOTSTRAP_SERVERS`를 아예 주지 않는 쪽이 가장 안전하다.**
-- 이중 방어: dev 인스턴스를 `jarvis-backend-sg-v2`에서 빼면 `jarvis-kafka-sg`(그룹 참조 인바운드)를
-  통과하지 못한다. 접두어를 빠뜨려도 합류가 물리적으로 불가능해진다.
-- 확인: `PREFIX=dev- bash scripts/verify-kafka-pipeline.sh` / 운영 그룹에 낯선 멤버가 없는지는
-  `kafka-consumer-groups.sh --describe --group persister --members`.
+- **접두어가 유일한 방어선이다.** dev는 직렬화 계약·컨슈머 로직·ZSET 집계를 실제로 검증하는 곳이라
+  브로커에 붙어 있어야 하고, 보안그룹으로 막는 안은 그 목적과 충돌해 기각했다(08 D10).
+  참고로 `jarvis-backend-sg-v2`에는 9092뿐 아니라 RDS 3306·Redis 6379·ALB 80이 함께 묶여 있어
+  여기서 빼면 dev가 아예 뜨지 못한다.
+- **토픽은 미리 만들지 않아도 된다.** 브로커의 `auto.create.topics.enable=false`가 막는 것은 암묵적
+  생성이고, 앱은 기동 시 `KafkaAdmin`이 명시적으로 만든다. 수동 생성한다면 이름은
+  `dev-behavior-events` / `dev-behavior-events-dlt`(소문자 `-dlt`)이고 **둘 다 파티션 3 · RF 1**이어야
+  한다 — DLT가 1파티션이면 2번 파티션의 실패 레코드를 옮기다 그것마저 실패한다.
+- 확인 ①: 기동 로그에 해석된 이름이 한 줄 찍힌다 —
+  `행동 이벤트 스트림 (08 D10) — topic=dev-behavior-events, ...`. 여기에 `dev-`가 없으면 잘못 붙은 것이다.
+- 확인 ②: `PREFIX=dev- bash scripts/verify-kafka-pipeline.sh`
+- 확인 ③: dev 배포 직후 운영 그룹 멤버가 여전히 4개인지 —
+  `kafka-consumer-groups.sh --describe --group persister --members` (2026-08-12 기준 4개·전부 운영 IP).
 
 전체 목록·용도는 [.env.example](.env.example).
 
