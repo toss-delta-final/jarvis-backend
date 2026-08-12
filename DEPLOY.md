@@ -36,6 +36,34 @@ docker run -p 8080:8080 --env-file deploy.env jarvis-backend:dev
 
 **선택 (기본값 있음):** `APP_COOKIE_SECURE`(기본 `true`), `LLM_BASE_URL`·`LLM_SSE_URL`(FastAPI 공개주소 — 보통 동일 값, 빈 값이면 통지 skip·채팅 degrade. 배포는 GitHub Variable `FASTAPI_BASE_URL`을 두 이름으로 주입).
 
+### 2-1. ⚠️ Kafka — dev 서버는 **접두어를 반드시 준다**
+
+`KAFKA_BOOTSTRAP_SERVERS`(기본 `localhost:9092`)와 `APP_KAFKA_PREFIX`(기본 빈 값) 두 개다.
+
+브로커는 **1대뿐이고**(08 D6) 이 dev 서버는 운영 4대와 **같은 이미지**를 돌린다. 그래서 dev가 운영
+브로커(`172.31.46.48:9092`)를 보게 설정하면서 접두어를 비워두면, dev 컨테이너의 컨슈머가 **운영 컨슈머
+그룹의 정식 멤버가 된다.** 카프카는 한 그룹 안에서 파티션을 나눠주므로 **운영 이벤트의 일부가 dev DB에
+적재되고 오프셋까지 커밋된다** — 운영 DB는 그 이벤트를 영영 못 받는다. **에러도 lag도 남지 않는다.**
+
+| 배포 대상 | `KAFKA_BOOTSTRAP_SERVERS` | `APP_KAFKA_PREFIX` |
+|---|---|---|
+| 운영 4대 (deploy.yml) | `172.31.46.48:9092` | **빈 값** — 기존 토픽·오프셋 유지 |
+| dev 서버 (이 문서) | `172.31.46.48:9092` (같은 브로커를 공유한다) | **`dev-`** |
+
+- **접두어가 유일한 방어선이다.** dev는 직렬화 계약·컨슈머 로직·ZSET 집계를 실제로 검증하는 곳이라
+  브로커에 붙어 있어야 하고, 보안그룹으로 막는 안은 그 목적과 충돌해 기각했다(08 D10).
+  참고로 `jarvis-backend-sg-v2`에는 9092뿐 아니라 RDS 3306·Redis 6379·ALB 80이 함께 묶여 있어
+  여기서 빼면 dev가 아예 뜨지 못한다.
+- **토픽은 미리 만들지 않아도 된다.** 브로커의 `auto.create.topics.enable=false`가 막는 것은 암묵적
+  생성이고, 앱은 기동 시 `KafkaAdmin`이 명시적으로 만든다. 수동 생성한다면 이름은
+  `dev-behavior-events` / `dev-behavior-events-dlt`(소문자 `-dlt`)이고 **둘 다 파티션 3 · RF 1**이어야
+  한다 — DLT가 1파티션이면 2번 파티션의 실패 레코드를 옮기다 그것마저 실패한다.
+- 확인 ①: 기동 로그에 해석된 이름이 한 줄 찍힌다 —
+  `행동 이벤트 스트림 (08 D10) — topic=dev-behavior-events, ...`. 여기에 `dev-`가 없으면 잘못 붙은 것이다.
+- 확인 ②: `PREFIX=dev- bash scripts/verify-kafka-pipeline.sh`
+- 확인 ③: dev 배포 직후 운영 그룹 멤버가 여전히 4개인지 —
+  `kafka-consumer-groups.sh --describe --group persister --members` (2026-08-12 기준 4개·전부 운영 IP).
+
 전체 목록·용도는 [.env.example](.env.example).
 
 ## 3. ⚠️ 시크릿 — repo에 실제 값은 없다. 배포용은 새로 생성
@@ -129,6 +157,7 @@ done
 - [ ] `deploy.env` 작성 — **시크릿은 §3대로 새로 생성**, `INTERNAL_API_TOKEN`은 LLM팀과 합의, `LLM_BASE_URL`은 LLM팀에서 수령
       - `JWT_SECRET`은 **배포 서버 전용 값**으로 생성(로컬 개발값과 달라도 무방 — 각 서버가 자기 키로 서명·검증).
         기본값이 없으므로 미설정 시 기동 실패. **운영 중 교체하면 발급된 AT/RT가 전부 무효화**되어 전원 재로그인.
+- [ ] **`APP_KAFKA_PREFIX=dev-` 설정 (§2-1)** — 운영 브로커를 공유하므로, 비워두면 이 서버가 운영 컨슈머 그룹에 합류해 운영 이벤트를 가져간다. 조용히 일어나므로 배포 후에는 드러나지 않는다
 - [ ] 배포 DB 반영 — 신규 DB면 `docs/backend/schema.sql` + 시드 4종(§4-1), **이미 운영 중이면 `scripts/migrate-*.sql`만**(§4-2, 앱 재기동 전에)
 - [ ] 컨테이너 실행 후 `/actuator/health` = UP 확인
 - [ ] FE팀에 **공개 API URL** 공유 (FE는 프록시 타깃으로 사용)

@@ -1,6 +1,6 @@
 package com.jarvis.global.event;
 
-import com.jarvis.global.config.KafkaConfig;
+import com.jarvis.global.config.BehaviorStreamProperties;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +37,7 @@ public class BehaviorEventPublisher {
     private static final Duration SEND_DEADLINE = Duration.ofSeconds(3);
 
     private final KafkaTemplate<String, BehaviorEventMessage> kafkaTemplate;
+    private final BehaviorStreamProperties names;
     private final BehaviorEventAppender behaviorEventAppender;
     private final BehaviorStreamHealth streamHealth;
     private final ProduceCircuitBreaker circuitBreaker;
@@ -76,7 +77,7 @@ public class BehaviorEventPublisher {
         for (int i = 0; i < events.size(); i++) {
             BehaviorEventMessage message = BehaviorEventMessage.from(events.get(i));
             try {
-                futures.add(kafkaTemplate.send(KafkaConfig.BEHAVIOR_EVENTS_TOPIC,
+                futures.add(kafkaTemplate.send(names.topic(),
                         message.partitionKey(), message));
                 inFlight.add(events.get(i));
             } catch (Exception e) {

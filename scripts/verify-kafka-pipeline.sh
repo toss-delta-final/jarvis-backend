@@ -9,15 +9,19 @@
 # 사용 (로컬):
 #   bash scripts/verify-kafka-pipeline.sh
 # 사용 (dev — Kafka EC2에서, Redis는 ElastiCache 엔드포인트):
-#   KAFKA_DOCKER=jarvis-kafka BOOTSTRAP=localhost:9092 \
+#   KAFKA_DOCKER=jarvis-kafka BOOTSTRAP=localhost:9092 PREFIX=dev- \
 #   REDIS_CLI="redis-cli -h <elasticache-endpoint>" \
 #   bash scripts/verify-kafka-pipeline.sh
+#   (PREFIX는 그 앱의 APP_KAFKA_PREFIX와 같은 값 — 운영을 볼 때는 생략 = 빈 값, 08 D10)
 set -uo pipefail
 
 KAFKA_DOCKER="${KAFKA_DOCKER:-jarvis-kafka}"
 BOOTSTRAP="${BOOTSTRAP:-localhost:9092}"
 REDIS_CLI="${REDIS_CLI:-docker exec jarvis-redis redis-cli}"
-TOPIC="behavior-events"
+# 검사 대상 환경의 접두어 (08 D10) — 앱의 APP_KAFKA_PREFIX와 같은 값을 줘야 한다.
+# 운영은 빈 값, dev 서버를 볼 때는 PREFIX=dev-. 틀리면 "그룹 조회 실패"로 나온다
+PREFIX="${PREFIX:-}"
+TOPIC="${PREFIX}behavior-events"
 
 kafka() {
   MSYS_NO_PATHCONV=1 docker exec "$KAFKA_DOCKER" "/opt/kafka/bin/$1" --bootstrap-server "$BOOTSTRAP" "${@:2}"
@@ -40,7 +44,7 @@ fi
 echo
 echo "== 2. 컨슈머 그룹 — 위조할 수 없는 증거 =="
 # 멤버가 붙어 있고 오프셋이 전진하면 앱이 실제로 브로커와 대화하고 있다는 뜻이다.
-for group in persister visitor-tracker; do
+for group in "${PREFIX}persister" "${PREFIX}visitor-tracker"; do
   # ⚠️ --describe만 보면 안 된다: 앱이 죽어도 파티션 행과 커밋된 오프셋은 그대로 남아
   #    "붙어 있는 것처럼" 보인다. 활성 멤버 수는 --state의 #MEMBERS로 확인해야 한다.
   if ! kafka kafka-consumer-groups.sh --describe --group "$group" --state >/tmp/vk_s 2>/dev/null; then
@@ -80,7 +84,7 @@ if dlt_offsets=$(kafka kafka-get-offsets.sh --topic "$TOPIC-dlt" 2>/dev/null); t
     ok "DLT 비어 있음 — 최종 실패한 레코드 없음"
   else
     bad "DLT에 ${dlt_total}건 — 적재에 끝내 실패한 이벤트가 있다"
-    note "원인은 앱 로그의 '적재 최종 실패' 항목. 고친 뒤 dlt-monitor 그룹 오프셋을 되감아 재처리할 수 있다"
+    note "원인은 앱 로그의 '적재 최종 실패' 항목. 고친 뒤 ${PREFIX}dlt-monitor 그룹 오프셋을 되감아 재처리할 수 있다"
   fi
 else
   note "DLT 토픽이 아직 없다 — 실패한 적이 없다는 뜻이다(앱이 기동하면 생성된다)"

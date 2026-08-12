@@ -1,6 +1,6 @@
 package com.jarvis.global.event;
 
-import com.jarvis.global.config.KafkaConfig;
+import com.jarvis.global.config.BehaviorStreamProperties;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +38,7 @@ public class BehaviorStreamProbe {
     private static final String LAST_HEARTBEAT = "last-heartbeat-seconds-ago";
 
     private final KafkaListenerEndpointRegistry registry;
+    private final BehaviorStreamProperties names;
     private final BehaviorStreamHealth streamHealth;
 
     /**
@@ -53,7 +54,9 @@ public class BehaviorStreamProbe {
 
     private boolean isBrokerConnected() {
         for (MessageListenerContainer container : registry.getListenerContainers()) {
-            if (!KafkaConfig.VISITOR_TRACKER_GROUP.equals(container.getGroupId()) || !container.isRunning()) {
+            // ⚠️ 해석된 이름으로 비교해야 한다 — 접두어가 붙는데 여기만 상수로 두면 매칭이 영영 실패해
+            // 브로커가 멀쩡해도 "연결 없음"이 되고, S-1이 스트림을 안 믿고 계속 DB 폴백으로 돈다 (08 D10)
+            if (!names.groups().visitorTracker().equals(container.getGroupId()) || !container.isRunning()) {
                 continue;
             }
             for (Map<MetricName, ? extends Metric> metrics : container.metrics().values()) {
