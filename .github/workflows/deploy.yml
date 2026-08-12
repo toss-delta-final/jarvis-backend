@@ -2,9 +2,9 @@ name: Jarvis Backend CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:   # Actions 탭에서 수동 실행 가능
 
 env:
@@ -54,10 +54,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max   # 레이어 캐시로 빌드 가속
 
-  # 3단계: 무중단 배포 (CD)
+  # 3단계: 무중단 배포 (CD) — main 브랜치 전용
   #   대상그룹에서 뺀 뒤 교체하고, 정상 확인 후 다시 넣음
   #   배포 중인 서버는 대상그룹 밖이므로, 동시 배포 대수만큼 처리 능력이 빠진다
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -243,3 +244,110 @@ jobs:
           aws elbv2 register-targets \
             --target-group-arn "$TG_ARN" \
             --targets Id=${{ matrix.instance }}
+
+  # 4단계: dev 서버 배포 — dev 브랜치 전용
+  #   운영과 공유하는 자원을 세 곳에서 분리한다:
+  #     DB      jarvis_dev 스키마 (MARIADB_URL_DEV)
+  #     커넥션 풀 2 — 운영 28(4대×7)에 더해도 RDS max_connections 30 안에 든다
+  #     Redis   DB 인덱스 1 — 운영(0)의 캐시 키를 덮어쓰지 않는다
+  #   위 두 값은 application.yml을 고치지 않고 Spring relaxed binding으로 덮어쓴다.
+  deploy-dev:
+    if: github.ref == 'refs/heads/dev'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
+      - name: dev 백엔드 배포 및 기동 검증
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST_DEV }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 15m
+          command_timeout: 15m
+          script: |
+            set -e
+
+            ENV_FILE=/home/ubuntu/jarvis-backend.env
+            ENV_PREV=/home/ubuntu/jarvis-backend.env.prev
+            LAST_GOOD=/home/ubuntu/jarvis-backend.last-good
+
+            PREV_IMAGE=$(docker inspect -f '{{.Config.Image}}' jarvis-backend 2>/dev/null || true)
+
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.IMAGE }}:${{ github.sha }}
+
+            umask 077
+            if [ -f "$ENV_FILE" ]; then
+              cp "$ENV_FILE" "$ENV_PREV"
+            fi
+            cat << 'ENVEOF' > "$ENV_FILE"
+            DB_URL=${{ secrets.MARIADB_URL_DEV }}
+            DB_USERNAME=${{ secrets.MARIADB_USERNAME }}
+            DB_PASSWORD=${{ secrets.MARIADB_PASSWORD }}
+            REDIS_HOST=${{ secrets.REDIS_HOST }}
+            REDIS_PORT=6379
+            SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=2
+            SPRING_DATA_REDIS_DATABASE=1
+            KAFKA_BOOTSTRAP_SERVERS=${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
+            APP_IMAGE_BASE_URL=${{ vars.APP_IMAGE_BASE_URL }}
+            APP_CLIENT_IP_FORWARDED_DEPTH=${{ vars.APP_CLIENT_IP_FORWARDED_DEPTH }}
+            APP_COOKIE_SECURE=true
+            INTERNAL_API_TOKEN=${{ secrets.INTERNAL_API_TOKEN }}
+            CUSTOMER_LABEL_SECRET=${{ secrets.CUSTOMER_LABEL_SECRET }}
+            LLM_BASE_URL=https://dev-ai.narvis.shop
+            LLM_SSE_URL=https://dev-ai.narvis.shop
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            STREAM_TICKET_PRIVATE_KEY=${{ secrets.STREAM_TICKET_PRIVATE_KEY }}
+            STREAM_TICKET_KID=${{ secrets.STREAM_TICKET_KID }}
+            ENVEOF
+
+            docker stop jarvis-backend || true
+            docker rm -f jarvis-backend || true
+            docker run -d \
+              --name jarvis-backend \
+              --restart always \
+              --network host \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              --env-file "$ENV_FILE" \
+              ${{ env.IMAGE }}:${{ github.sha }} || true
+
+            OK=0
+            for i in $(seq 1 60); do
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health/liveness || true)
+              if [ "$CODE" = "200" ]; then OK=1; break; fi
+              sleep 2
+            done
+
+            if [ "$OK" != "1" ]; then
+              docker logs --tail 100 jarvis-backend || true
+              docker rm -f jarvis-backend || true
+
+              ROLLBACK_IMAGE="$PREV_IMAGE"
+              if [ -z "$ROLLBACK_IMAGE" ] && [ -f "$LAST_GOOD" ]; then
+                ROLLBACK_IMAGE=$(cat "$LAST_GOOD")
+              fi
+              if [ -z "$ROLLBACK_IMAGE" ]; then
+                docker images ${{ env.IMAGE }} --format '{{.Tag}} {{.CreatedSince}}' | head -10
+                exit 1
+              fi
+
+              if [ -f "$ENV_PREV" ]; then
+                cp "$ENV_PREV" "$ENV_FILE"
+              fi
+
+              docker run -d \
+                --name jarvis-backend \
+                --restart always \
+                --network host \
+                --log-opt max-size=10m \
+                --log-opt max-file=3 \
+                --env-file "$ENV_FILE" \
+                "$ROLLBACK_IMAGE" || true
+              exit 1
+            fi
+
+            docker inspect -f '{{.Config.Image}}' jarvis-backend > "$LAST_GOOD"
+            docker image prune -af --filter "until=48h"
