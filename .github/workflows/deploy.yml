@@ -140,6 +140,7 @@ jobs:
             REDIS_HOST=${{ secrets.REDIS_HOST }}
             REDIS_PORT=6379
             KAFKA_BOOTSTRAP_SERVERS=${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
+            APP_KAFKA_PREFIX=dev-
             APP_IMAGE_BASE_URL=${{ vars.APP_IMAGE_BASE_URL }}
             APP_CLIENT_IP_FORWARDED_DEPTH=${{ vars.APP_CLIENT_IP_FORWARDED_DEPTH }}
             APP_COOKIE_SECURE=true
