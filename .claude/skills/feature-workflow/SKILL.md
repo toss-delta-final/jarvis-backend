@@ -1,6 +1,6 @@
 ---
 name: feature-workflow
-description: Start a new feature or unit of work in jarvis-backend. Use at the START of any new feature/fix/refactor — builds a work plan with its full impact/ripple list, then syncs main and creates a properly-named branch BEFORE writing code, so work never lands on main directly.
+description: Start a new feature or unit of work in jarvis-backend. Use at the START of any new feature/fix/refactor — builds a work plan with its full impact/ripple list, then syncs dev and creates a properly-named branch off dev BEFORE writing code, so work never lands on dev or main directly.
 ---
 
 # Feature workflow (start of a unit of work)
@@ -27,12 +27,12 @@ Run this the moment a new feature/fix begins — without being asked.
 **③ 계약 충돌 여부** — 계획이 **노션 API 명세나 ERD 변경을 요구하면 거기서 멈추고 보고**한다
 (CLAUDE.md Contract hierarchy). 내부 문서(`docs/backend/`)는 기준에 맞춰 갱신하는 게 맞다.
 
-## 2. Sync main
+## 2. Sync dev (기점은 항상 `dev` — main 아님)
 ```
-git checkout main && git pull origin main
+git checkout dev && git pull origin dev
 ```
 
-## 3. Create a branch (never commit to `main`)
+## 3. Create a branch (never commit to `dev` or `main`)
 One branch per unit of work. Naming: `<type>/<kebab-desc>`
 - `feat/order-cancel`, `fix/cart-total`, `refactor/api-client`
 - types: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`, `style`

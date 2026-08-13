@@ -40,10 +40,17 @@ JARVIS 최종 프로젝트의 **백엔드 단독 repo** (Spring Boot). 프론트
 
 ## Git workflow — run automatically (details live in Skills)
 
-- **Starting** a new feature/fix → **`feature-workflow`** 스킬 실행. 코드 작성 *전에* **작업 계획 + 영향 범위(연쇄 영향 포함) 리스트업**을 먼저 내놓는다. main에 직접 커밋 금지.
-- **Finishing** a unit of work → **`ship-it`** 스킬 실행(pre-commit 체크 → commit → push → main으로 PR).
-- **머지 완료 신호를 받으면**("머지했어" 등) → main 동기화 + 해당 작업 브랜치 **로컬·원격 모두 삭제**. 이 repo 한정, 사전 승인 — 물어보지 말고 진행.
-- Commit/push/PR도 사전 승인됨. 단 **force-push, main 직접 조작, 머지-후 정리가 아닌 브랜치 삭제**는 먼저 확인.
+### 브랜치 기점은 `dev` — main이 아니다
+
+- **모든 작업 브랜치는 `dev`에서 딴다.** `main`은 릴리즈 라인이라 직접 기점으로 쓰지 않는다.
+  PR도 `dev`를 향한다(`--base dev`). main으로의 반영은 dev→main 릴리즈 PR로만 한다.
+- **`main`과 `dev`는 영구 브랜치 — 절대 삭제하지 않는다.** 로컬·원격 어느 쪽도, 어떤 정리 작업에서도 예외 없다.
+  "안 쓰는 브랜치 정리" 지시를 받아도 이 둘은 대상에서 뺀다.
+
+- **Starting** a new feature/fix → **`feature-workflow`** 스킬 실행. 코드 작성 *전에* **작업 계획 + 영향 범위(연쇄 영향 포함) 리스트업**을 먼저 내놓는다. main·dev에 직접 커밋 금지.
+- **Finishing** a unit of work → **`ship-it`** 스킬 실행(pre-commit 체크 → commit → push → dev로 PR).
+- **머지 완료 신호를 받으면**("머지했어" 등) → dev 동기화 + 해당 작업 브랜치 **로컬·원격 모두 삭제**. 이 repo 한정, 사전 승인 — 물어보지 말고 진행.
+- Commit/push/PR도 사전 승인됨. 단 **force-push, main·dev 직접 조작, 머지-후 정리가 아닌 브랜치 삭제**는 먼저 확인.
 
 ## Coding rules
 
